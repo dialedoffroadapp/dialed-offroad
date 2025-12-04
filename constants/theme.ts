@@ -1,53 +1,100 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
+// constants/theme.ts
+export type ThemeMode = "light" | "dark";
 
-import { Platform } from 'react-native';
-
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
-
-export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
-  },
+export type ThemeTokens = {
+  BG: string;
+  CARD: string;
+  TEXT: string;
+  MUTED: string;
+  BORDER: string;
+  OVERLAY: string;
+  INK: string;        // neutral/dim surface
+  ACCENT: string;
+  SUCCESS: string;
+  ERROR: string;
+  ACCENT2?: string;
+  ACCENT3?: string;
+  CHIP_BG?: string;
+  TRACK?: string;
+  BORDER_SUBTLE?: string;
+  SURFACE_ALT?: string;
+  // Optional inputs used in a few places
+  INPUT_BG?: string;
+  INPUT_TEXT?: string;
 };
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  },
-});
+export const lightTheme: Omit<ThemeTokens, "ACCENT"> = {
+  BG: "#F7F8FC",
+  CARD: "#FFFFFF",
+  TEXT: "#0B0C10",
+  MUTED: "#5D6475",
+  BORDER: "rgba(10,12,16,0.12)",
+  OVERLAY: "rgba(0,0,0,0.45)",
+  INK: "#E9ECF5",
+
+  SUCCESS: "#16A34A",
+  ERROR: "#EF4444",
+
+  ACCENT2: "#2563EB",
+  ACCENT3: "#10B981",
+  CHIP_BG: "rgba(0,0,0,0.06)",
+  TRACK: "rgba(0,0,0,0.08)",
+  BORDER_SUBTLE: "rgba(0,0,0,0.06)",
+  SURFACE_ALT: "#F2F4FA",
+
+  // new: inputs so text fields aren't too dark in Light
+  INPUT_BG: "#F2F4FA",
+  INPUT_TEXT: "#0B0C10",
+};
+
+export const darkTheme: Omit<ThemeTokens, "ACCENT"> = {
+  BG: "#0B0C10",
+  CARD: "#12141B",
+  TEXT: "#F5F7FC",
+  MUTED: "#A6AEC3",
+  BORDER: "rgba(255,255,255,0.10)",
+  OVERLAY: "rgba(0,0,0,0.55)",
+  INK: "#0C1222",
+
+  SUCCESS: "#22C55E",
+  ERROR: "#F05252",
+
+  ACCENT2: "#7CC6FF",
+  ACCENT3: "#22C55E",
+  CHIP_BG: "rgba(255,255,255,0.08)",
+  TRACK: "rgba(255,255,255,0.08)",
+  BORDER_SUBTLE: "rgba(255,255,255,0.08)",
+  SURFACE_ALT: "#0C1222",
+
+  INPUT_BG: "#0C1222",
+  INPUT_TEXT: "#F5F7FC",
+};
+
+// Build a full palette given mode + accent
+export const buildTheme = (mode: ThemeMode, accent = "#1D9BF0"): ThemeTokens => {
+  const base = mode === "light" ? lightTheme : darkTheme;
+  return { ...base, ACCENT: accent };
+};
+
+// Radius/Shadow/Spacing
+export const RADIUS = { sm: 8, md: 12, lg: 16, xl: 20 } as const;
+
+export const SHADOW = {
+  card: { shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
+  floating: { shadowColor: "#000", shadowOpacity: 0.22, shadowRadius: 18, shadowOffset: { width: 0, height: 12 }, elevation: 10 },
+} as const;
+
+export const SPACING = { xs: 6, sm: 10, md: 16, lg: 24, xl: 32 } as const;
+
+export type ThemeRadius = typeof RADIUS;
+export type ThemeShadow = typeof SHADOW;
+export type ThemeSpacing = typeof SPACING;
+
+/**
+ * Legacy fallback:
+ * Lots of older files import `COLORS` directly.
+ * To avoid “weird light mode” where legacy views stay dark,
+ * make the default legacy palette LIGHT + blue accent.
+ * (New screens should use `useTheme()` which switches live.)
+ */
+export const COLORS: ThemeTokens = buildTheme("light", "#1D9BF0");
