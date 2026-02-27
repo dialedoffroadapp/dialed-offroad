@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -11,6 +12,7 @@ import {
     StyleSheet,
     Text,
     TextInput,
+    TouchableWithoutFeedback,
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -330,7 +332,8 @@ export default function TuneFeedbackScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.BG }}>
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <View style={{ flex: 1, backgroundColor: C.BG }}>
       <View style={{ height: insets.top, backgroundColor: C.ACCENT }} />
 
       {/* Header */}
@@ -372,6 +375,8 @@ export default function TuneFeedbackScreen() {
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 24 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         >
           {/* Overall rating */}
           <View style={S.card}>
@@ -477,7 +482,8 @@ export default function TuneFeedbackScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+      </View>
+    </TouchableWithoutFeedback>
   );
 }
 

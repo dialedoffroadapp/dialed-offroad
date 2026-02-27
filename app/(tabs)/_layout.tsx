@@ -4,9 +4,9 @@ import { Tabs } from "expo-router";
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ThemeTokens } from "../../constants/theme";
+import { useOnboarding } from "../../lib/onboarding";
 import { useTheme } from "../../lib/theme";
 
-/** Default icons for all tabs except Tune */
 function DefaultIcon({
   routeName,
   focused,
@@ -33,21 +33,27 @@ function DefaultIcon({
   }
 }
 
-/** Custom center FAB for Tune (circle + label as one unit) */
 function TuneButton({
   onPress,
   accessibilityState,
   colors,
+  disabled,
 }: {
   onPress?: () => void;
   accessibilityState?: { selected?: boolean };
   colors: ThemeTokens;
+  disabled?: boolean;
 }) {
   const focused = !!accessibilityState?.selected;
   const styles = makeStyles(colors);
 
   return (
-    <Pressable onPress={onPress} style={styles.tuneWrap} hitSlop={10}>
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      style={[styles.tuneWrap, disabled && styles.disabled]}
+      hitSlop={10}
+      disabled={disabled}
+    >
       <View style={[styles.tuneFab, focused && styles.tuneFabActive]}>
         <Ionicons name="flash" size={30} color="#FFFFFF" />
       </View>
@@ -58,7 +64,10 @@ function TuneButton({
 
 export default function TabsLayout() {
   const { colors } = useTheme();
+  const { onboardingActive } = useOnboarding();
   const styles = makeStyles(colors);
+
+  const hideTabs = onboardingActive;
 
   return (
     <Tabs
@@ -72,40 +81,40 @@ export default function TabsLayout() {
           fontSize: 12,
           fontWeight: "800",
           marginTop: 4,
-          marginBottom: 12, // lowers baseline a touch to match Tune label
+          marginBottom: 12,
           textAlign: "center",
         },
-        tabBarStyle: {
-          backgroundColor: colors.CARD,
-          borderTopColor: colors.BORDER,
-          borderTopWidth: 1,
-          height: 104,
-          paddingTop: 8,
-          paddingBottom: 12,
-        },
-        // Default icon renderer (Tune overrides with a custom button)
+        tabBarStyle: hideTabs
+          ? { display: "none" }
+          : {
+              backgroundColor: colors.CARD,
+              borderTopColor: colors.BORDER,
+              borderTopWidth: 1,
+              height: 104,
+              paddingTop: 8,
+              paddingBottom: 12,
+            },
         tabBarIcon: ({ focused }) => (
           <DefaultIcon routeName={route.name} focused={focused} colors={colors} />
         ),
       })}
     >
-      {/* Visible tabs */}
       <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="garage" options={{ title: "Garage" }} />
 
-      {/* Center FAB (custom button renders icon + label together) */}
       <Tabs.Screen
         name="tune"
         options={{
-          tabBarLabel: () => null, // we render our own label below the FAB
-          tabBarButton: (props) => <TuneButton {...props} colors={colors} />,
+          tabBarLabel: () => null,
+          tabBarButton: (props) => (
+            <TuneButton {...props} colors={colors} disabled={hideTabs} />
+          ),
         }}
       />
 
       <Tabs.Screen name="sessions" options={{ title: "Sessions" }} />
       <Tabs.Screen name="profile" options={{ title: "Profile" }} />
 
-      {/* Hide nested detail routes from appearing as extra tabs */}
       <Tabs.Screen name="sessions/[id]" options={{ href: null }} />
       <Tabs.Screen name="[id]" options={{ href: null }} />
       <Tabs.Screen name="login" options={{ href: null }} />
@@ -113,18 +122,16 @@ export default function TabsLayout() {
   );
 }
 
-const FAB_SIZE = 76; // larger circle
+const FAB_SIZE = 76;
 
 const makeStyles = (C: ThemeTokens) =>
   StyleSheet.create({
-    /** Container for Tune button inside the tab item */
     tuneWrap: {
       alignItems: "center",
       justifyContent: "flex-start",
       alignSelf: "center",
-      marginTop: -24, // lift so it visually centers with the taller bar
+      marginTop: -24,
     },
-    /** The circle */
     tuneFab: {
       width: FAB_SIZE,
       height: FAB_SIZE,
@@ -138,13 +145,12 @@ const makeStyles = (C: ThemeTokens) =>
       shadowRadius: 16,
       elevation: 10,
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)", // light ring looks good on both themes
+      borderColor: "rgba(255,255,255,0.18)",
     },
     tuneFabActive: {
       shadowOpacity: 0.6,
       transform: [{ scale: 1.04 }],
     },
-    /** The "Tune" text rendered by us (not the default label) */
     tuneLabel: {
       marginTop: 6,
       fontSize: 12,
@@ -152,7 +158,6 @@ const makeStyles = (C: ThemeTokens) =>
       color: C.MUTED,
       textAlign: "center",
     },
-    tuneLabelActive: {
-      color: C.TEXT,
-    },
+    tuneLabelActive: { color: C.TEXT },
+    disabled: { opacity: 0.35 },
   });

@@ -21,7 +21,7 @@ export default function IndexGate() {
         if (!mounted) return;
 
         // Route once based on session
-        router.replace(data?.session ? "/(tabs)" : "/signup"); // 👈 now lands on signup
+        router.replace(data?.session ? "/(tabs)" : "/(tabs)/garage");
       } finally {
         // Allow hide after we’ve requested navigation
         setReadyToHide(true);

@@ -1,9 +1,12 @@
 // app/tune-results.tsx
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BlurView } from "expo-blur";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -21,6 +24,12 @@ import { useTheme } from "../lib/theme";
 
 /* ---------------- Free / Pro limits ---------------- */
 const FREE_BASELINE_LIMIT = 10;
+
+// ✅ Auth entry route (create account)
+const AUTH_ROUTE = "/signup" as const;
+
+// ✅ AsyncStorage key for returning users to their exact tune after auth
+const PENDING_TUNE_KEY = "pending_tune_v1";
 
 type Mode = "balanced" | "comfort" | "precision";
 
@@ -40,7 +49,6 @@ type FeedbackMeta = {
   surface?: string;
   mode?: string;
   keyAreas?: KeyAreaMeta[];
-  // Extra context so tune-feedback can build smart sliders
   riderGoals?: string[];
   riderIssues?: string;
   terrainRaw?: string;
@@ -53,6 +61,13 @@ type ChangedRow = {
   to: string;
   deltaLabel: string;
   direction: "up" | "down";
+};
+
+type PendingTunePayload = {
+  r: string; // encoded JSON string (same as route param)
+  meta: string; // encoded JSON string (same as route param)
+  bikeId?: string | null;
+  savedAt: number;
 };
 
 export default function TuneResultScreen() {
@@ -68,29 +83,79 @@ export default function TuneResultScreen() {
   const { colors: C } = useTheme();
   const S = useMemo(() => makeStyles(C), [C]);
 
+  // ---------------- Restore pending tune (for post-auth return) ----------------
+  const [restored, setRestored] = useState<PendingTunePayload | null>(null);
+  const [restoreTried, setRestoreTried] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      // If route has r/meta, we don't need restore.
+      if (
+        typeof r === "string" &&
+        r.length > 0 &&
+        typeof meta === "string" &&
+        meta.length > 0
+      ) {
+        setRestoreTried(true);
+        return;
+      }
+
+      try {
+        const raw = await AsyncStorage.getItem(PENDING_TUNE_KEY);
+        if (!raw) {
+          setRestoreTried(true);
+          return;
+        }
+        const parsed = JSON.parse(raw) as PendingTunePayload;
+        if (!parsed?.r || !parsed?.meta) {
+          setRestoreTried(true);
+          return;
+        }
+        setRestored(parsed);
+      } catch (e) {
+        console.warn("TuneResults: restore pending tune failed", e);
+      } finally {
+        setRestoreTried(true);
+      }
+    })();
+  }, [r, meta]);
+
+  const effectiveR =
+    (typeof r === "string" && r.length > 0 ? r : restored?.r) ?? undefined;
+  const effectiveMeta =
+    (typeof meta === "string" && meta.length > 0 ? meta : restored?.meta) ??
+    undefined;
+  const effectiveBikeIdParam =
+    (typeof bikeIdParam === "string" && bikeIdParam.length > 0
+      ? bikeIdParam
+      : restored?.bikeId) ?? undefined;
+
   const base: ZeroTuneResult | null = useMemo(() => {
     try {
-      return r ? (JSON.parse(decodeURIComponent(r)) as ZeroTuneResult) : null;
+      return effectiveR
+        ? (JSON.parse(decodeURIComponent(effectiveR)) as ZeroTuneResult)
+        : null;
     } catch {
       return null;
     }
-  }, [r]);
+  }, [effectiveR]);
 
   const metaObj: any = useMemo(() => {
     try {
-      return meta ? JSON.parse(decodeURIComponent(meta)) : null;
+      return effectiveMeta ? JSON.parse(decodeURIComponent(effectiveMeta)) : null;
     } catch {
       return null;
     }
-  }, [meta]);
+  }, [effectiveMeta]);
+
+  // ✅ Guest/onboarding flags (from Tune)
+  const isGuest = !!metaObj?.guest;
+  const isOnboarding = !!metaObj?.onboarding;
 
   // If we’re coming from Tune Two we expect a "previous" tune tucked into meta.
   const previousTune: ZeroTuneResult | null = useMemo(() => {
     const cand =
-      metaObj?.previous ??
-      metaObj?.previousTune ??
-      metaObj?.prev ??
-      null;
+      metaObj?.previous ?? metaObj?.previousTune ?? metaObj?.prev ?? null;
     if (
       cand &&
       typeof cand === "object" &&
@@ -105,12 +170,13 @@ export default function TuneResultScreen() {
 
   const isTuneTwo = !!previousTune;
 
-  // Try to pull a concrete bike id from:
-  // 1) explicit route param from Tune → Results → Feedback → Tune Two
-  // 2) older meta shapes (baseline results)
+  // Try to pull a concrete bike id from param/meta shapes
   const bikeId: string | null = useMemo(() => {
-    if (typeof bikeIdParam === "string" && bikeIdParam.length > 0) {
-      return bikeIdParam;
+    if (
+      typeof effectiveBikeIdParam === "string" &&
+      effectiveBikeIdParam.length > 0
+    ) {
+      return effectiveBikeIdParam;
     }
     return (
       metaObj?.bike?.selectedBikeId ??
@@ -120,12 +186,12 @@ export default function TuneResultScreen() {
       metaObj?.bike_hint?.selectedBikeId ??
       null
     );
-  }, [bikeIdParam, metaObj]);
+  }, [effectiveBikeIdParam, metaObj]);
 
   // Monetization: Pro flag (Supabase-only)
   const [isPro, setIsPro] = useState(false);
 
-  // Load Pro status from Supabase profiles (same source of truth as Tune)
+  // Load Pro status from Supabase profiles
   useEffect(() => {
     (async () => {
       try {
@@ -136,29 +202,24 @@ export default function TuneResultScreen() {
           return;
         }
 
-        try {
-          const { data: prof, error: profErr } = await supabase
-            .from("profiles")
-            .select("pro_until, is_pro")
-            .eq("user_id", user.id)
-            .maybeSingle<ProfileMeta>();
+        const { data: prof, error: profErr } = await supabase
+          .from("profiles")
+          .select("pro_until, is_pro")
+          .eq("user_id", user.id)
+          .maybeSingle<ProfileMeta>();
 
-          if (profErr) {
+        if (profErr || !prof) {
+          if (profErr)
             console.warn("TuneResults: profiles select failed", profErr);
-            setIsPro(false);
-          } else if (!prof) {
-            setIsPro(false);
-          } else {
-            const hasServerPro =
-              !!prof.is_pro ||
-              (!!prof.pro_until &&
-                new Date(prof.pro_until).getTime() > Date.now());
-            setIsPro(hasServerPro);
-          }
-        } catch (e) {
-          console.warn("TuneResults: profiles select threw", e);
           setIsPro(false);
+          return;
         }
+
+        const hasServerPro =
+          !!prof.is_pro ||
+          (!!prof.pro_until && new Date(prof.pro_until).getTime() > Date.now());
+
+        setIsPro(hasServerPro);
       } catch (e) {
         console.warn("TuneResults: init failed", e);
         setIsPro(false);
@@ -168,10 +229,12 @@ export default function TuneResultScreen() {
 
   // variant without showing deltas
   const [mode, setMode] = useState<Mode>("balanced");
+
   const result = useMemo(() => {
     if (!base) return null;
     const f = { ...base.fork };
     const s = { ...base.shock };
+
     if (mode === "comfort") {
       f.comp_clicks = Math.min(30, (f.comp_clicks ?? 0) + 2);
       s.lsc_clicks = Math.min(30, (s.lsc_clicks ?? 0) + 2);
@@ -183,59 +246,48 @@ export default function TuneResultScreen() {
       s.hsc_turns = Math.max(0, (s.hsc_turns ?? 0) + 0.25);
       s.sag_mm = clamp((s.sag_mm ?? 105) - 2, 95, 112);
     }
+
     return { ...base, fork: f, shock: s } as ZeroTuneResult;
   }, [base, mode]);
 
   const [savingBaseline, setSavingBaseline] = useState(false);
 
-  // Preset save (with rename modal) — still here, used later on refined tunes
+  // Preset save (with rename modal)
   const [showNameModal, setShowNameModal] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [savingPreset, setSavingPreset] = useState(false);
 
+  // ✅ Sticky unlock CTA (guest only)
+  const [unlockDismissed, setUnlockDismissed] = useState(false);
+
   useEffect(() => {
-    if (!base) {
+    if (!base && restoreTried && !restored) {
       const t = setTimeout(() => router.replace("/(tabs)/tune"), 10);
       return () => clearTimeout(t);
     }
-  }, [base, router]);
+  }, [base, router, restoreTried, restored]);
 
-  if (!result) {
-    return (
-      <View style={S.emptyWrap}>
-        <Text style={S.emptyText}>No result to display.</Text>
-        <View style={{ height: 12 }} />
-        <Pressable
-          onPress={() => router.replace("/(tabs)/tune")}
-          style={S.btnGhost}
-        >
-          <Text style={S.btnGhostText}>Back to Tune</Text>
-        </Pressable>
-      </View>
-    );
-  }
+  // ---------- meta-derived values (NO early returns above this point) ----------
+  const terrainVal = Array.isArray(metaObj?.context?.terrain)
+    ? metaObj?.context?.terrain[0]
+    : metaObj?.context?.terrain;
 
-  // Air pressure logic (only if tune screen asked for AER)
-  const wantsAir: boolean = !!metaObj?.context?.wants_air_fork;
-  const riderWeight: number | undefined =
-    typeof metaObj?.context?.rider_weight_lbs === "number"
-      ? metaObj.context.rider_weight_lbs
+  const trackName = metaObj?.context?.track ?? metaObj?.track_name ?? null;
+
+  const goalsForMeta: string[] = Array.isArray(metaObj?.context?.goals)
+    ? metaObj.context.goals
+    : [];
+
+  const issuesForMeta: string | undefined =
+    typeof metaObj?.context?.issues === "string"
+      ? metaObj.context.issues
       : undefined;
-  const airBar = wantsAir ? deriveAirBar(result, riderWeight) : undefined;
-  const prevAirBar =
-    wantsAir && previousTune ? deriveAirBar(previousTune, riderWeight) : undefined;
 
   // Prefer bike_hint (from preset) → meta.bike → fallback
   const bikeTitle =
     metaObj?.bike_hint &&
-    (metaObj.bike_hint.make ||
-      metaObj.bike_hint.model ||
-      metaObj.bike_hint.year)
-      ? [
-          metaObj.bike_hint.year,
-          metaObj.bike_hint.make,
-          metaObj.bike_hint.model,
-        ]
+    (metaObj.bike_hint.make || metaObj.bike_hint.model || metaObj.bike_hint.year)
+      ? [metaObj.bike_hint.year, metaObj.bike_hint.make, metaObj.bike_hint.model]
           .filter(Boolean)
           .join(" ")
       : metaObj?.bike &&
@@ -256,35 +308,11 @@ export default function TuneResultScreen() {
           .join(" ")
       : "Custom Bike";
 
-  // Chips
-  const terrainVal = Array.isArray(metaObj?.context?.terrain)
-    ? metaObj?.context?.terrain[0]
-    : metaObj?.context?.terrain;
-  const trackName = metaObj?.context?.track ?? metaObj?.track_name ?? null;
-
-  const headerChips = [
-    metaObj?.preset?.name ? `Preset: ${metaObj.preset.name}` : null,
-    terrainVal ? `Surface: ${cap(terrainVal)}` : null,
-    trackName ? `Track: ${trackName}` : null,
-    typeof result.shock.sag_mm === "number"
-      ? `Sag: ${num(result.shock.sag_mm)} mm`
-      : null,
-    typeof airBar === "number" ? `AER: ${airBar.toFixed(2)} bar` : null,
-  ].filter(Boolean) as string[];
-
   // ----- Tune Two meta: build rider-specific key areas -----
   const keyAreasForFeedback: KeyAreaMeta[] = useMemo(
     () => buildKeyAreasFromContext(metaObj),
     [metaObj]
   );
-
-  const goalsForMeta: string[] = Array.isArray(metaObj?.context?.goals)
-    ? metaObj.context.goals
-    : [];
-  const issuesForMeta: string | undefined =
-    typeof metaObj?.context?.issues === "string"
-      ? metaObj.context.issues
-      : undefined;
 
   const feedbackMeta: FeedbackMeta = useMemo(
     () => ({
@@ -299,236 +327,22 @@ export default function TuneResultScreen() {
     [bikeTitle, terrainVal, mode, keyAreasForFeedback, goalsForMeta, issuesForMeta]
   );
 
-  // 🔧 UPDATED: include bikeId inside the context for Tune Two so the refine flow can save to the right bike
-  const goToFeedback = () => {
-    // Build a lean context object for Tune Two (what the backend actually cares about)
-    // plus bike id hints so tune-feedback can re-embed them.
-    const ctxForFeedback: any = {
-      make:
-        metaObj?.bike?.make ??
-        metaObj?.bike_hint?.make ??
-        undefined,
-      model:
-        metaObj?.bike?.model ??
-        metaObj?.bike_hint?.model ??
-        undefined,
-      year:
-        metaObj?.bike?.year ??
-        metaObj?.bike_hint?.year ??
-        undefined,
-      terrain: terrainVal ?? undefined,
-      track: trackName ?? undefined,
-      temp_f: metaObj?.context?.temp_f ?? undefined,
-      elev_ft: metaObj?.context?.elev_ft ?? undefined,
-      rider: {
-        weight_lbs:
-          typeof metaObj?.context?.rider_weight_lbs === "number"
-            ? metaObj.context.rider_weight_lbs
-            : undefined,
-        skill: metaObj?.context?.rider_skill ?? "intermediate",
-        style: metaObj?.context?.rider_style ?? "short_motos",
-        goals: goalsForMeta,
-      },
-      wants_air_fork: !!metaObj?.context?.wants_air_fork,
+  // Air pressure logic (safe to compute even if result is null)
+  const wantsAir: boolean = !!metaObj?.context?.wants_air_fork;
+  const riderWeight: number | undefined =
+    typeof metaObj?.context?.rider_weight_lbs === "number"
+      ? metaObj.context.rider_weight_lbs
+      : undefined;
 
-      // 🔵 NEW: carry through concrete bike id hints
-      selectedBikeId: bikeId ?? undefined,
-      bike_id: bikeId ?? undefined,
-    };
-
-    router.push({
-      pathname: "/tune-feedback",
-      params: {
-        meta: encodeURIComponent(JSON.stringify(feedbackMeta)),
-        previous: encodeURIComponent(JSON.stringify(result)),
-        context: encodeURIComponent(JSON.stringify(ctxForFeedback)),
-        // Optional extra param: not required, but harmless
-        bikeId: bikeId ?? "",
-      },
-    });
-  };
-
-  // ----- Save baseline / refined (requires bike + Pro/limit logic) -----
-  const canSave = !!bikeId;
-
-  const onSaveBaseline = async () => {
-    if (!canSave) {
-      toast.show(
-        "Pick a bike first (Garage → select bike), then save your setup.",
-        {
-          kind: "error",
-        }
-      );
-      return;
-    }
-
-    try {
-      setSavingBaseline(true);
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user?.id) {
-        router.push("/login");
-        return;
-      }
-
-      // Free plan: enforce saved-baseline cap (using same sessions table)
-      if (!isPro) {
-        const { count, error: countErr } = await supabase
-          .from("sessions")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", auth.user.id);
-
-        if (countErr) throw countErr;
-
-        if ((count ?? 0) >= FREE_BASELINE_LIMIT) {
-          toast.show(
-            `Free plan: up to ${FREE_BASELINE_LIMIT} saved baselines. Unlock Pro for unlimited history.`,
-            { kind: "info" }
-          );
-          router.push("/premium");
-          return;
-        }
-      }
-
-      const insert = {
-        user_id: auth.user.id,
-        bike_id: bikeId, // REQUIRED now
-        rode_on: new Date().toISOString().slice(0, 10),
-        surface: Array.isArray(metaObj?.context?.terrain)
-          ? metaObj.context.terrain[0] ?? null
-          : metaObj?.context?.terrain ?? null,
-        track: trackName ?? null,
-        temp_f: metaObj?.context?.temp_f ?? null,
-        elev_ft: metaObj?.context?.elev_ft ?? null,
-        fork_comp: num(result.fork.comp_clicks),
-        fork_reb: num(result.fork.reb_clicks),
-        shock_comp: num(result.shock.lsc_clicks),
-        shock_reb: num(result.shock.reb_clicks),
-        sag_mm: num(result.shock.sag_mm),
-        notes: [
-          isTuneTwo
-            ? "Refined setup from Dialed Offroad AI"
-            : "Baseline from Dialed Offroad AI",
-          metaObj?.preset?.name
-            ? `Preset: ${metaObj.preset.name}`
-            : "Zero-based tune",
-          metaObj?.bike_hint
-            ? `Bike: ${[
-                metaObj.bike_hint.year,
-                metaObj.bike_hint.make,
-                metaObj.bike_hint.model,
-              ]
-                .filter(Boolean)
-                .join(" ")}`
-            : metaObj?.bike
-            ? `Bike: ${[
-                metaObj.bike.year,
-                metaObj.bike.make,
-                metaObj.bike.model,
-              ]
-                .filter(Boolean)
-                .join(" ")}`
-            : null,
-          typeof airBar === "number"
-            ? `AER pressure: ${airBar.toFixed(2)} bar`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" — "),
-      };
-
-      const { error } = await supabase.from("sessions").insert(insert);
-      if (error) throw error;
-      toast.show(
-        isTuneTwo ? "Refined setup saved ✅" : "Baseline saved ✅",
-        { kind: "success" }
-      );
-      router.push("/(tabs)/sessions");
-    } catch (e: any) {
-      toast.show(e?.message ?? "Save failed", { kind: "error" });
-    } finally {
-      setSavingBaseline(false);
-    }
-  };
-
-  // ----- Preset: open naming modal (kept for future refined tunes) -----
-  const startSavePreset = async () => {
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user?.id) {
-        router.push("/login");
-        return;
-      }
-
-      if (!isPro) {
-        toast.show("Pro feature: save custom presets and load them anytime.", {
-          kind: "info",
-        });
-        router.push("/premium");
-        return;
-      }
-
-      const suggested =
-        (trackName ? `${trackName} – ` : "My Preset – ") +
-        new Date().toLocaleDateString();
-      setPresetName(suggested);
-      setShowNameModal(true);
-    } catch {
-      router.push("/login");
-    }
-  };
-
-  const confirmSavePreset = async () => {
-    try {
-      setSavingPreset(true);
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user?.id) throw new Error("Please sign in");
-
-      if (!isPro) {
-        setSavingPreset(false);
-        toast.show("Pro feature: save custom presets and load them anytime.", {
-          kind: "info",
-        });
-        router.push("/premium");
-        return;
-      }
-
-      const terrain = Array.isArray(metaObj?.context?.terrain)
-        ? metaObj.context.terrain.map((t: any) => String(t).trim())
-        : metaObj?.context?.terrain
-        ? [String(metaObj.context.terrain).trim()]
-        : [];
-
-      const { error } = await supabase.from("user_presets").insert({
-        user_id: user.id,
-        name:
-          presetName.trim() ||
-          `My Preset – ${new Date().toLocaleDateString()}`,
-        track_name: trackName ?? null,
-        terrain,
-        bike_hint: {
-          year: metaObj?.bike?.year ?? metaObj?.bike_hint?.year ?? null,
-          make: metaObj?.bike?.make ?? metaObj?.bike_hint?.make ?? null,
-          model: metaObj?.bike?.model ?? metaObj?.bike_hint?.model ?? null,
-        },
-        tune: base, // store original tune payload
-      });
-
-      if (error) throw error;
-
-      setShowNameModal(false);
-      toast.show("Saved to My Presets ✅", { kind: "success" });
-    } catch (e: any) {
-      toast.show(e?.message ?? "Failed to save preset", { kind: "error" });
-    } finally {
-      setSavingPreset(false);
-    }
-  };
+  const airBar =
+    wantsAir && result ? deriveAirBar(result, riderWeight) : undefined;
+  const prevAirBar =
+    wantsAir && previousTune ? deriveAirBar(previousTune, riderWeight) : undefined;
 
   // ---------- Build "what changed" rows (Tune Two only) ----------
+  // ✅ MUST be above early returns (hook order)
   const changedRows: ChangedRow[] = useMemo(() => {
-    if (!isTuneTwo || !previousTune) return [];
+    if (!isTuneTwo || !previousTune || !result) return [];
 
     const rows: ChangedRow[] = [];
 
@@ -540,15 +354,14 @@ export default function TuneResultScreen() {
     ) => {
       if (!Number.isFinite(prevVal) || !Number.isFinite(nextVal)) return;
       const delta = nextVal - prevVal;
-      if (Math.abs(delta) < 1) return; // ignore tiny one-click noise
+      if (Math.abs(delta) < 1) return;
 
       rows.push({
         id,
         label,
         from: `${num(prevVal)} clicks`,
         to: `${num(nextVal)} clicks`,
-        deltaLabel:
-          (delta > 0 ? "+" : "") + `${delta.toFixed(0)} clicks`,
+        deltaLabel: (delta > 0 ? "+" : "") + `${delta.toFixed(0)} clicks`,
         direction: delta > 0 ? "up" : "down",
       });
     };
@@ -568,8 +381,7 @@ export default function TuneResultScreen() {
         label,
         from: `${prevVal.toFixed(2)} turns`,
         to: `${nextVal.toFixed(2)} turns`,
-        deltaLabel:
-          (delta > 0 ? "+" : "") + `${delta.toFixed(2)} turns`,
+        deltaLabel: (delta > 0 ? "+" : "") + `${delta.toFixed(2)} turns`,
         direction: delta > 0 ? "up" : "down",
       });
     };
@@ -580,10 +392,7 @@ export default function TuneResultScreen() {
       prevVal?: number,
       nextVal?: number
     ) => {
-      if (
-        !Number.isFinite(Number(prevVal)) ||
-        !Number.isFinite(Number(nextVal))
-      )
+      if (!Number.isFinite(Number(prevVal)) || !Number.isFinite(Number(nextVal)))
         return;
       const p = Number(prevVal);
       const n = Number(nextVal);
@@ -595,13 +404,11 @@ export default function TuneResultScreen() {
         label,
         from: `${p.toFixed(2)} bar`,
         to: `${n.toFixed(2)} bar`,
-        deltaLabel:
-          (delta > 0 ? "+" : "") + `${delta.toFixed(2)} bar`,
+        deltaLabel: (delta > 0 ? "+" : "") + `${delta.toFixed(2)} bar`,
         direction: delta > 0 ? "up" : "down",
       });
     };
 
-    // Clicker changes
     pushIfChangedClicks(
       "fork_comp",
       "Fork compression",
@@ -633,27 +440,321 @@ export default function TuneResultScreen() {
       result.shock.hsc_turns
     );
 
-    // Air changes (this is the bit you asked for)
-    if (wantsAir) {
-      pushIfChangedAir("fork_air", "Fork air (AER)", prevAirBar, airBar);
-    }
+    if (wantsAir) pushIfChangedAir("fork_air", "Fork air (AER)", prevAirBar, airBar);
 
     return rows;
   }, [isTuneTwo, previousTune, result, wantsAir, airBar, prevAirBar]);
 
-  // 🔵 Title: drop the “(Tune Two)” — just “Refined Setup”
-  const headerTitle = isTuneTwo
-    ? "Refined Setup"
-    : "Your Suggested Setup";
+  // Teaser steps for guest
+  // ✅ MUST be above early returns (hook order)
+  const teaserSteps = useMemo(() => {
+    const surface = terrainVal ? cap(terrainVal) : "today’s terrain";
+    const goals = goalsForMeta.length
+      ? goalsForMeta.slice(0, 2).map(cap).join(" + ")
+      : null;
 
+    return [
+      `Set sag to the target range and verify free sag. (Surface: ${surface})`,
+      `Ride 5–10 minutes and note: front vs rear balance (too harsh / too soft / deflecting).`,
+      `Make changes 2 clicks at a time (or 0.1–0.2 bar), then re-test.`,
+      goals ? `Focus your test on: ${goals}.` : null,
+    ].filter(Boolean) as string[];
+  }, [terrainVal, goalsForMeta]);
+
+  // ✅ EARLY RETURNS MUST BE AFTER ALL HOOKS ABOVE
+  if (!restoreTried) {
+    return (
+      <View style={S.emptyWrap}>
+        <ActivityIndicator color={C.TEXT} />
+        <Text style={[S.emptyText, { marginTop: 10 }]}>Loading your tune…</Text>
+      </View>
+    );
+  }
+
+  if (!result) {
+    return (
+      <View style={S.emptyWrap}>
+        <Text style={S.emptyText}>No result to display.</Text>
+        <View style={{ height: 12 }} />
+        <Pressable
+          onPress={() => router.replace("/(tabs)/tune")}
+          style={S.btnGhost}
+        >
+          <Text style={S.btnGhostText}>Back to Tune</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // Chips
+  const headerChips = [
+    metaObj?.preset?.name ? `Preset: ${metaObj.preset.name}` : null,
+    terrainVal ? `Surface: ${cap(terrainVal)}` : null,
+    trackName ? `Track: ${trackName}` : null,
+    typeof result.shock.sag_mm === "number"
+      ? `Sag: ${num(result.shock.sag_mm)} mm`
+      : null,
+    typeof airBar === "number" ? `AER: ${airBar.toFixed(2)} bar` : null,
+  ].filter(Boolean) as string[];
+
+  // ✅ Save pending tune BEFORE auth so they return to this exact screen
+  const persistPendingTune = async () => {
+    try {
+      if (!effectiveR || !effectiveMeta) return;
+      const payload: PendingTunePayload = {
+        r: effectiveR,
+        meta: effectiveMeta,
+        bikeId: bikeId ?? null,
+        savedAt: Date.now(),
+      };
+      await AsyncStorage.setItem(PENDING_TUNE_KEY, JSON.stringify(payload));
+    } catch (e) {
+      console.warn("TuneResults: persist pending tune failed", e);
+    }
+  };
+
+  // ✅ Auth funnel for onboarding (signup -> paywall)
+  const goToAuth = async () => {
+    await persistPendingTune();
+
+    router.push({
+      pathname: AUTH_ROUTE,
+      params: {
+        // ✅ after signup, go to paywall
+        returnTo: "/premium",
+      },
+    } as any);
+  };
+
+  // 🔧 include bikeId inside the context for Tune Two so refine flow can save to right bike
+  const goToFeedback = () => {
+    if (isGuest) return; // Guest refine is locked
+
+    const ctxForFeedback: any = {
+      make: metaObj?.bike?.make ?? metaObj?.bike_hint?.make ?? undefined,
+      model: metaObj?.bike?.model ?? metaObj?.bike_hint?.model ?? undefined,
+      year: metaObj?.bike?.year ?? metaObj?.bike_hint?.year ?? undefined,
+      terrain: terrainVal ?? undefined,
+      track: trackName ?? undefined,
+      temp_f: metaObj?.context?.temp_f ?? undefined,
+      elev_ft: metaObj?.context?.elev_ft ?? undefined,
+      rider: {
+        weight_lbs:
+          typeof metaObj?.context?.rider_weight_lbs === "number"
+            ? metaObj.context.rider_weight_lbs
+            : undefined,
+        skill: metaObj?.context?.rider_skill ?? "intermediate",
+        style: metaObj?.context?.rider_style ?? "short_motos",
+        goals: goalsForMeta,
+      },
+      wants_air_fork: !!metaObj?.context?.wants_air_fork,
+      selectedBikeId: bikeId ?? undefined,
+      bike_id: bikeId ?? undefined,
+    };
+
+    router.push({
+      pathname: "/tune-feedback",
+      params: {
+        meta: encodeURIComponent(JSON.stringify(feedbackMeta)),
+        previous: encodeURIComponent(JSON.stringify(result)),
+        context: encodeURIComponent(JSON.stringify(ctxForFeedback)),
+        bikeId: bikeId ?? "",
+      },
+    });
+  };
+
+  // ----- Save baseline / refined (requires bike + Pro/limit logic) -----
+  const canSave = !!bikeId;
+  const guestLocksActions = isGuest;
+
+  const onSaveBaseline = async () => {
+    if (guestLocksActions) {
+      await goToAuth();
+      return;
+    }
+
+    if (!canSave) {
+      toast.show(
+        "Pick a bike first (Garage → select bike), then save your setup.",
+        { kind: "error" }
+      );
+      return;
+    }
+
+    try {
+      setSavingBaseline(true);
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user?.id) {
+        await goToAuth();
+        return;
+      }
+
+      // Free plan: enforce saved-baseline cap (using sessions table)
+      if (!isPro) {
+        const { count, error: countErr } = await supabase
+          .from("sessions")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", auth.user.id);
+
+        if (countErr) throw countErr;
+
+        if ((count ?? 0) >= FREE_BASELINE_LIMIT) {
+          toast.show(
+            `Free plan: up to ${FREE_BASELINE_LIMIT} saved baselines. Unlock Pro for unlimited history.`,
+            { kind: "info" }
+          );
+          router.push("/premium");
+          return;
+        }
+      }
+
+      const insert = {
+        user_id: auth.user.id,
+        bike_id: bikeId,
+        rode_on: new Date().toISOString().slice(0, 10),
+        surface: Array.isArray(metaObj?.context?.terrain)
+          ? metaObj.context.terrain[0] ?? null
+          : metaObj?.context?.terrain ?? null,
+        track: trackName ?? null,
+        temp_f: metaObj?.context?.temp_f ?? null,
+        elev_ft: metaObj?.context?.elev_ft ?? null,
+        fork_comp: num(result.fork.comp_clicks),
+        fork_reb: num(result.fork.reb_clicks),
+        shock_comp: num(result.shock.lsc_clicks),
+        shock_reb: num(result.shock.reb_clicks),
+        sag_mm: num(result.shock.sag_mm),
+        notes: [
+          isTuneTwo
+            ? "Refined setup from Dialed Offroad AI"
+            : "Baseline from Dialed Offroad AI",
+          metaObj?.preset?.name ? `Preset: ${metaObj.preset.name}` : "Zero-based tune",
+          metaObj?.bike_hint
+            ? `Bike: ${[
+                metaObj.bike_hint.year,
+                metaObj.bike_hint.make,
+                metaObj.bike_hint.model,
+              ]
+                .filter(Boolean)
+                .join(" ")}`
+            : metaObj?.bike
+            ? `Bike: ${[
+                metaObj.bike.year,
+                metaObj.bike.make,
+                metaObj.bike.model,
+              ]
+                .filter(Boolean)
+                .join(" ")}`
+            : null,
+          typeof airBar === "number" ? `AER pressure: ${airBar.toFixed(2)} bar` : null,
+        ]
+          .filter(Boolean)
+          .join(" — "),
+      };
+
+      const { error } = await supabase.from("sessions").insert(insert);
+      if (error) throw error;
+
+      await AsyncStorage.removeItem(PENDING_TUNE_KEY);
+
+      toast.show(isTuneTwo ? "Refined setup saved ✅" : "Baseline saved ✅", {
+        kind: "success",
+      });
+      router.push("/(tabs)/sessions");
+    } catch (e: any) {
+      toast.show(e?.message ?? "Save failed", { kind: "error" });
+    } finally {
+      setSavingBaseline(false);
+    }
+  };
+
+  // ----- Preset: open naming modal (kept for future refined tunes) -----
+  const startSavePreset = async () => {
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth?.user;
+      if (!user?.id) {
+        await goToAuth();
+        return;
+      }
+
+      if (!isPro) {
+        toast.show("Pro feature: save custom presets and load them anytime.", {
+          kind: "info",
+        });
+        router.push("/premium");
+        return;
+      }
+
+      const suggested =
+        (trackName ? `${trackName} – ` : "My Preset – ") +
+        new Date().toLocaleDateString();
+      setPresetName(suggested);
+      setShowNameModal(true);
+    } catch {
+      await goToAuth();
+    }
+  };
+
+  const confirmSavePreset = async () => {
+    try {
+      setSavingPreset(true);
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth?.user;
+      if (!user?.id) throw new Error("Please sign in");
+
+      if (!isPro) {
+        setSavingPreset(false);
+        toast.show("Pro feature: save custom presets and load them anytime.", {
+          kind: "info",
+        });
+        router.push("/premium");
+        return;
+      }
+
+      const terrain = Array.isArray(metaObj?.context?.terrain)
+        ? metaObj.context.terrain.map((t: any) => String(t).trim())
+        : metaObj?.context?.terrain
+        ? [String(metaObj.context.terrain).trim()]
+        : [];
+
+      const { error } = await supabase.from("user_presets").insert({
+        user_id: user.id,
+        name: presetName.trim() || `My Preset – ${new Date().toLocaleDateString()}`,
+        track_name: trackName ?? null,
+        terrain,
+        bike_hint: {
+          year: metaObj?.bike?.year ?? metaObj?.bike_hint?.year ?? null,
+          make: metaObj?.bike?.make ?? metaObj?.bike_hint?.make ?? null,
+          model: metaObj?.bike?.model ?? metaObj?.bike_hint?.model ?? null,
+        },
+        tune: base,
+      });
+
+      if (error) throw error;
+
+      setShowNameModal(false);
+      toast.show("Saved to My Presets ✅", { kind: "success" });
+    } catch (e: any) {
+      toast.show(e?.message ?? "Failed to save preset", { kind: "error" });
+    } finally {
+      setSavingPreset(false);
+    }
+  };
+
+  const headerTitle = isTuneTwo ? "Refined Setup" : "Your Suggested Setup";
   const headerSubtitle = bikeTitle;
+
+  // ✅ IMPORTANT: blur is based on PRO now (so it unblurs after trial/purchase)
+  const shouldBlur = !isPro;
+
+  const onUnlock = async () => {
+    await goToAuth();
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: C.BG }}>
-      {/* Safe-area spacer so the header never clashes with the notch */}
       <View style={[S.topSafeSpacer, { height: insets.top }]} />
 
-      {/* Solid accent header */}
       <View style={S.headerSolid}>
         <Text style={S.title}>{headerTitle}</Text>
         <Text style={S.subtitle}>{headerSubtitle}</Text>
@@ -669,32 +770,32 @@ export default function TuneResultScreen() {
         </View>
 
         <Text style={S.zeroText}>
-          Zero-based: turn each clicker gently all the way IN (clockwise,
-          toward the "+" on the cap) until it lightly stops, then count clicks
-          OUT from there.
+          Zero-based: turn each clicker gently all the way IN (clockwise, toward the "+") until it lightly stops, then
+          count clicks OUT from there.
         </Text>
 
-        {/* Mode chips */}
         <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
           {(["balanced", "comfort", "precision"] as Mode[]).map((m) => (
-            <Pressable
-              key={m}
-              onPress={() => setMode(m)}
-              style={[S.modePill, mode === m && S.modePillOn]}
-            >
-              <Text style={[S.modePillText, mode === m && S.modePillTextOn]}>
-                {cap(m)}
-              </Text>
+            <Pressable key={m} onPress={() => setMode(m)} style={[S.modePill, mode === m && S.modePillOn]}>
+              <Text style={[S.modePillText, mode === m && S.modePillTextOn]}>{cap(m)}</Text>
             </Pressable>
           ))}
         </View>
+
+        {isOnboarding && (
+          <View style={{ marginTop: 10 }}>
+            <Text style={S.onbLine}>Nice — that’s your first tune.</Text>
+            {shouldBlur ? <Text style={S.onbSub}>Unlock to see the exact clicker numbers + notes.</Text> : null}
+          </View>
+        )}
       </View>
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{
+          paddingBottom: 24 + (shouldBlur && !unlockDismissed ? 170 + insets.bottom : 0),
+        }}
       >
-        {/* What changed (Tune Two only) */}
         {isTuneTwo && changedRows.length > 0 && (
           <View style={[S.card, S.lift]}>
             <Text style={S.h1}>What changed from last time</Text>
@@ -719,96 +820,69 @@ export default function TuneResultScreen() {
           </View>
         )}
 
-        {/* Fork */}
-        <View style={[S.card, S.lift]}>
-          <Text style={S.h1}>Fork</Text>
-          <Metric
-            C={C}
-            S={S}
-            label="Compression"
-            value={`${num(result.fork.comp_clicks)} clicks`}
-            hint="Clicks out from zero"
-          />
+        <BlurCard enabled={shouldBlur} C={C} S={S} title="Fork" subtitle="Unlock to reveal exact clicker numbers.">
+          <Metric C={C} S={S} label="Compression" value={`${num(result.fork.comp_clicks)} clicks`} hint="Clicks out from zero" />
           <Bar C={C} value={num(result.fork.comp_clicks)} max={30} />
-          <Metric
-            C={C}
-            S={S}
-            label="Rebound"
-            value={`${num(result.fork.reb_clicks)} clicks`}
-            hint="Clicks out from zero"
-          />
+          <Metric C={C} S={S} label="Rebound" value={`${num(result.fork.reb_clicks)} clicks`} hint="Clicks out from zero" />
           <Bar C={C} value={num(result.fork.reb_clicks)} max={30} />
           {typeof airBar === "number" && (
             <>
-              <Metric
-                C={C}
-                S={S}
-                label="Air (AER)"
-                value={`${airBar.toFixed(2)} bar`}
-                hint="WP AER fork pressure"
-              />
+              <Metric C={C} S={S} label="Air (AER)" value={`${airBar.toFixed(2)} bar`} hint="WP AER fork pressure" />
               <Bar C={C} value={airBar} max={14} />
             </>
           )}
-        </View>
+        </BlurCard>
 
-        {/* Shock */}
-        <View style={[S.card, S.lift]}>
-          <Text style={S.h1}>Shock</Text>
-          <Metric
-            C={C}
-            S={S}
-            label="Low-Speed Comp"
-            value={`${num(result.shock.lsc_clicks)} clicks`}
-          />
+        <BlurCard enabled={shouldBlur} C={C} S={S} title="Shock" subtitle="Create an account to unlock this tune for free.">
+          <Metric C={C} S={S} label="Low-Speed Comp" value={`${num(result.shock.lsc_clicks)} clicks`} />
           <Bar C={C} value={num(result.shock.lsc_clicks)} max={30} />
-          <Metric
-            C={C}
-            S={S}
-            label="High-Speed Comp"
-            value={`${num(result.shock.hsc_turns, 0).toFixed(1)} turns`}
-          />
+          <Metric C={C} S={S} label="High-Speed Comp" value={`${num(result.shock.hsc_turns, 0).toFixed(1)} turns`} />
           <Bar C={C} value={num(result.shock.hsc_turns, 0)} max={3} />
-          <Metric
-            C={C}
-            S={S}
-            label="Rebound"
-            value={`${num(result.shock.reb_clicks)} clicks`}
-          />
+          <Metric C={C} S={S} label="Rebound" value={`${num(result.shock.reb_clicks)} clicks`} />
           <Bar C={C} value={num(result.shock.reb_clicks)} max={30} />
-          <Metric
-            C={C}
-            S={S}
-            label="Sag"
-            value={`${num(result.shock.sag_mm)} mm`}
-          />
-          <Bar
-            C={C}
-            value={num(result.shock.sag_mm)}
-            max={120}
-            goodMin={100}
-            goodMax={108}
-          />
-        </View>
+          <Metric C={C} S={S} label="Sag" value={`${num(result.shock.sag_mm)} mm`} />
+          <Bar C={C} value={num(result.shock.sag_mm)} max={120} goodMin={100} goodMax={108} />
+        </BlurCard>
 
-        {/* Notes/Test plan */}
         {base?.notes?.length ? (
-          <View style={S.card}>
-            <Text style={S.h1}>{isTuneTwo ? "Refined test plan" : "Test Plan"}</Text>
-            <View style={{ marginTop: 4 }}>
-              {base.notes.map((n, i) => (
-                <View key={`${i}-${n}`} style={S.stepRow}>
-                  <View style={S.stepBadge}>
-                    <Text style={S.stepBadgeText}>{i + 1}</Text>
+          shouldBlur ? (
+            <BlurCard enabled C={C} S={S} title={isTuneTwo ? "Refined test plan" : "Test Plan"} subtitle="Unlock to reveal your full notes + plan.">
+              <Text style={S.bodySmall}>Here’s a quick starter plan while your full notes are locked:</Text>
+              <View style={{ marginTop: 8 }}>
+                {teaserSteps.map((n, i) => (
+                  <View key={`${i}-${n}`} style={S.stepRow}>
+                    <View style={S.stepBadge}>
+                      <Text style={S.stepBadgeText}>{i + 1}</Text>
+                    </View>
+                    <Text style={S.stepText}>{n}</Text>
                   </View>
-                  <Text style={S.stepText}>{n}</Text>
-                </View>
-              ))}
+                ))}
+              </View>
+
+              <View style={[S.lockHintBox, { marginTop: 10 }]}>
+                <Ionicons name="lock-closed" size={16} color={C.WARN ?? "#FFC36A"} />
+                <Text style={S.lockHintText}>
+                  Unlock to see exact clickers + your personalized notes based on your goals/issues.
+                </Text>
+              </View>
+            </BlurCard>
+          ) : (
+            <View style={S.card}>
+              <Text style={S.h1}>{isTuneTwo ? "Refined test plan" : "Test Plan"}</Text>
+              <View style={{ marginTop: 4 }}>
+                {base.notes.map((n, i) => (
+                  <View key={`${i}-${n}`} style={S.stepRow}>
+                    <View style={S.stepBadge}>
+                      <Text style={S.stepBadgeText}>{i + 1}</Text>
+                    </View>
+                    <Text style={S.stepText}>{n}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
-          </View>
+          )
         ) : null}
 
-        {/* Ride & refine (Tune Two) – only show on baseline */}
         {!isTuneTwo && (
           <View style={S.card}>
             <View style={S.rowBetweenAlign}>
@@ -820,82 +894,88 @@ export default function TuneResultScreen() {
             <Text style={S.body}>
               1. Set these numbers on your bike.{"\n"}
               2. Ride 5–10 minutes on today&apos;s terrain.{"\n"}
-              3. Come back and we&apos;ll use your feedback for a second-pass
-              pro adjustment.
+              3. Come back and we&apos;ll use your feedback for a second-pass pro adjustment.
             </Text>
             <View style={{ height: 6 }} />
             <Text style={S.bodySmall}>
-              We&apos;ll only move things a few clicks / 0.1–0.2 bar at a time.
-              You&apos;ll rate this setup and flag issues like harshness, kicks,
-              or bottoming, and we&apos;ll build a refined tune on top of this
-              baseline.
+              We&apos;ll only move things a few clicks / 0.1–0.2 bar at a time. You&apos;ll rate this setup and flag
+              issues like harshness, kicks, or bottoming, and we&apos;ll build a refined tune on top of this baseline.
             </Text>
 
-            <Pressable
-              onPress={goToFeedback}
-              style={[S.btnPrimary, { marginTop: 14 }]}
-            >
-              <Text style={S.btnPrimaryText}>
-                Refine this tune after my ride
-              </Text>
-            </Pressable>
+            {shouldBlur ? (
+              <Pressable onPress={() => {}} disabled style={[S.btnPrimary, S.btnDisabled, { marginTop: 14 }]}>
+                <Text style={S.btnPrimaryText}>Unlock to refine</Text>
+              </Pressable>
+            ) : (
+              <Pressable onPress={goToFeedback} style={[S.btnPrimary, { marginTop: 14 }]}>
+                <Text style={S.btnPrimaryText}>Refine this tune after my ride</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
-        {/* Save + back buttons */}
         <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-          {!canSave ? (
+          {!shouldBlur && !canSave ? (
             <View style={S.helperBox}>
-              <Ionicons
-                name="alert-circle"
-                size={16}
-                color={C.WARN ?? "#FFC36A"}
-              />
+              <Ionicons name="alert-circle" size={16} color={C.WARN ?? "#FFC36A"} />
               <Text style={S.helperText}>
-                Select or add a bike in your Garage to enable{" "}
-                {isTuneTwo ? "“Save refined setup”." : "“Save baseline”."}
+                Select or add a bike in your Garage to enable {isTuneTwo ? "“Save refined setup”." : "“Save baseline”."}
               </Text>
             </View>
           ) : null}
 
-          <Pressable
-            onPress={onSaveBaseline}
-            style={[
-              S.btnPrimary,
-              (!canSave || savingBaseline) && S.btnDisabled,
-            ]}
-            disabled={!canSave || savingBaseline}
-          >
-            {savingBaseline ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={S.btnPrimaryText}>
-                {isTuneTwo ? "Save refined setup" : "Save baseline"}
-              </Text>
-            )}
-          </Pressable>
+          {!shouldBlur ? (
+            <Pressable
+              onPress={onSaveBaseline}
+              style={[S.btnPrimary, (!canSave || savingBaseline) && S.btnDisabled]}
+              disabled={!canSave || savingBaseline}
+            >
+              {savingBaseline ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={S.btnPrimaryText}>{isTuneTwo ? "Save refined setup" : "Save baseline"}</Text>
+              )}
+            </Pressable>
+          ) : null}
 
           <View style={{ height: 10 }} />
-          <Pressable
-            onPress={() => router.replace("/(tabs)/tune")}
-            style={S.btnGhost}
-          >
+          <Pressable onPress={() => router.replace("/(tabs)/tune")} style={S.btnGhost}>
             <Text style={S.btnGhostText}>Back</Text>
           </Pressable>
         </View>
       </ScrollView>
 
-      {/* Naming Modal (kept for future refined tunes) */}
-      <Modal
-        visible={showNameModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowNameModal(false)}
-      >
+      {shouldBlur && !unlockDismissed && (
+        <View style={[S.unlockBarWrap, { paddingBottom: insets.bottom + 12 }]}>
+          {Platform.OS === "ios" ? (
+            <BlurView intensity={25} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: C.CARD }]} />
+          )}
+
+          <View style={S.unlockCard}>
+            <Pressable onPress={() => setUnlockDismissed(true)} hitSlop={10} style={S.unlockClose}>
+              <Ionicons name="close" size={18} color={C.MUTED} />
+            </Pressable>
+
+            <Text style={S.unlockTitleBig}>Unlock this tune for free</Text>
+            <Text style={S.unlockSubStack}>Create an account to reveal exact clickers + save your bike.</Text>
+
+            <Pressable onPress={onUnlock} style={S.unlockBtnFull}>
+              <Text style={S.unlockBtnText}>Unlock for free</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      <Modal visible={showNameModal} transparent animationType="fade" onRequestClose={() => setShowNameModal(false)}>
         <View style={S.modalWrap}>
           <Pressable
             style={S.backdrop}
-            onPress={() => setShowNameModal(false)}
+            onPress={() => {
+              Keyboard.dismiss();
+              setShowNameModal(false);
+            }}
           />
           <View style={S.modalCard}>
             <Text style={S.modalTitle}>Name your preset</Text>
@@ -907,31 +987,70 @@ export default function TuneResultScreen() {
               style={S.input}
               autoFocus
               returnKeyType="done"
-              onSubmitEditing={confirmSavePreset}
+              onSubmitEditing={() => {
+                Keyboard.dismiss();
+                confirmSavePreset();
+              }}
             />
             <View style={S.row}>
-              <Pressable
-                style={[S.modalBtnGhost, { flex: 1 }]}
-                onPress={() => setShowNameModal(false)}
-              >
+              <Pressable style={[S.modalBtnGhost, { flex: 1 }]} onPress={() => setShowNameModal(false)}>
                 <Text style={S.modalBtnGhostText}>Cancel</Text>
               </Pressable>
               <View style={{ width: 8 }} />
-              <Pressable
-                style={[S.modalBtnPrimary, { flex: 1 }]}
-                onPress={confirmSavePreset}
-                disabled={savingPreset}
-              >
-                {savingPreset ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={S.modalBtnPrimaryText}>Save</Text>
-                )}
+              <Pressable style={[S.modalBtnPrimary, { flex: 1 }]} onPress={confirmSavePreset} disabled={savingPreset}>
+                {savingPreset ? <ActivityIndicator color="#fff" /> : <Text style={S.modalBtnPrimaryText}>Save</Text>}
               </Pressable>
             </View>
           </View>
         </View>
       </Modal>
+    </View>
+  );
+}
+
+/* -------------------- Guest blur wrapper -------------------- */
+function BlurCard({
+  enabled,
+  title,
+  subtitle,
+  children,
+  C,
+  S,
+}: {
+  enabled: boolean;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  C: any;
+  S: any;
+}) {
+  return (
+    <View style={[S.card, S.lift, { overflow: "hidden" }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={S.h1}>{title}</Text>
+        {enabled ? (
+          <View style={S.lockPill}>
+            <Ionicons name="lock-closed" size={12} color="#fff" />
+            <Text style={S.lockPillText}>Locked</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={{ marginTop: 2 }}>{children}</View>
+
+      {enabled ? (
+        <>
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <BlurView intensity={22} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+          </View>
+
+          <View style={S.lockOverlay} pointerEvents="none">
+            <Ionicons name="lock-closed" size={18} color="#fff" />
+            <Text style={S.lockOverlayTitle}>Unlock your full tune</Text>
+            {subtitle ? <Text style={S.lockOverlaySub}>{subtitle}</Text> : null}
+          </View>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -948,28 +1067,18 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-// 🔻 UPDATED: scale air pressure using rider weight around the AI baseline
 function deriveAirBar(res: ZeroTuneResult, rider?: number) {
-  // Use AI-supplied pressure as the ~185 lb baseline if present
-  const aiBaseline =
-    typeof res.fork.air_pressure_bar === "number"
-      ? res.fork.air_pressure_bar
-      : 10.6; // fallback baseline at ~185 lb
+  const aiBaseline = typeof res.fork.air_pressure_bar === "number" ? res.fork.air_pressure_bar : 10.6;
 
-  // If we don't know rider weight, just show the AI value (or fallback)
   if (!Number.isFinite(Number(rider))) {
     return clamp(Number(aiBaseline.toFixed(2)), 7, 14);
   }
 
   const w = Number(rider);
-
-  // Scale around ~185 lb: about 0.2 bar per 10 lb
   const est = aiBaseline + 0.2 * ((w - 185) / 10);
-
   return clamp(Number(est.toFixed(2)), 7, 14);
 }
 
-/* Build rider-specific key areas for Tune Two */
 function buildKeyAreasFromContext(metaObj: any): KeyAreaMeta[] {
   const goalsRaw: string[] = Array.isArray(metaObj?.context?.goals)
     ? metaObj.context.goals.map((g: any) => String(g).toLowerCase())
@@ -1024,13 +1133,10 @@ function buildKeyAreasFromContext(metaObj: any): KeyAreaMeta[] {
     pushUnique(BIG_HITS);
   }
 
-  // Fallback / fill
   [SMALL_CHOP, BIG_HITS].forEach(pushUnique);
-
   return areas.slice(0, 2);
 }
 
-/* small presentational pieces (theme-aware) */
 function Metric({
   label,
   value,
@@ -1069,8 +1175,7 @@ function Bar({
   C: any;
 }) {
   const pct = Math.max(0, Math.min(1, value / max));
-  const inGood =
-    goodMin != null && goodMax != null && value >= goodMin && value <= goodMax;
+  const inGood = goodMin != null && goodMax != null && value >= goodMin && value <= goodMax;
   return (
     <View
       style={{
@@ -1111,7 +1216,6 @@ function Bar({
   );
 }
 
-/* styles */
 const makeStyles = (C: {
   BG: string;
   CARD: string;
@@ -1140,9 +1244,7 @@ const makeStyles = (C: {
       textAlign: "center",
     },
 
-    topSafeSpacer: {
-      backgroundColor: C.BG,
-    },
+    topSafeSpacer: { backgroundColor: C.BG },
 
     headerSolid: {
       backgroundColor: C.ACCENT,
@@ -1174,6 +1276,9 @@ const makeStyles = (C: {
       fontSize: 14,
       lineHeight: 18,
     },
+
+    onbLine: { color: "#fff", fontWeight: "900", marginTop: 2 },
+    onbSub: { color: "rgba(255,255,255,0.9)", marginTop: 4, fontSize: 12 },
 
     chipsRow: {
       flexDirection: "row",
@@ -1236,11 +1341,51 @@ const makeStyles = (C: {
     },
     h1: { fontSize: 15, fontWeight: "900", color: C.TEXT, marginBottom: 8 },
 
-    stepRow: {
+    lockPill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: "rgba(0,0,0,0.18)",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.22)",
+    },
+    lockPillText: { color: "#fff", fontWeight: "900", fontSize: 12 },
+    lockOverlay: {
+      position: "absolute",
+      left: 12,
+      right: 12,
+      top: 48,
+      bottom: 12,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 12,
+    },
+    lockOverlayTitle: { color: "#fff", fontWeight: "900", fontSize: 16, marginTop: 8 },
+    lockOverlaySub: { color: "rgba(255,255,255,0.9)", marginTop: 6, textAlign: "center" },
+
+    lockHintBox: {
       flexDirection: "row",
       alignItems: "flex-start",
-      paddingVertical: 6,
+      gap: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: (C.WARN ?? "#FFC36A") + "66",
+      backgroundColor: (C.WARN ?? "#FFC36A") + "1F",
+      paddingHorizontal: 10,
+      paddingVertical: 8,
     },
+    lockHintText: {
+      color: C.WARN ?? "#FFD9A8",
+      fontWeight: "700",
+      flex: 1,
+      lineHeight: 18,
+    },
+
+    stepRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 6 },
     stepBadge: {
       width: 22,
       height: 22,
@@ -1253,12 +1398,7 @@ const makeStyles = (C: {
       marginRight: 8,
       marginTop: 1,
     },
-    stepBadgeText: {
-      color: "#EAF2FF",
-      fontWeight: "900",
-      fontSize: 12,
-      lineHeight: 12,
-    },
+    stepBadgeText: { color: "#EAF2FF", fontWeight: "900", fontSize: 12, lineHeight: 12 },
     stepText: { color: C.TEXT, flex: 1, lineHeight: 20 },
 
     metricLabel: { color: "#DDE2F2", fontWeight: "800" },
@@ -1283,17 +1423,8 @@ const makeStyles = (C: {
       marginBottom: 6,
     },
 
-    body: {
-      color: C.TEXT,
-      fontSize: 13,
-      lineHeight: 18,
-    },
-    bodySmall: {
-      color: C.MUTED,
-      fontSize: 12,
-      lineHeight: 17,
-      marginTop: 2,
-    },
+    body: { color: C.TEXT, fontSize: 13, lineHeight: 18 },
+    bodySmall: { color: C.MUTED, fontSize: 12, lineHeight: 17, marginTop: 2 },
 
     tunePill: {
       paddingHorizontal: 12,
@@ -1303,11 +1434,7 @@ const makeStyles = (C: {
       borderWidth: 1,
       borderColor: "rgba(255,255,255,0.2)",
     },
-    tunePillText: {
-      color: "#fff",
-      fontWeight: "800",
-      fontSize: 12,
-    },
+    tunePillText: { color: "#fff", fontWeight: "800", fontSize: 12 },
 
     btnPrimary: {
       backgroundColor: C.ACCENT,
@@ -1342,38 +1469,76 @@ const makeStyles = (C: {
       paddingVertical: 8,
       marginBottom: 8,
     },
-    helperText: {
-      color: C.WARN ?? "#FFD9A8",
-      fontWeight: "700",
-      flex: 1,
-    },
+    helperText: { color: C.WARN ?? "#FFD9A8", fontWeight: "700", flex: 1 },
 
-    // change list
-    changeRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      paddingVertical: 6,
-    },
-    changeLabel: {
-      color: C.TEXT,
-      fontWeight: "800",
-      marginBottom: 2,
-    },
-    changeSub: {
-      color: C.MUTED,
-      fontSize: 12,
-    },
+    changeRow: { flexDirection: "row", alignItems: "center", paddingVertical: 6 },
+    changeLabel: { color: C.TEXT, fontWeight: "800", marginBottom: 2 },
+    changeSub: { color: C.MUTED, fontSize: 12 },
     changeIconWrap: {
       width: 26,
       height: 26,
       borderRadius: 13,
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: (C.ACCENT_2 ?? C.ACCENT),
+      backgroundColor: C.ACCENT_2 ?? C.ACCENT,
       marginLeft: 8,
     },
 
-    // Modal styles
+    unlockBarWrap: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: "rgba(255,255,255,0.12)",
+      zIndex: 1000,
+    },
+
+    unlockCard: {
+      marginHorizontal: 12,
+      marginTop: 10,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.14)",
+      backgroundColor: "rgba(0,0,0,0.35)",
+      padding: 16,
+      paddingTop: 18,
+    },
+
+    unlockClose: {
+      position: "absolute",
+      top: 10,
+      right: 10,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(255,255,255,0.10)",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.14)",
+    },
+
+    unlockTitleBig: { color: C.TEXT, fontWeight: "900", fontSize: 20 },
+    unlockSubStack: {
+      color: C.MUTED,
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: "700",
+    },
+
+    unlockBtnFull: {
+      backgroundColor: C.ACCENT,
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      width: "100%",
+      marginTop: 12,
+    },
+    unlockBtnText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+
     modalWrap: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.45)",
@@ -1388,12 +1553,7 @@ const makeStyles = (C: {
       borderRadius: 16,
       padding: 16,
     },
-    modalTitle: {
-      color: C.TEXT,
-      fontSize: 16,
-      fontWeight: "900",
-      marginBottom: 10,
-    },
+    modalTitle: { color: C.TEXT, fontSize: 16, fontWeight: "900", marginBottom: 10 },
 
     input: {
       borderWidth: 1,

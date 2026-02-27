@@ -3,6 +3,17 @@
 // Adds: 1-tune trial gate, My Presets link, preset param banner + "Use Preset Now"
 // (This version adds safe-area top spacer, sticky Generate bar, compact weight input)
 // (Polish pass: cleaned top hero, outline actions, solid accent header (no gradient), blur sticky bar (iOS), haptics, 44pt tap targets)
+//
+// ✅ UPDATE (Onboarding carry-over):
+// - Accepts onboarding param from Garage: params { bikeId, onboarding: "1" }
+// - In onboarding mode, Tune auto-selects that bike and locks bike selection + bike fields
+// - Avoids fallback-to-primary race when onboarding bikeId exists
+// - Header copy switches to "Step 2 of 2" in onboarding mode
+//
+// ✅ UPDATE (Guest onboarding tuning):
+// - In onboarding mode ONLY, allow generating a tune while signed out (guest)
+// - Skip claim_free_tune RPC when guest
+// - Pass meta.guest to results so we can blur + "Unlock for free" later
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 // import { LinearGradient } from "expo-linear-gradient";
@@ -13,6 +24,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -20,6 +32,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -134,6 +147,8 @@ function BikePickerSheet({
           value={query}
           onChangeText={setQuery}
           autoCorrect
+          returnKeyType="done"
+          onSubmitEditing={Keyboard.dismiss}
         />
 
         <ScrollView style={{ maxHeight: 380, marginTop: 8 }}>
@@ -205,11 +220,29 @@ export default function TuneScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const router = useRouter();
-  const { preset, t, bikeId } = useLocalSearchParams<{
+  const {
+    preset,
+    t,
+    bikeId,
+    onboarding,
+    make: makeParam,
+    model: modelParam,
+    year: yearParam,
+    nickname: nicknameParam,
+  } = useLocalSearchParams<{
     preset?: string;
     t?: string;
     bikeId?: string;
+    onboarding?: string; // ✅ from Garage: onboarding:"1"
+    make?: string;
+    model?: string;
+    year?: string;
+    nickname?: string;
   }>();
+
+  // ✅ onboarding mode supports either legacy t=onboarding OR onboarding=1
+  const isOnboarding = useMemo(() => t === "onboarding" || onboarding === "1", [t, onboarding]);
+
   const { colors: C } = useTheme();
   const S = useMemo(() => makeStyles(C), [C]);
 
@@ -223,6 +256,21 @@ export default function TuneScreen() {
   const [make, setMake] = useState("");
   const [model, setModel] = useState("");
   const [year, setYear] = useState<string>("");
+
+  // ✅ Onboarding carry-over: if Garage passed bike details, apply them immediately.
+  // This makes the Tune screen show the right bike even before Supabase bikes load (or for guests).
+  useEffect(() => {
+    if (!isOnboarding) return;
+
+    if (bikeId && !selectedBikeId) setSelectedBikeId(bikeId);
+
+    if (typeof makeParam === "string" && makeParam.trim().length) setMake(makeParam);
+    if (typeof modelParam === "string" && modelParam.trim().length) setModel(modelParam);
+    if (typeof yearParam === "string" && yearParam.trim().length) setYear(yearParam);
+
+    // nicknameParam currently not used on this screen (kept for future use)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnboarding]);
 
   // ——— Conditions / rider ———
   const [terrainTags, setTerrainTags] = useState<string[]>(["hardpack"]);
@@ -284,7 +332,13 @@ export default function TuneScreen() {
   // If the CTA actually runs a tune (Pro or still has free trial), we require Zero-based
   const needsZeroForCta = !trialExhausted;
 
-  const primaryCtaLabel = isPro
+  const primaryCtaLabel = isOnboarding
+    ? isPro
+      ? "Generate my first tune"
+      : hasFreeTrialTune
+      ? "Generate my first tune"
+      : "Go Pro for unlimited tunes"
+    : isPro
     ? "Generate tune"
     : hasFreeTrialTune
     ? "Use 1 free tune credit"
@@ -296,6 +350,9 @@ export default function TuneScreen() {
   const [loadedPreset, setLoadedPreset] = useState<ZeroTuneResult | null>(null);
   const [loadedPresetMeta, setLoadedPresetMeta] = useState<PresetMeta>(null);
   const lastPresetRef = useRef<string | undefined>(undefined);
+
+  // ✅ track whether we already applied the onboarding bikeId so we don’t bounce
+  const onboardingAppliedRef = useRef(false);
 
   // risk + monetization:
   //  - Risk: stored locally in AsyncStorage (per user)
@@ -369,50 +426,65 @@ export default function TuneScreen() {
   };
   const clearSelected = () => setSelectedBikeId(null);
 
-  const loadBikes = useCallback(
-    async () => {
-      try {
-        setBikeLoading(true);
-        const { data: auth } = await supabase.auth.getUser();
-        const user = auth?.user;
-        if (!user?.id) {
-          setBikes([]);
-          setSelectedBikeId(null);
+  // ✅ In onboarding, never allow clearing/changing the selected bike from Tune UI
+  const canEditBikeInTune = !isOnboarding;
+
+  const loadBikes = useCallback(async () => {
+    try {
+      setBikeLoading(true);
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth?.user;
+      if (!user?.id) {
+        setBikes([]);
+        // ✅ In onboarding, keep the bikeId we were passed from Garage so the UI can stay locked.
+        if (!isOnboarding) setSelectedBikeId(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("bikes")
+        .select("id, make, model, year, nickname, is_primary")
+        .eq("user_id", user.id)
+        .order("is_primary", { ascending: false })
+        .order("updated_at", { ascending: false });
+
+      if (error) throw error;
+      const rows = (data || []) as Bike[];
+      setBikes(rows);
+
+      // ✅ ONBOARDING: force the bikeId selection, and do NOT fall back to primary
+      if (isOnboarding && bikeId) {
+        const match = rows.find((b) => b.id === bikeId);
+        if (match) {
+          applySelected(match);
+          onboardingAppliedRef.current = true;
+        } else {
+          // keep waiting — the row may appear after insert/realtime
+          // do NOT override with primary
+        }
+        return;
+      }
+
+      // normal mode: if we came from Garage with bikeId, prefer that
+      if (bikeId) {
+        const match = rows.find((b) => b.id === bikeId);
+        if (match) {
+          applySelected(match);
           return;
         }
-        const { data, error } = await supabase
-          .from("bikes")
-          .select("id, make, model, year, nickname, is_primary")
-          .eq("user_id", user.id)
-          .order("is_primary", { ascending: false })
-          .order("updated_at", { ascending: false });
-
-        if (error) throw error;
-        const rows = (data || []) as Bike[];
-        setBikes(rows);
-
-        // If we came from Garage with a specific bike, prefer that
-        if (bikeId) {
-          const match = rows.find((b) => b.id === bikeId);
-          if (match) {
-            applySelected(match);
-            return;
-          }
-        }
-
-        // Otherwise, if nothing is selected yet, fall back to primary
-        if (!selectedBikeId) {
-          const primary = rows.find((b) => b.is_primary);
-          if (primary) applySelected(primary);
-        }
-      } catch (e: any) {
-        toast.show(e?.message ?? "Failed to load Garage", { kind: "error" });
-      } finally {
-        setBikeLoading(false);
       }
-    },
-    [selectedBikeId, toast, bikeId]
-  );
+
+      // normal mode: if nothing is selected yet, fall back to primary
+      if (!selectedBikeId) {
+        const primary = rows.find((b) => b.is_primary);
+        if (primary) applySelected(primary);
+      }
+    } catch (e: any) {
+      toast.show(e?.message ?? "Failed to load Garage", { kind: "error" });
+    } finally {
+      setBikeLoading(false);
+    }
+  }, [toast, bikeId, isOnboarding, selectedBikeId]);
 
   // initial load
   useEffect(() => {
@@ -490,23 +562,23 @@ export default function TuneScreen() {
     });
   };
 
-  const toggleTerrain = (t: string) => {
+  const toggleTerrain = (tTag: string) => {
     setTerrainTags((cur) => {
-      if (cur.includes(t)) {
+      if (cur.includes(tTag)) {
         // always keep at least one
         if (cur.length === 1) return cur;
-        return cur.filter((x) => x !== t);
+        return cur.filter((x) => x !== tTag);
       }
       // limit to 3 tags, drop the oldest if needed
       if (cur.length >= 3) {
         const [, ...rest] = cur;
-        return [...rest, t];
+        return [...rest, tTag];
       }
-      return [...cur, t];
+      return [...cur, tTag];
     });
   };
 
-  // ——— Generate with AI (gated by Supabase RPC) ———
+  // ——— Generate with AI (gated by Supabase RPC when signed-in) ———
   const onGenerate = async () => {
     if (!zeroed) {
       toast.show("Turn on Zero-based to continue.", { kind: "error" });
@@ -519,10 +591,16 @@ export default function TuneScreen() {
     try {
       const { data: auth } = await supabase.auth.getUser();
       const user = auth?.user;
-      if (!user?.id) throw new Error("Please sign in");
 
-      // 🔐 Server-side trial / pro gate via claim_free_tune
-      if (!isPro) {
+      // ✅ Guest allowed ONLY during onboarding
+      const isGuest = !user?.id;
+
+      if (isGuest && !isOnboarding) {
+        throw new Error("Please sign in");
+      }
+
+      // 🔐 Only run claim_free_tune when we actually have a signed-in user
+      if (!isGuest && !isPro) {
         const { data: claim, error: claimErr } = await supabase.rpc("claim_free_tune").single();
 
         if (claimErr) {
@@ -601,6 +679,8 @@ export default function TuneScreen() {
         model: input.model,
         year: input.year,
         selectedBikeId,
+        onboarding: isOnboarding ? 1 : 0,
+        guest: !user?.id ? 1 : 0,
       });
 
       router.push({
@@ -620,6 +700,8 @@ export default function TuneScreen() {
                 goals,
                 issues: issues.trim() || undefined,
               },
+              onboarding: isOnboarding ? true : false,
+              guest: !user?.id, // ✅ used later to blur + “Unlock for free”
             })
           ),
         },
@@ -669,6 +751,7 @@ export default function TuneScreen() {
                 goals,
                 issues: issues.trim() || undefined,
               },
+              onboarding: isOnboarding ? true : false,
             })
           ),
         },
@@ -699,13 +782,19 @@ export default function TuneScreen() {
     </Pressable>
   );
 
+  const selectedBike = useMemo(() => {
+    if (!selectedBikeId) return null;
+    return bikes.find((b) => b.id === selectedBikeId) ?? null;
+  }, [bikes, selectedBikeId]);
+
   /* --------------------------------- Render -------------------------------- */
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.select({ ios: "padding", android: undefined })}
-      style={{ flex: 1, backgroundColor: C.BG }}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
-    >
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <KeyboardAvoidingView
+        behavior={Platform.select({ ios: "padding", android: undefined })}
+        style={{ flex: 1, backgroundColor: C.BG }}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+      >
       {/* gap under the notch/time so the accent header never clashes */}
       <View style={[S.topSafeSpacer, { height: insets.top }]} />
 
@@ -716,46 +805,56 @@ export default function TuneScreen() {
           paddingBottom: STICKY_FOOTER_HEIGHT + insets.bottom + 100,
         }}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         {/* Header (solid accent, no gradient) */}
         <View style={S.headerSolid}>
-          <Text style={S.heroTitle}>Suggested setup</Text>
-          <Text style={S.heroSubtitle}>Dial in a zero-based tune for today’s conditions.</Text>
+          <Text style={S.heroTitle}>{isOnboarding ? "Step 2 of 2" : "Suggested setup"}</Text>
+          <Text style={S.heroSubtitle}>
+            {isOnboarding
+              ? "Confirm today’s conditions, then generate your first tune."
+              : "Dial in a zero-based tune for today’s conditions."}
+          </Text>
 
           {/* Actions */}
           <View style={S.headerActions}>
-            <Pressable
-              onPress={() => {
-                router.push("/(tabs)/garage");
-                Haptics.selectionAsync();
-              }}
-              hitSlop={8}
-              style={S.manageLink}
-            >
-              <Ionicons name="bicycle" size={14} color="#fff" />
-              <Text style={S.manageLinkText}>Manage Garage</Text>
-              <Ionicons name="chevron-forward" size={14} color="#fff" />
-            </Pressable>
+            {!isOnboarding && (
+              <Pressable
+                onPress={() => {
+                  router.push("/(tabs)/garage");
+                  Haptics.selectionAsync();
+                }}
+                hitSlop={8}
+                style={S.manageLink}
+              >
+                <Ionicons name="bicycle" size={14} color="#fff" />
+                <Text style={S.manageLinkText}>Manage Garage</Text>
+                <Ionicons name="chevron-forward" size={14} color="#fff" />
+              </Pressable>
+            )}
 
-            <Pressable
-              onPress={() => {
-                router.push("/my-presets");
-                Haptics.selectionAsync();
-              }}
-              hitSlop={8}
-              style={S.manageLink}
-            >
-              <Ionicons name="bookmarks" size={14} color="#fff" />
-              <Text style={S.manageLinkText}>My Presets</Text>
-              <Ionicons name="chevron-forward" size={14} color="#fff" />
-            </Pressable>
+            {!isOnboarding && (
+              <Pressable
+                onPress={() => {
+                  router.push("/my-presets");
+                  Haptics.selectionAsync();
+                }}
+                hitSlop={8}
+                style={S.manageLink}
+              >
+                <Ionicons name="bookmarks" size={14} color="#fff" />
+                <Text style={S.manageLinkText}>My Presets</Text>
+                <Ionicons name="chevron-forward" size={14} color="#fff" />
+              </Pressable>
+            )}
           </View>
 
           {/* Garage Selector */}
           <View style={S.selectorCard}>
             <View style={S.selectorHeaderRow}>
-              <Text style={S.selectorLabel}>Select bike</Text>
-              {bikes.length > 0 && (
+              <Text style={S.selectorLabel}>{isOnboarding ? "Selected bike" : "Select bike"}</Text>
+
+              {!isOnboarding && bikes.length > 0 && (
                 <Pressable
                   onPress={() => {
                     setBikeSheetOpen(true);
@@ -771,6 +870,23 @@ export default function TuneScreen() {
 
             {bikeLoading ? (
               <ActivityIndicator color="#fff" />
+            ) : isOnboarding ? (
+              // ✅ Onboarding: show a single locked card (even if bikes.length === 0)
+              // ✅ If Supabase bike isn't loaded (guest), fall back to Make/Model/Year already in state
+              <View style={[S.onbBikeCard, { borderColor: "rgba(255,255,255,0.28)" }]}>
+                <Text style={S.onbBikeCardTitle}>
+                  {selectedBike
+                    ? `${selectedBike.year} ${selectedBike.make} ${selectedBike.model}${
+                        selectedBike.nickname ? ` · ${selectedBike.nickname}` : ""
+                      }`
+                    : make?.trim() || model?.trim() || year?.trim()
+                    ? `${year?.trim() || "—"} ${make?.trim() || ""} ${model?.trim() || ""}`.trim()
+                    : "Loading selected bike…"}
+                </Text>
+                <Text style={S.onbBikeCardSub}>
+                  Locked for onboarding (you can edit later in Garage).
+                </Text>
+              </View>
             ) : bikes.length === 0 ? (
               <Text style={S.selectorEmpty}>
                 No bikes in your Garage yet. Add one in the Garage tab — or use the fields below.
@@ -818,6 +934,9 @@ export default function TuneScreen() {
                 placeholderTextColor={C.MUTED}
                 value={make}
                 onChangeText={setMake}
+                editable={canEditBikeInTune}
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
             <View style={{ flex: 1 }}>
@@ -828,6 +947,9 @@ export default function TuneScreen() {
                 placeholderTextColor={C.MUTED}
                 value={model}
                 onChangeText={setModel}
+                editable={canEditBikeInTune}
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
 
@@ -840,9 +962,18 @@ export default function TuneScreen() {
                 keyboardType="number-pad"
                 value={year}
                 onChangeText={setYear}
+                editable={canEditBikeInTune}
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
           </View>
+
+          {isOnboarding && (
+            <Text style={[S.muted, { marginTop: 6 }]}>
+              During onboarding, bike details are locked to the bike you selected.
+            </Text>
+          )}
         </View>
 
         {/* Conditions */}
@@ -872,6 +1003,8 @@ export default function TuneScreen() {
             value={terrainOther}
             onChangeText={setTerrainOther}
             autoCorrect
+            returnKeyType="done"
+            onSubmitEditing={Keyboard.dismiss}
           />
 
           <Text style={S.label}>Track / Trail (optional)</Text>
@@ -882,6 +1015,8 @@ export default function TuneScreen() {
             value={track}
             onChangeText={setTrack}
             autoCorrect
+            returnKeyType="done"
+            onSubmitEditing={Keyboard.dismiss}
           />
 
           <View style={S.row}>
@@ -910,6 +1045,8 @@ export default function TuneScreen() {
                 value={temp}
                 onChangeText={setTemp}
                 keyboardType="number-pad"
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
 
@@ -938,6 +1075,8 @@ export default function TuneScreen() {
                 value={elev}
                 onChangeText={setElev}
                 keyboardType="number-pad"
+                returnKeyType="done"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
           </View>
@@ -956,6 +1095,8 @@ export default function TuneScreen() {
               value={weight}
               onChangeText={setWeight}
               keyboardType="number-pad"
+              returnKeyType="done"
+              onSubmitEditing={Keyboard.dismiss}
             />
             <View style={S.unitPill}>
               <Text style={S.unitPillText}>lb</Text>
@@ -1018,7 +1159,10 @@ export default function TuneScreen() {
                 value={goalInput}
                 onChangeText={setGoalInput}
                 returnKeyType="done"
-                onSubmitEditing={addGoal}
+                onSubmitEditing={() => {
+                  addGoal();
+                  Keyboard.dismiss();
+                }}
               />
             </View>
             <View style={{ width: 8 }} />
@@ -1115,7 +1259,7 @@ export default function TuneScreen() {
         </View>
 
         {/* Preset loaded banner */}
-        {loadedPreset ? (
+        {!isOnboarding && loadedPreset ? (
           <View style={[S.card, { marginTop: 12, borderColor: C.ACCENT }]}>
             <Text style={{ color: C.TEXT, fontWeight: "800" }}>
               Preset loaded{loadedPresetMeta?.name ? `: ${loadedPresetMeta.name}` : ""}
@@ -1183,16 +1327,18 @@ export default function TuneScreen() {
         </View>
       )}
 
-      {/* All-bikes sheet */}
-      <BikePickerSheet
-        open={bikeSheetOpen}
-        bikes={bikes}
-        selectedId={selectedBikeId}
-        onSelect={(b) => (b ? applySelected(b) : clearSelected())}
-        onClose={() => setBikeSheetOpen(false)}
-        C={C}
-        S={S}
-      />
+      {/* All-bikes sheet (disabled in onboarding) */}
+      {!isOnboarding && (
+        <BikePickerSheet
+          open={bikeSheetOpen}
+          bikes={bikes}
+          selectedId={selectedBikeId}
+          onSelect={(b) => (b ? applySelected(b) : clearSelected())}
+          onClose={() => setBikeSheetOpen(false)}
+          C={C}
+          S={S}
+        />
+      )}
 
       {/* Zero-based info sheet */}
       {zeroInfoOpen && (
@@ -1266,7 +1412,8 @@ export default function TuneScreen() {
           }
         }}
       />
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </TouchableWithoutFeedback>
   );
 }
 
@@ -1372,6 +1519,25 @@ const makeStyles = (C: {
       minHeight: 32,
     },
     seeAllText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+
+    onbBikeCard: {
+      borderRadius: 12,
+      borderWidth: 1,
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      backgroundColor: "rgba(255,255,255,0.10)",
+    },
+    onbBikeCardTitle: {
+      color: "#fff",
+      fontWeight: "900",
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    onbBikeCardSub: {
+      color: "rgba(255,255,255,0.86)",
+      fontSize: 12,
+      marginTop: 6,
+    },
 
     bikeChip: {
       paddingVertical: 10,

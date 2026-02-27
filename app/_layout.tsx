@@ -1,30 +1,21 @@
 // app/_layout.tsx
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect } from "react";
-import { Platform } from "react-native";
+import React, { useEffect, useState } from "react";
+import { Platform, StyleSheet, View } from "react-native";
 
-// Toast
+import Onboarding from "../components/Onboarding";
 import { ToastProvider } from "../components/Toast";
-
-// RevenueCat init
+import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
 import { initPurchases } from "../lib/purchases";
-
-// Supabase (to read auth + listen for changes)
 import { supabase } from "../lib/supabase";
-
-// THEME: new provider + hook
 import { ThemeProvider, useTheme } from "../lib/theme";
 
 function ThemedStatusBar() {
   const { colors } = useTheme();
-  // Heuristic: our dark BG is very dark; use light status text there
   const isDark = colors.BG === "#0B1220";
   return (
-    <StatusBar
-      style={isDark ? "light" : "dark"}
-      backgroundColor={colors.BG}
-    />
+    <StatusBar style={isDark ? "light" : "dark"} backgroundColor={colors.BG} />
   );
 }
 
@@ -44,16 +35,10 @@ function AppStack() {
         name="reset-password"
         options={{ headerShown: false, presentation: "card" }}
       />
-      <Stack.Screen
-        name="auth-callback"
-        options={{ headerShown: false }}
-      />
+      <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
 
-      {/* Private app (your tab navigator lives here: app/(tabs)/_layout.tsx) */}
-      <Stack.Screen
-        name="(tabs)"
-        options={{ headerShown: false }}
-      />
+      {/* Private app (tabs live here) */}
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
       {/* Modal/screen outside tabs */}
       <Stack.Screen
@@ -64,27 +49,33 @@ function AppStack() {
   );
 }
 
-export default function RootLayout() {
+/**
+ * This inner component lets us call useOnboarding()
+ * (provider has to wrap it first).
+ */
+function RootInner() {
+  // Overlay is just the 3 intro pages
+  const [showOnboardingOverlay, setShowOnboardingOverlay] = useState(true);
+  const { setOnboardingActive } = useOnboarding();
+
   useEffect(() => {
     if (Platform.OS === "web") return;
 
-    // 1) On app start, configure Purchases with the current user (if any)
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
         const userId = data.user?.id ?? undefined;
         await initPurchases(userId);
-      } catch {
-        // optional: log/ignore
+      } catch (e) {
+        console.warn("[RC] initPurchases error:", e);
       }
     })();
 
-    // 2) Re-run initPurchases whenever auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         const userId = session?.user?.id ?? undefined;
-        initPurchases(userId).catch(() => {
-          // optional: log/ignore
+        initPurchases(userId).catch((e) => {
+          console.warn("[RC] initPurchases error (auth change):", e);
         });
       }
     );
@@ -95,10 +86,37 @@ export default function RootLayout() {
   }, []);
 
   return (
+    <>
+      <ThemedStatusBar />
+
+      {/* Router + normal app tree ALWAYS mounts so splash can hide */}
+      <AppStack />
+
+      {/* Onboarding overlay on TOP */}
+      {showOnboardingOverlay && (
+        <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
+          <Onboarding
+            onFinish={() => {
+              // Hide the slides…
+              setShowOnboardingOverlay(false);
+              // …but keep the onboarding FLOW active (locks tabs)
+              setOnboardingActive(true);
+            }}
+          />
+        </View>
+      )}
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
     <ThemeProvider>
       <ToastProvider>
-        <ThemedStatusBar />
-        <AppStack />
+        {/* Provider controls whether tabs are locked */}
+        <OnboardingProvider initialActive={false}>
+          <RootInner />
+        </OnboardingProvider>
       </ToastProvider>
     </ThemeProvider>
   );

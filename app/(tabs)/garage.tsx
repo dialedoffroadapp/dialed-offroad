@@ -1,10 +1,12 @@
 // app/(tabs)/garage.tsx
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,12 +14,13 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../../components/Toast";
 import type { ThemeTokens } from "../../constants/theme";
-// 🔻 Garage now trusts Supabase only for Pro state
+import { useOnboarding } from "../../lib/onboarding";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
 
@@ -25,6 +28,10 @@ const ICON = Platform.select({ ios: 20, android: 20, default: 20 })!;
 
 /* -------------------------- Free / Pro limits -------------------------- */
 const FREE_BIKE_LIMIT = 2;
+
+/* -------------------------- Guest storage keys -------------------------- */
+const GUEST_BIKES_KEY = "dialed_guest_bikes_v1";
+const GUEST_DEFAULT_BIKE_KEY = "dialed_guest_default_bike_v1";
 
 /* -------------------------------------------------------------------------- */
 /*                              Inline Bike Catalog                           */
@@ -45,12 +52,10 @@ const MAKES = [
 
 const MODELS_BY_MAKE: Record<string, string[]> = {
   KTM: [
-    // Minis
     "50 SX",
     "65 SX",
     "85 SX",
     "85 SX Big Wheel",
-    // Full size MX / SX
     "125 SX",
     "150 SX",
     "250 SX",
@@ -58,13 +63,11 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "350 SX-F",
     "450 SX-F",
     "450 SX-F Factory",
-    // XC
     "250 XC",
     "300 XC",
     "250 XC-F",
     "350 XC-F",
     "450 XC-F",
-    // EXC / dual
     "250 EXC-F",
     "300 EXC",
     "350 EXC-F",
@@ -72,12 +75,10 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "500 EXC-F",
   ],
   Husqvarna: [
-    // Minis
     "TC 50",
     "TC 65",
     "TC 85",
     "TC 85 Big Wheel",
-    // Full size MX / FX / TE / FE
     "TC 125",
     "TC 250",
     "FC 250",
@@ -93,12 +94,10 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "FE 501",
   ],
   GasGas: [
-    // Minis
     "MC 50",
     "MC 65",
     "MC 85",
     "MC 85 Big Wheel",
-    // Full size MX / EX / EC
     "MC 125",
     "MC 250",
     "MC 250F",
@@ -113,12 +112,10 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "EC 300",
   ],
   Yamaha: [
-    // Minis
     "YZ65",
     "YZ85",
     "YZ85LW",
     "YZ85 Big Wheel",
-    // Full size MX / offroad
     "YZ125",
     "YZ250",
     "YZ250F",
@@ -129,7 +126,6 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "WR450F",
   ],
   Honda: [
-    // Minis / mid-size
     "CRF150R",
     "CRF150RB",
     "CR80R",
@@ -138,7 +134,6 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "CRF125F",
     "CRF125FB",
     "CRF110F",
-    // Full size MX / RX / X
     "CRF250R",
     "CRF450R",
     "CRF450RWE",
@@ -147,26 +142,17 @@ const MODELS_BY_MAKE: Record<string, string[]> = {
     "CRF450X",
   ],
   Kawasaki: [
-    // Minis
     "KX65",
     "KX85",
     "KX85-II",
     "KX100",
-    // Full size MX / X
     "KX250",
     "KX450",
     "KX250X",
     "KX450X",
     "KLX450R",
   ],
-  Suzuki: [
-    // Minis
-    "RM85",
-    "RM85L",
-    // Full size MX
-    "RM-Z250",
-    "RM-Z450",
-  ],
+  Suzuki: ["RM85", "RM85L", "RM-Z250", "RM-Z450"],
   Beta: [
     "RR 2T 250",
     "RR 2T 300",
@@ -206,7 +192,7 @@ const BRAND_ACCENTS: Record<string, string> = {
   Kawasaki: "#46C25B",
   Yamaha: "#3F7FFF",
   Honda: "#FF4D4F",
-  Husqvarna: "#294A9D", // Husky = white accent
+  Husqvarna: "#294A9D",
   GasGas: "#E53131",
   Suzuki: "#F2D13D",
   Beta: "#E62B2B",
@@ -341,6 +327,8 @@ function PickerSheet({
           value={query}
           onChangeText={setQuery}
           autoCorrect
+          returnKeyType="done"
+          onSubmitEditing={Keyboard.dismiss}
         />
 
         <ScrollView style={{ maxHeight: 360, marginTop: 8 }}>
@@ -379,16 +367,7 @@ function PickerSheet({
             </Pressable>
           ) : null}
 
-          {filtered.length === 0 && query.trim().length === 0 ? (
-            <Text style={[styles.muted, { marginTop: 8 }]}>No presets yet.</Text>
-          ) : null}
-
-          <Text
-            style={[
-              styles.muted,
-              { marginTop: 6, textAlign: "center" },
-            ]}
-          >
+          <Text style={[styles.muted, { marginTop: 6, textAlign: "center" }]}>
             Don&apos;t see your bike? Start typing to add it here.
           </Text>
         </ScrollView>
@@ -427,9 +406,43 @@ function Input({
         value={value}
         onChangeText={onChangeText}
         keyboardType={keyboardType}
+        returnKeyType="done"
+        onSubmitEditing={Keyboard.dismiss}
       />
     </View>
   );
+}
+
+/* ------------------------------ Local helpers ------------------------------ */
+function genLocalId() {
+  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+async function readGuestBikes(): Promise<Bike[]> {
+  const raw = await AsyncStorage.getItem(GUEST_BIKES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Bike[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeGuestBikes(bikes: Bike[]) {
+  await AsyncStorage.setItem(GUEST_BIKES_KEY, JSON.stringify(bikes));
+}
+
+async function readGuestDefaultBikeId(): Promise<string | null> {
+  return (await AsyncStorage.getItem(GUEST_DEFAULT_BIKE_KEY)) ?? null;
+}
+
+async function writeGuestDefaultBikeId(id: string | null) {
+  if (!id) {
+    await AsyncStorage.removeItem(GUEST_DEFAULT_BIKE_KEY);
+    return;
+  }
+  await AsyncStorage.setItem(GUEST_DEFAULT_BIKE_KEY, id);
 }
 
 /* --------------------------------- Screen --------------------------------- */
@@ -439,6 +452,10 @@ export default function GarageScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  // ✅ Onboarding mode is driven by context now (NOT query params)
+  const { onboardingActive } = useOnboarding();
+  const isOnboarding = onboardingActive;
 
   const [loading, setLoading] = useState(true);
   const [bikes, setBikes] = useState<Bike[]>([]);
@@ -450,35 +467,74 @@ export default function GarageScreen() {
     nickname: "",
   });
 
-  // Monetization state (Supabase-driven)
   const [isPro, setIsPro] = useState<boolean>(false);
+  const [defaultBikeId, setDefaultBikeId] = useState<string | null>(null);
 
   // pickers
   const [makeOpen, setMakeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const modelOptions = useMemo(
-    () => MODELS_BY_MAKE[newBike.make] ?? [],
-    [newBike.make]
-  );
+  const modelOptions = useMemo(() => MODELS_BY_MAKE[newBike.make] ?? [], [newBike.make]);
 
-  // default/star
-  const [defaultBikeId, setDefaultBikeId] = useState<string | null>(null);
+  const ordered = useMemo(() => {
+    const arr = [...bikes];
+    if (defaultBikeId) {
+      arr.sort((a, b) =>
+        a.id === defaultBikeId ? -1 : b.id === defaultBikeId ? 1 : 0
+      );
+    }
+    return arr;
+  }, [bikes, defaultBikeId]);
 
-  // ---------- data load ----------
+  // In onboarding, the “selected” bike is just the default bike
+  const selectedBikeId = defaultBikeId;
+
+  // ---------- Load + auto-sync guest bikes if user logs in ----------
   const loadAll = async () => {
     setLoading(true);
     try {
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user?.id) {
-        setBikes([]);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const session = sessionData?.session;
+      const userId = session?.user?.id;
+
+      // If NOT logged in: use local guest garage
+      if (!userId) {
+        const guest = await readGuestBikes();
+        const guestDefault = await readGuestDefaultBikeId();
+        setBikes(guest);
+        setDefaultBikeId(guestDefault);
+        setIsPro(false);
         return;
       }
 
+      // If logged in: first auto-sync any guest bikes
+      const guestBikes = await readGuestBikes();
+      if (guestBikes.length > 0) {
+        try {
+          const rows = guestBikes.map((b) => ({
+            user_id: userId,
+            make: b.make,
+            model: b.model,
+            year: b.year,
+            nickname: b.nickname ?? null,
+          }));
+
+          const { error: syncErr } = await supabase.from("bikes").insert(rows);
+          if (syncErr) {
+            console.warn("Guest bike sync failed:", syncErr);
+          } else {
+            await writeGuestBikes([]);
+            await writeGuestDefaultBikeId(null);
+          }
+        } catch (e) {
+          console.warn("Guest bike sync exception:", e);
+        }
+      }
+
+      // Load bikes from Supabase
       const { data: bikeRows, error: bikeErr } = await supabase
         .from("bikes")
         .select("id, make, model, year, nickname")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .order("created_at", { ascending: true });
 
       if (bikeErr) throw bikeErr;
@@ -495,13 +551,13 @@ export default function GarageScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🔻 Pro status from Supabase profile ONLY
+  // Pro status (only if logged in)
   useEffect(() => {
     (async () => {
       try {
-        const { data: auth } = await supabase.auth.getUser();
-        const user = auth?.user;
-        if (!user?.id) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData?.session?.user?.id;
+        if (!userId) {
           setIsPro(false);
           return;
         }
@@ -509,16 +565,10 @@ export default function GarageScreen() {
         const { data: prof, error: profErr } = await supabase
           .from("profiles")
           .select("pro_until, is_pro")
-          .eq("user_id", user.id)
+          .eq("user_id", userId)
           .maybeSingle<ProfileMeta>();
 
-        if (profErr) {
-          console.warn("Garage: profiles select failed", profErr);
-          setIsPro(false);
-          return;
-        }
-
-        if (!prof) {
+        if (profErr || !prof) {
           setIsPro(false);
           return;
         }
@@ -528,23 +578,25 @@ export default function GarageScreen() {
           (!!prof.pro_until && new Date(prof.pro_until).getTime() > Date.now());
 
         setIsPro(hasServerPro);
-      } catch (e) {
-        console.warn("Garage: init failed", e);
+      } catch {
         setIsPro(false);
       }
     })();
   }, []);
 
-  // derived list: float default to top
-  const ordered = useMemo(() => {
-    const arr = [...bikes];
-    if (defaultBikeId) {
-      arr.sort((a, b) => (a.id === defaultBikeId ? -1 : b.id === defaultBikeId ? 1 : 0));
-    }
-    return arr;
+  // Persist guest garage whenever bikes/default change (ONLY when not logged in)
+  useEffect(() => {
+    (async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (userId) return; // logged in -> Supabase is source of truth
+      await writeGuestBikes(bikes);
+      await writeGuestDefaultBikeId(defaultBikeId);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bikes, defaultBikeId]);
 
-  // ---------- actions ----------
+  // ---------- delete ----------
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmBike, setConfirmBike] = useState<Bike | null>(null);
 
@@ -557,18 +609,34 @@ export default function GarageScreen() {
     const b = confirmBike;
     setConfirmOpen(false);
     if (!b) return;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData?.session?.user?.id;
+
+    // Guest delete (local)
+    if (!userId) {
+      setBikes((cur) => cur.filter((x) => x.id !== b.id));
+      if (defaultBikeId === b.id) setDefaultBikeId(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      toast.show("Bike deleted", { kind: "success" });
+      return;
+    }
+
+    // Logged-in delete (Supabase)
     const { error } = await supabase.from("bikes").delete().eq("id", b.id);
     if (error) {
       toast.show(error.message || "Delete failed", { kind: "error" });
       return;
     }
     setBikes((cur) => cur.filter((x) => x.id !== b.id));
+    if (defaultBikeId === b.id) setDefaultBikeId(null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     toast.show("Bike deleted", { kind: "success" });
   };
 
+  // ---------- add ----------
   const onAddBike = async () => {
-    // Free-plan gate: max 2 bikes
+    // Free-plan gate
     if (!isPro && bikes.length >= FREE_BIKE_LIMIT) {
       toast.show(
         `Free plan: up to ${FREE_BIKE_LIMIT} bikes in your Garage. Unlock Pro for unlimited bikes.`,
@@ -583,27 +651,57 @@ export default function GarageScreen() {
       toast.show("Make, model, and year are required", { kind: "error" });
       return;
     }
+
     const y = Number(newBike.year);
     if (!Number.isFinite(y)) {
       toast.show("Year must be a number", { kind: "error" });
       return;
     }
 
+    const payload = {
+      make: newBike.make.trim(),
+      model: newBike.model.trim(),
+      year: y,
+      nickname: newBike.nickname.trim() || null,
+    };
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData?.session?.user?.id;
+
+    // Guest add (local)
+    if (!userId) {
+      const localBike: Bike = { id: genLocalId(), ...payload };
+      setBikes((cur) => [...cur, localBike]);
+
+      // ✅ onboarding: auto-select the newly added bike
+      if (isOnboarding) setDefaultBikeId(localBike.id);
+
+      setAdding(false);
+      setNewBike({ make: "", model: "", year: "", nickname: "" });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      toast.show("Bike added ✅", { kind: "success" });
+      return;
+    }
+
+    // Logged-in add (Supabase)
     try {
-      const insert = {
-        make: newBike.make.trim(),
-        model: newBike.model.trim(),
-        year: y,
-        nickname: newBike.nickname.trim() || null,
-      };
       const { data, error } = await supabase
         .from("bikes")
-        .insert(insert)
+        .insert({
+          user_id: userId, // REQUIRED for RLS
+          ...payload,
+        })
         .select("id, make, model, year, nickname")
         .single();
+
       if (error) throw error;
 
-      setBikes((cur) => [...cur, data as Bike]);
+      const added = data as Bike;
+      setBikes((cur) => [...cur, added]);
+
+      // ✅ onboarding: auto-select the newly added bike
+      if (isOnboarding) setDefaultBikeId(added.id);
+
       setAdding(false);
       setNewBike({ make: "", model: "", year: "", nickname: "" });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -612,7 +710,6 @@ export default function GarageScreen() {
       const code = e?.code;
       const msg = e?.message ?? "";
 
-      // Friendly duplicate-bike handling
       if (code === "23505" || /duplicate key/i.test(msg) || /already exists/i.test(msg)) {
         toast.show("That bike is already in your garage.", { kind: "info" });
         Haptics.selectionAsync();
@@ -628,6 +725,31 @@ export default function GarageScreen() {
     Haptics.selectionAsync();
   };
 
+  const onOnboardingContinue = () => {
+    if (!selectedBikeId) {
+      Haptics.selectionAsync();
+      setAdding(true);
+      toast.show("Add a bike (or tap one) to continue.", { kind: "info" });
+      return;
+    }
+
+    const b = bikes.find((x) => x.id === selectedBikeId);
+
+    router.push({
+      pathname: "/(tabs)/tune",
+      params: {
+        bikeId: selectedBikeId,
+        onboarding: "1",
+
+        // ✅ IMPORTANT: pass bike details so guest/local IDs still show correctly in Tune
+        make: b?.make ?? "",
+        model: b?.model ?? "",
+        year: b?.year ? String(b.year) : "",
+        nickname: b?.nickname ?? "",
+      },
+    });
+  };
+
   if (loading) {
     return (
       <View style={styles.page}>
@@ -638,25 +760,31 @@ export default function GarageScreen() {
 
   return (
     <>
-      <KeyboardAvoidingView
-        behavior={Platform.select({ ios: "padding", android: undefined })}
-        style={styles.screen}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
-      >
-        {/* SAFE-AREA spacer so the header never clashes with the status bar */}
-        <View style={[styles.topSafeSpacer, { height: insets.top }]} />
-
-        <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 56 }}
-          contentInsetAdjustmentBehavior="automatic"
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <KeyboardAvoidingView
+          behavior={Platform.select({ ios: "padding", android: undefined })}
+          style={styles.screen}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
         >
-          {/* Add Bike header row with BIG PLUS */}
+          <View style={[styles.topSafeSpacer, { height: insets.top }]} />
+
+          <ScrollView
+            contentContainerStyle={{
+              padding: 16,
+              paddingBottom: isOnboarding ? 140 : 56, // room for big CTA
+            }}
+            contentInsetAdjustmentBehavior="automatic"
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          >
           <View style={styles.cardHeaderBar}>
             <View style={styles.headerLeft}>
               <View style={styles.iconBadge}>
                 <Ionicons name="bicycle-outline" size={16} color="#fff" />
               </View>
-              <Text style={[styles.h1, styles.noSelect]}>Add Bike</Text>
+              <Text style={[styles.h1, styles.noSelect]}>
+                {isOnboarding ? "Add your bike" : "Add Bike"}
+              </Text>
             </View>
 
             <Pressable
@@ -669,6 +797,15 @@ export default function GarageScreen() {
               <Ionicons name={adding ? "close" : "add"} size={18} color={colors.TEXT} />
             </Pressable>
           </View>
+
+          {isOnboarding ? (
+            <View style={[styles.onbTipCard, styles.shadow]}>
+              <Text style={[styles.onbTipTitle, styles.noSelect]}>Step 1 of 2</Text>
+              <Text style={styles.onbTipText}>
+                Add a bike, then tap it to select. We’ll use it to generate your first tune.
+              </Text>
+            </View>
+          ) : null}
 
           {adding && (
             <View style={[styles.card, styles.shadow, { marginBottom: 12 }]}>
@@ -690,6 +827,8 @@ export default function GarageScreen() {
                           }))
                         }
                         onFocus={() => setMakeOpen(true)}
+                        returnKeyType="done"
+                        onSubmitEditing={Keyboard.dismiss}
                       />
                       <Ionicons
                         name="chevron-down"
@@ -717,6 +856,8 @@ export default function GarageScreen() {
                           }))
                         }
                         onFocus={() => setModelOpen(true)}
+                        returnKeyType="done"
+                        onSubmitEditing={Keyboard.dismiss}
                       />
                       <Ionicons
                         name="list"
@@ -734,12 +875,7 @@ export default function GarageScreen() {
                   label="Year"
                   placeholder="2023"
                   value={newBike.year}
-                  onChangeText={(v) =>
-                    setNewBike((nb) => ({
-                      ...nb,
-                      year: v,
-                    }))
-                  }
+                  onChangeText={(v) => setNewBike((nb) => ({ ...nb, year: v }))}
                   width={130}
                   keyboardType="number-pad"
                   colors={colors}
@@ -749,12 +885,7 @@ export default function GarageScreen() {
                   label="Nickname (optional)"
                   placeholder="Practice bike"
                   value={newBike.nickname}
-                  onChangeText={(v) =>
-                    setNewBike((nb) => ({
-                      ...nb,
-                      nickname: v,
-                    }))
-                  }
+                  onChangeText={(v) => setNewBike((nb) => ({ ...nb, nickname: v }))}
                   colors={colors}
                   styles={styles}
                 />
@@ -768,10 +899,14 @@ export default function GarageScreen() {
               >
                 <Text style={[styles.btnPrimaryText, styles.noSelect]}>Add Bike</Text>
               </Pressable>
+
+              <Text style={[styles.muted, { marginTop: 10, textAlign: "center" }]}>
+                Not signed in yet? We’ll save your bikes on this device and sync them after you
+                create an account.
+              </Text>
             </View>
           )}
 
-          {/* Your Bikes header */}
           <View style={styles.listHeader}>
             <Text style={[styles.sectionTitle, styles.noSelect]}>Your Bikes</Text>
             <View style={styles.countPill}>
@@ -779,7 +914,6 @@ export default function GarageScreen() {
             </View>
           </View>
 
-          {/* List */}
           {ordered.length === 0 ? (
             <View style={[styles.card, styles.centerEmpty]}>
               <Ionicons name="bicycle-outline" size={20} color={colors.MUTED} />
@@ -790,13 +924,24 @@ export default function GarageScreen() {
           ) : (
             ordered.map((b) => {
               const accent = BRAND_ACCENTS[b.make] ?? "#3A3F4C";
-              const isDefault = defaultBikeId === b.id;
+              const isSelected = defaultBikeId === b.id;
+
               return (
-                <View
+                <Pressable
                   key={b.id}
-                  style={[styles.card, styles.rowItem, styles.shadow, { paddingLeft: 0 }]}
+                  onPress={() => {
+                    if (isOnboarding) toggleDefault(b.id);
+                  }}
+                  style={[
+                    styles.card,
+                    styles.rowItem,
+                    styles.shadow,
+                    { paddingLeft: 0 },
+                    isOnboarding && isSelected
+                      ? { borderColor: colors.ACCENT, shadowOpacity: 0.32 }
+                      : null,
+                  ]}
                 >
-                  {/* Uniform brand rail (6px) */}
                   <View
                     style={{
                       position: "absolute",
@@ -809,142 +954,144 @@ export default function GarageScreen() {
                       borderBottomLeftRadius: 16,
                     }}
                   />
+
                   <View style={{ padding: 16, paddingLeft: 20 }}>
                     <View style={styles.rowItemTop}>
                       <View style={styles.rowItemLeft}>
                         <View style={styles.rowIcon}>
                           <Ionicons name="bicycle" size={16} color="#fff" />
                         </View>
+
                         <View style={{ flex: 1, minWidth: 0 }}>
-                          {/* Make on its own line */}
-                          <Text
-                            style={[styles.makeTitle, styles.noSelect]}
-                            numberOfLines={1}
-                            ellipsizeMode="tail"
-                            allowFontScaling={false}
-                          >
+                          <Text style={[styles.makeTitle, styles.noSelect]} numberOfLines={1}>
                             {b.make}
                           </Text>
-                          {/* Model on its own line */}
-                          <Text
-                            style={[styles.modelTitle, styles.noSelect]}
-                            numberOfLines={1}
-                            ellipsizeMode="tail"
-                            allowFontScaling={false}
-                          >
+                          <Text style={[styles.modelTitle, styles.noSelect]} numberOfLines={1}>
                             {b.model}
                           </Text>
 
-                          {/* Nickname under the title */}
                           {b.nickname ? (
-                            <Text
-                              style={[styles.nickname, styles.noSelect]}
-                              numberOfLines={1}
-                              ellipsizeMode="tail"
-                              allowFontScaling={false}
-                            >
+                            <Text style={[styles.nickname, styles.noSelect]} numberOfLines={1}>
                               {b.nickname}
                             </Text>
                           ) : null}
 
-                          {/* CTA pill */}
-                          <Pressable
-                            onPress={() =>
-                              router.push({
-                                pathname: "/(tabs)/tune",
-                                params: { bikeId: b.id },
-                              })
-                            }
-                            style={[
-                              styles.btnInline,
-                              {
-                                borderColor: accent,
-                                backgroundColor: hexToRgba(accent, 0.12),
-                              },
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Tune ${b.make} ${b.model}`}
-                          >
-                            <Ionicons
-                              name="flash-outline"
-                              size={14}
-                              color={accent}
-                            />
-                            <Text
-                              style={[styles.btnInlineText, { color: accent }]}
-                              numberOfLines={1}
-                              ellipsizeMode="tail"
-                              allowFontScaling={false}
+                          {!isOnboarding && (
+                            <Pressable
+                              onPress={() =>
+                                router.push({
+                                  pathname: "/(tabs)/tune",
+                                  params: { bikeId: b.id },
+                                })
+                              }
+                              style={[
+                                styles.btnInline,
+                                {
+                                  borderColor: accent,
+                                  backgroundColor: hexToRgba(accent, 0.12),
+                                },
+                              ]}
                             >
-                              Tune this bike
-                            </Text>
-                          </Pressable>
+                              <Ionicons name="flash-outline" size={14} color={accent} />
+                              <Text style={[styles.btnInlineText, { color: accent }]}>
+                                Tune this bike
+                              </Text>
+                            </Pressable>
+                          )}
+
+                          {isOnboarding && (
+                            <View style={{ marginTop: 10 }}>
+                              <View
+                                style={[
+                                  styles.onbSelectPill,
+                                  isSelected && styles.onbSelectPillOn,
+                                ]}
+                              >
+                                <Ionicons
+                                  name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                                  size={16}
+                                  color={isSelected ? "#fff" : colors.MUTED}
+                                />
+                                <Text
+                                  style={[
+                                    styles.onbSelectPillText,
+                                    isSelected && styles.onbSelectPillTextOn,
+                                  ]}
+                                >
+                                  {isSelected ? "Selected" : "Tap to select"}
+                                </Text>
+                              </View>
+                            </View>
+                          )}
                         </View>
                       </View>
 
                       <View style={styles.rowRight}>
-                        {/* Default star */}
-                        <Pressable
-                          onPress={() => toggleDefault(b.id)}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                          accessibilityLabel={
-                            isDefault ? "Unset default bike" : "Set as default bike"
-                          }
-                          style={styles.iconBtn}
-                        >
-                          <Ionicons
-                            name={isDefault ? "star" : "star-outline"}
-                            size={ICON + 2}
-                            color={isDefault ? colors.ACCENT : colors.MUTED}
-                          />
-                        </Pressable>
+                        {!isOnboarding && (
+                          <Pressable onPress={() => toggleDefault(b.id)} style={styles.iconBtn}>
+                            <Ionicons
+                              name={isSelected ? "star" : "star-outline"}
+                              size={ICON + 2}
+                              color={isSelected ? colors.ACCENT : colors.MUTED}
+                            />
+                          </Pressable>
+                        )}
 
-                        {/* Year pill */}
                         <View style={styles.yearPill}>
-                          <Text
-                            style={styles.yearPillText}
-                            allowFontScaling={false}
-                          >
-                            {b.year}
-                          </Text>
+                          <Text style={styles.yearPillText}>{b.year}</Text>
                         </View>
 
-                        {/* Delete */}
-                        <Pressable
-                          onPress={() => requestDelete(b)}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                          accessibilityLabel={`Delete ${b.year} ${b.make} ${b.model}`}
-                          style={styles.iconBtn}
-                        >
-                          <Ionicons
-                            name="trash-outline"
-                            size={ICON + 2}
-                            color={colors.ERROR}
-                          />
-                        </Pressable>
+                        {!isOnboarding && (
+                          <Pressable onPress={() => requestDelete(b)} style={styles.iconBtn}>
+                            <Ionicons
+                              name="trash-outline"
+                              size={ICON + 2}
+                              color={colors.ERROR}
+                            />
+                          </Pressable>
+                        )}
                       </View>
                     </View>
                   </View>
-                </View>
+                </Pressable>
               );
             })
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
 
-      {/* Pickers */}
+      {/* ✅ Onboarding sticky CTA */}
+      {isOnboarding && (
+        <View
+          style={[
+            styles.onbFooterWrap,
+            { paddingBottom: insets.bottom + 14 },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Pressable
+            onPress={onOnboardingContinue}
+            style={({ pressed }) => [
+              styles.onbCta,
+              !selectedBikeId && styles.onbCtaDisabled,
+              pressed && { opacity: 0.92 },
+            ]}
+            disabled={!selectedBikeId}
+          >
+            <Text style={styles.onbCtaText}>
+              {selectedBikeId ? "Continue to Tune" : "Add a bike to continue"}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
       <PickerSheet
         open={makeOpen}
         title="Select make"
         options={MAKES as unknown as string[]}
         initialValue={newBike.make}
-        onPick={(val) =>
-          setNewBike((nb) => ({
-            ...nb,
-            make: val,
-            model: "",
-          }))
-        }
+        onPick={(val) => setNewBike((nb) => ({ ...nb, make: val, model: "" }))}
         onClose={() => setMakeOpen(false)}
         colors={colors}
         styles={styles}
@@ -954,12 +1101,7 @@ export default function GarageScreen() {
         title={newBike.make ? `Select model — ${newBike.make}` : "Select model"}
         options={newBike.make ? modelOptions : []}
         initialValue={newBike.model}
-        onPick={(val) =>
-          setNewBike((nb) => ({
-            ...nb,
-            model: val,
-          }))
-        }
+        onPick={(val) => setNewBike((nb) => ({ ...nb, model: val }))}
         onClose={() => setModelOpen(false)}
         colors={colors}
         styles={styles}
@@ -968,11 +1110,7 @@ export default function GarageScreen() {
       <ConfirmSheet
         open={confirmOpen}
         title="Delete this bike?"
-        subtitle={
-          confirmBike
-            ? `${confirmBike.year} ${confirmBike.make} ${confirmBike.model}`
-            : ""
-        }
+        subtitle={confirmBike ? `${confirmBike.year} ${confirmBike.make} ${confirmBike.model}` : ""}
         confirmText="Delete"
         onCancel={() => setConfirmOpen(false)}
         onConfirm={onDeleteConfirmed}
@@ -984,7 +1122,6 @@ export default function GarageScreen() {
 }
 
 /* --------------------------------- Styles --------------------------------- */
-
 const makeStyles = (colors: ThemeTokens) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.BG },
@@ -994,11 +1131,8 @@ const makeStyles = (colors: ThemeTokens) =>
       alignItems: "center",
       justifyContent: "center",
     },
-
-    // status-bar spacer
     topSafeSpacer: { backgroundColor: colors.BG },
 
-    // Header bar with PLUS
     cardHeaderBar: {
       backgroundColor: colors.CARD,
       borderWidth: 1,
@@ -1011,7 +1145,6 @@ const makeStyles = (colors: ThemeTokens) =>
       alignItems: "center",
       justifyContent: "space-between",
     },
-
     plusBtn: {
       width: 32,
       height: 32,
@@ -1021,6 +1154,27 @@ const makeStyles = (colors: ThemeTokens) =>
       backgroundColor: colors.CARD,
       alignItems: "center",
       justifyContent: "center",
+    },
+
+    // onboarding tip card
+    onbTipCard: {
+      backgroundColor: colors.CARD,
+      borderWidth: 1,
+      borderColor: colors.BORDER,
+      borderRadius: 16,
+      padding: 14,
+      marginBottom: 12,
+    },
+    onbTipTitle: {
+      color: colors.TEXT,
+      fontWeight: "900",
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    onbTipText: {
+      color: colors.MUTED,
+      fontSize: 13,
+      lineHeight: 18,
     },
 
     card: {
@@ -1107,7 +1261,6 @@ const makeStyles = (colors: ThemeTokens) =>
     },
     btnPrimaryText: { color: "#FFFFFF", fontWeight: "900" },
 
-    // List item styling
     rowItem: { justifyContent: "space-between" },
     rowItemTop: {
       flexDirection: "row",
@@ -1134,7 +1287,7 @@ const makeStyles = (colors: ThemeTokens) =>
     makeTitle: {
       color: colors.TEXT,
       fontWeight: "900",
-      fontSize: 17, // slightly smaller to prevent truncation
+      fontSize: 17,
       lineHeight: 21,
       flexShrink: 1,
     },
@@ -1172,7 +1325,6 @@ const makeStyles = (colors: ThemeTokens) =>
     },
     yearPillText: { color: colors.TEXT, fontWeight: "900", fontSize: 13 },
 
-    // CTA pill base
     btnInline: {
       flexDirection: "row",
       alignItems: "center",
@@ -1191,12 +1343,62 @@ const makeStyles = (colors: ThemeTokens) =>
     },
     btnInlineText: { fontWeight: "900", fontSize: 14 },
 
+    // onboarding select pill
+    onbSelectPill: {
+      alignSelf: "flex-start",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.BORDER,
+      backgroundColor: colors.INK,
+    },
+    onbSelectPillOn: {
+      backgroundColor: colors.ACCENT,
+      borderColor: colors.ACCENT,
+    },
+    onbSelectPillText: {
+      color: colors.MUTED,
+      fontWeight: "900",
+      fontSize: 12,
+    },
+    onbSelectPillTextOn: {
+      color: "#fff",
+    },
+
     centerEmpty: { alignItems: "center", justifyContent: "center" },
 
-    pointer: { cursor: "pointer" as any },
     noSelect: { userSelect: "none" as any },
 
-    // Confirm / Picker sheet
+    // sticky onboarding footer
+    onbFooterWrap: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      backgroundColor: "rgba(0,0,0,0.35)",
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: "rgba(255,255,255,0.12)",
+    },
+    onbCta: {
+      minHeight: 56,
+      borderRadius: 14,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.ACCENT,
+    },
+    onbCtaDisabled: { opacity: 0.5 },
+    onbCtaText: {
+      color: "#fff",
+      fontWeight: "900",
+      fontSize: 16,
+    },
+
     sheetWrap: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: "flex-end",

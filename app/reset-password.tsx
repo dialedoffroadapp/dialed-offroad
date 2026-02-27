@@ -4,12 +4,14 @@ import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { ToastProvider, useToast } from "../components/Toast";
@@ -159,54 +161,62 @@ function ResetInner() {
       style={{ flex: 1 }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
-      <View style={styles.page}>
-        <View style={styles.card}>
-          <Text style={styles.title}>Set a new password</Text>
-          <Text style={styles.mutedText}>
-            Enter a new password for your Dialed Offroad account.
-          </Text>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={styles.page}>
+          <View style={styles.card}>
+            <Text style={styles.title}>Set a new password</Text>
+            <Text style={styles.mutedText}>
+              Enter a new password for your Dialed Offroad account.
+            </Text>
 
-          <Text style={styles.label}>New password</Text>
-          <TextInput
-            value={password}
-            onChangeText={(v) => {
-              setPassword(v);
-              if (pwErr) setPwErr("");
-            }}
-            secureTextEntry
-            style={styles.input}
-            placeholder="••••••••"
-          />
+            <Text style={styles.label}>New password</Text>
+            <TextInput
+              value={password}
+              onChangeText={(v) => {
+                setPassword(v);
+                if (pwErr) setPwErr("");
+              }}
+              secureTextEntry
+              style={styles.input}
+              placeholder="••••••••"
+              returnKeyType="next"
+            />
 
-          <Text style={[styles.label, { marginTop: 8 }]}>
-            Confirm new password
-          </Text>
-          <TextInput
-            value={password2}
-            onChangeText={(v) => {
-              setPassword2(v);
-              if (pwErr) setPwErr("");
-            }}
-            secureTextEntry
-            style={styles.input}
-            placeholder="••••••••"
-          />
+            <Text style={[styles.label, { marginTop: 8 }]}>
+              Confirm new password
+            </Text>
+            <TextInput
+              value={password2}
+              onChangeText={(v) => {
+                setPassword2(v);
+                if (pwErr) setPwErr("");
+              }}
+              secureTextEntry
+              style={styles.input}
+              placeholder="••••••••"
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                Keyboard.dismiss();
+                onSaveNewPassword();
+              }}
+            />
 
-          {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
+            {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
 
-          <Pressable
-            style={[styles.btn, { marginTop: 16 }]}
-            onPress={onSaveNewPassword}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.btnText}>Update password</Text>
-            )}
-          </Pressable>
+            <Pressable
+              style={[styles.btn, { marginTop: 16 }]}
+              onPress={onSaveNewPassword}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.btnText}>Update password</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
-      </View>
+      </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
 }

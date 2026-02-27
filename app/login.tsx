@@ -7,12 +7,14 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { ToastProvider, useToast } from "../components/Toast";
@@ -127,143 +129,148 @@ function LoginInner() {
       style={{ flex: 1, backgroundColor: colors.BG }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
-      <View style={styles.page}>
-        {/* Top bar with logo */}
-        <View style={styles.headerRow}>
-          <Image
-            source={require("../assets/images/android-icon-foreground.png")}
-            style={styles.logoImage}
-          />
-        </View>
-
-        <View style={styles.brandTop}>
-          <Text style={styles.brandTitle}>Welcome back</Text>
-          <Text style={styles.brandSub}>
-            Dial in your bike faster with zero-based tunes.
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          {/* Email */}
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            value={email}
-            onChangeText={(v) => {
-              setEmail(v);
-              if (emailErr) setEmailErr("");
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            placeholder="you@example.com"
-            placeholderTextColor={colors.MUTED}
-            style={[styles.input, emailErr && styles.inputError]}
-            returnKeyType="next"
-            textContentType="username"
-          />
-          {!!emailErr && <Text style={styles.errorText}>{emailErr}</Text>}
-
-          {/* Password + eye */}
-          <Text style={[styles.label, { marginTop: 12 }]}>Password</Text>
-          <View style={{ position: "relative" }}>
-            <TextInput
-              value={password}
-              onChangeText={(v) => {
-                setPassword(v);
-                if (pwErr) setPwErr("");
-              }}
-              secureTextEntry={!showPw}
-              placeholder="••••••••"
-              placeholderTextColor={colors.MUTED}
-              style={[
-                styles.input,
-                pwErr && styles.inputError,
-                { paddingRight: 44 },
-              ]}
-              returnKeyType="go"
-              onSubmitEditing={onSignIn}
-              textContentType="password"
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={styles.page}>
+          {/* Top bar with logo */}
+          <View style={styles.headerRow}>
+            <Image
+              source={require("../assets/images/android-icon-foreground.png")}
+              style={styles.logoImage}
             />
-            <Pressable
-              onPress={() => setShowPw((s) => !s)}
-              hitSlop={8}
-              style={styles.eye}
-              accessibilityRole="button"
-              accessibilityLabel={showPw ? "Hide password" : "Show password"}
-            >
-              <Ionicons
-                name={showPw ? "eye-off" : "eye"}
-                size={18}
-                color={colors.MUTED}
-              />
-            </Pressable>
           </View>
-          {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
 
-          {/* Primary actions */}
-          <View style={{ height: 12 }} />
-          <Pressable
-            onPress={onSignIn}
-            disabled={loadingIn || !canSubmitPw}
-            style={({ pressed }) => [
-              styles.btn,
-              (loadingIn || !canSubmitPw) && styles.btnDisabled,
-              pressed && canSubmitPw && { opacity: 0.95 },
-            ]}
-          >
-            {loadingIn ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.btnText}>Sign In</Text>
-            )}
-          </Pressable>
-
-          <Pressable
-            onPress={onResetPassword}
-            disabled={loadingReset}
-            style={styles.linkBtn}
-          >
-            <Text style={styles.linkText}>
-              {loadingReset ? "Sending…" : "Forgot password?"}
+          <View style={styles.brandTop}>
+            <Text style={styles.brandTitle}>Welcome back</Text>
+            <Text style={styles.brandSub}>
+              Dial in your bike faster with zero-based tunes.
             </Text>
-          </Pressable>
+          </View>
 
-          {/* Help text */}
-          <Text style={styles.help}>
-            If the reset link doesn’t work, email{" "}
-            <Text style={styles.linkInline}>dialedoffroadapp@gmail.com</Text>{" "}
-            and we’ll help you get back in.
-          </Text>
+          <View style={styles.card}>
+            {/* Email */}
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              value={email}
+              onChangeText={(v) => {
+                setEmail(v);
+                if (emailErr) setEmailErr("");
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              placeholder="you@example.com"
+              placeholderTextColor={colors.MUTED}
+              style={[styles.input, emailErr && styles.inputError]}
+              returnKeyType="next"
+              textContentType="username"
+            />
+            {!!emailErr && <Text style={styles.errorText}>{emailErr}</Text>}
 
-          {/* Footer copy + sign-up link */}
-          <Text style={styles.terms}>
-            By signing in, you agree to our{" "}
-            <Text
-              style={styles.link}
-              onPress={() => router.push("/legal/privacy")}
+            {/* Password + eye */}
+            <Text style={[styles.label, { marginTop: 12 }]}>Password</Text>
+            <View style={{ position: "relative" }}>
+              <TextInput
+                value={password}
+                onChangeText={(v) => {
+                  setPassword(v);
+                  if (pwErr) setPwErr("");
+                }}
+                secureTextEntry={!showPw}
+                placeholder="••••••••"
+                placeholderTextColor={colors.MUTED}
+                style={[
+                  styles.input,
+                  pwErr && styles.inputError,
+                  { paddingRight: 44 },
+                ]}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  Keyboard.dismiss();
+                  onSignIn();
+                }}
+                textContentType="password"
+              />
+              <Pressable
+                onPress={() => setShowPw((s) => !s)}
+                hitSlop={8}
+                style={styles.eye}
+                accessibilityRole="button"
+                accessibilityLabel={showPw ? "Hide password" : "Show password"}
+              >
+                <Ionicons
+                  name={showPw ? "eye-off" : "eye"}
+                  size={18}
+                  color={colors.MUTED}
+                />
+              </Pressable>
+            </View>
+            {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
+
+            {/* Primary actions */}
+            <View style={{ height: 12 }} />
+            <Pressable
+              onPress={onSignIn}
+              disabled={loadingIn || !canSubmitPw}
+              style={({ pressed }) => [
+                styles.btn,
+                (loadingIn || !canSubmitPw) && styles.btnDisabled,
+                pressed && canSubmitPw && { opacity: 0.95 },
+              ]}
             >
-              Privacy Policy
-            </Text>{" "}
-            and{" "}
-            <Text
-              style={styles.link}
-              onPress={() => router.push("/legal/terms")}
-            >
-              Terms of Service
-            </Text>
-            .
-          </Text>
-
-          <View style={{ height: 12 }} />
-
-          <View style={styles.signupRow}>
-            <Text style={styles.signupText}>New here?</Text>
-            <Pressable onPress={() => router.push("/signup")}>
-              <Text style={styles.signupLink}>Create an account</Text>
+              {loadingIn ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.btnText}>Sign In</Text>
+              )}
             </Pressable>
+
+            <Pressable
+              onPress={onResetPassword}
+              disabled={loadingReset}
+              style={styles.linkBtn}
+            >
+              <Text style={styles.linkText}>
+                {loadingReset ? "Sending…" : "Forgot password?"}
+              </Text>
+            </Pressable>
+
+            {/* Help text */}
+            <Text style={styles.help}>
+              If the reset link doesn’t work, email{" "}
+              <Text style={styles.linkInline}>dialedoffroadapp@gmail.com</Text>{" "}
+              and we’ll help you get back in.
+            </Text>
+
+            {/* Footer copy + sign-up link */}
+            <Text style={styles.terms}>
+              By signing in, you agree to our{" "}
+              <Text
+                style={styles.link}
+                onPress={() => router.push("/legal/privacy")}
+              >
+                Privacy Policy
+              </Text>{" "}
+              and{" "}
+              <Text
+                style={styles.link}
+                onPress={() => router.push("/legal/terms")}
+              >
+                Terms of Service
+              </Text>
+              .
+            </Text>
+
+            <View style={{ height: 12 }} />
+
+            <View style={styles.signupRow}>
+              <Text style={styles.signupText}>New here?</Text>
+              <Pressable onPress={() => router.push("/signup")}>
+                <Text style={styles.signupLink}>Create an account</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </View>
+      </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
 }

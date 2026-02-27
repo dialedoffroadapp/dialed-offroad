@@ -1,17 +1,19 @@
 // app/signup.tsx
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableWithoutFeedback,
+  View,
 } from "react-native";
 import { ToastProvider, useToast } from "../components/Toast";
 import { COLORS } from "../constants/theme";
@@ -21,6 +23,21 @@ import { logEvent } from "../lib/usage";
 function SignupInner() {
   const router = useRouter();
   const toast = useToast();
+
+  // ✅ allow caller to specify where to go after signup
+  // If nothing provided, default to Paywall
+  const params = useLocalSearchParams<{ returnTo?: string }>();
+
+  // ✅ Default: go to premium
+  // ✅ DEV: automatically add dev=1 + returnTo=/tune-results so the paywall screen skips
+  const defaultReturnTo = __DEV__
+    ? "/premium?dev=1&returnTo=/tune-results"
+    : "/premium?returnTo=/tune-results";
+
+  const returnTo =
+    typeof params.returnTo === "string" && params.returnTo.length > 0
+      ? params.returnTo
+      : defaultReturnTo;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -71,7 +88,8 @@ function SignupInner() {
       });
       await logEvent("sign_up");
 
-      router.replace("/(tabs)");
+      // ✅ go to paywall (or whatever returnTo is)
+      router.replace(returnTo);
     } catch (e: any) {
       toast.show(e?.message ?? "Failed to sign up", { kind: "error" });
     } finally {
@@ -85,7 +103,8 @@ function SignupInner() {
       style={{ flex: 1, backgroundColor: COLORS.BG }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
-      <View style={styles.page}>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={styles.page}>
         {/* Top bar with logo */}
         <View style={styles.headerRow}>
           <Image
@@ -101,10 +120,10 @@ function SignupInner() {
           </Text>
         </View>
 
-        <View style={styles.card}>
+          <View style={styles.card}>
           {/* Email */}
           <Text style={styles.label}>Email</Text>
-          <TextInput
+            <TextInput
             value={email}
             onChangeText={(v) => {
               setEmail(v);
@@ -118,13 +137,13 @@ function SignupInner() {
             style={[styles.input, emailErr && styles.inputError]}
             returnKeyType="next"
             textContentType="username"
-          />
-          {!!emailErr && <Text style={styles.errorText}>{emailErr}</Text>}
+            />
+            {!!emailErr && <Text style={styles.errorText}>{emailErr}</Text>}
 
           {/* Password + eye */}
-          <Text style={[styles.label, { marginTop: 12 }]}>Password</Text>
-          <View style={{ position: "relative" }}>
-            <TextInput
+            <Text style={[styles.label, { marginTop: 12 }]}>Password</Text>
+            <View style={{ position: "relative" }}>
+              <TextInput
               value={password}
               onChangeText={(v) => {
                 setPassword(v);
@@ -138,11 +157,14 @@ function SignupInner() {
                 pwErr && styles.inputError,
                 { paddingRight: 44 },
               ]}
-              returnKeyType="go"
-              onSubmitEditing={onSignUp}
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                Keyboard.dismiss();
+                onSignUp();
+              }}
               textContentType="newPassword"
-            />
-            <Pressable
+              />
+              <Pressable
               onPress={() => setShowPw((s) => !s)}
               hitSlop={8}
               style={styles.eye}
@@ -154,13 +176,13 @@ function SignupInner() {
                 size={18}
                 color={COLORS.MUTED}
               />
-            </Pressable>
-          </View>
-          {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
+              </Pressable>
+            </View>
+            {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
 
           {/* Agreement row */}
-          <View style={styles.agreeRow}>
-            <Pressable
+            <View style={styles.agreeRow}>
+              <Pressable
               onPress={() => setAccepted((a) => !a)}
               hitSlop={8}
               accessibilityRole="checkbox"
@@ -170,8 +192,8 @@ function SignupInner() {
               {accepted ? (
                 <Ionicons name="checkmark" size={14} color="#fff" />
               ) : null}
-            </Pressable>
-            <Text style={styles.agreeText}>
+              </Pressable>
+              <Text style={styles.agreeText}>
               I agree to the{" "}
               <Text
                 style={styles.link}
@@ -187,13 +209,13 @@ function SignupInner() {
                 Privacy Policy
               </Text>
               .
-            </Text>
-          </View>
+              </Text>
+            </View>
 
-          <View style={{ height: 12 }} />
+            <View style={{ height: 12 }} />
 
           {/* Create account button */}
-          <Pressable
+            <Pressable
             onPress={onSignUp}
             disabled={loadingUp || !canSubmit}
             style={({ pressed }) => [
@@ -207,25 +229,26 @@ function SignupInner() {
             ) : (
               <Text style={styles.btnText}>Create Account</Text>
             )}
-          </Pressable>
+            </Pressable>
 
-          <Text style={styles.terms}>
-            You’ll use this email and password to sign in.
-          </Text>
+            <Text style={styles.terms}>
+              You’ll use this email and password to sign in.
+            </Text>
 
-          <View style={{ height: 12 }} />
+            <View style={{ height: 12 }} />
 
           {/* Sign in instead -> button */}
-          <Pressable
-            onPress={() => router.replace("/login")}
-            style={styles.switchBtn}
-          >
-            <Text style={styles.switchBtnText}>
-              Already have an account? Sign in
-            </Text>
-          </Pressable>
+            <Pressable
+              onPress={() => router.replace("/login")}
+              style={styles.switchBtn}
+            >
+              <Text style={styles.switchBtnText}>
+                Already have an account? Sign in
+              </Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
+      </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
 }

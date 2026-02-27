@@ -12,6 +12,8 @@ import React, {
 import {
   ActivityIndicator,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -20,6 +22,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
@@ -390,7 +393,13 @@ export default function ProfileScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.BG }}>
+    <KeyboardAvoidingView
+      behavior={Platform.select({ ios: "padding", android: undefined })}
+      style={{ flex: 1, backgroundColor: colors.BG }}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={{ flex: 1, backgroundColor: colors.BG }}>
       {/* Scrollable content so you can always reach the bottom */}
       <ScrollView
         style={{ flex: 1 }}
@@ -398,6 +407,8 @@ export default function ProfileScreen() {
           paddingTop: insets.top,
           paddingBottom: 24,
         }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         <View
           style={[
@@ -534,6 +545,8 @@ export default function ProfileScreen() {
                 color: (colors as any).INPUT_TEXT ?? colors.TEXT,
               },
             ]}
+            returnKeyType="done"
+            onSubmitEditing={Keyboard.dismiss}
           />
           <Text style={[styles.helper, { color: colors.MUTED }]}>
             This appears on saved sessions you share.
@@ -863,7 +876,9 @@ export default function ProfileScreen() {
           </ScrollView>
         </View>
       </Modal>
-    </View>
+        </View>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   );
 }
 
