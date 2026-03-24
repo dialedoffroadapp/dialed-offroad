@@ -1,5 +1,5 @@
 // app/_layout.tsx
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
@@ -54,9 +54,11 @@ function AppStack() {
  * (provider has to wrap it first).
  */
 function RootInner() {
-  // Overlay is just the 3 intro pages
+  const pathname = usePathname();
   const [showOnboardingOverlay, setShowOnboardingOverlay] = useState(true);
   const { setOnboardingActive } = useOnboarding();
+  const isRecoveryRoute =
+    pathname === "/auth-callback" || pathname === "/reset-password";
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -93,7 +95,7 @@ function RootInner() {
       <AppStack />
 
       {/* Onboarding overlay on TOP */}
-      {showOnboardingOverlay && (
+      {showOnboardingOverlay && !isRecoveryRoute && (
         <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
           <Onboarding
             onFinish={() => {

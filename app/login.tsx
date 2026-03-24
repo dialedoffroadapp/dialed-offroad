@@ -1,6 +1,6 @@
 // app/login.tsx
 import { Ionicons } from "@expo/vector-icons";
-import * as Linking from "expo-linking"; // 👈 NEW
+import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -86,7 +86,6 @@ function LoginInner() {
     }
   };
 
-  // 🔐 REAL password reset flow via Supabase + deep link
   const onResetPassword = async () => {
     const emailClean = email.trim();
 
@@ -98,8 +97,12 @@ function LoginInner() {
     try {
       setLoadingReset(true);
 
-      // Let Expo Linking generate the right URL (dev / prod / TF)
-      const redirectUrl = Linking.createURL("/reset-password");
+      const redirectUrl =
+        Platform.OS === "web"
+          ? Linking.createURL("/auth-callback")
+          : __DEV__
+            ? Linking.createURL("/auth-callback")
+            : "dialedoffroad://auth-callback";
 
       const { error } = await supabase.auth.resetPasswordForEmail(
         emailClean,

@@ -1,5 +1,4 @@
 // app/reset-password.tsx
-import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -33,40 +32,13 @@ function ResetInner() {
   const [saving, setSaving] = useState(false);
   const [pwErr, setPwErr] = useState("");
 
-  // 1) When this screen opens from the email link, grab the tokens and
-  //    create a Supabase session so we’re allowed to change the password.
   useEffect(() => {
     const run = async () => {
       try {
-        const url = await Linking.getInitialURL();
+        const { data, error } = await supabase.auth.getSession();
 
-        if (!url) {
-          setSessionError("Reset link is invalid. Try sending a new one.");
-          return;
-        }
-
-        // Supabase puts tokens after "#", which RN normally ignores.
-        const normalized = url.includes("#") ? url.replace("#", "?") : url;
-        const parsed = Linking.parse(normalized);
-
-        const access_token = parsed.queryParams?.access_token;
-        const refresh_token = parsed.queryParams?.refresh_token;
-
-        if (
-          typeof access_token !== "string" ||
-          typeof refresh_token !== "string"
-        ) {
+        if (error || !data.session) {
           setSessionError("Reset link is invalid or has expired.");
-          return;
-        }
-
-        const { error } = await supabase.auth.setSession({
-          access_token,
-          refresh_token,
-        });
-
-        if (error) {
-          setSessionError("Could not start password reset session.");
           return;
         }
 
@@ -108,7 +80,8 @@ function ResetInner() {
         kind: "success",
       });
 
-      // Back to login screen
+      await supabase.auth.signOut();
+
       router.replace("/login");
     } catch (e: any) {
       setPwErr(e?.message ?? "Could not update password.");
