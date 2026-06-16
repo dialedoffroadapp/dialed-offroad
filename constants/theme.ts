@@ -49,24 +49,24 @@ export const lightTheme: Omit<ThemeTokens, "ACCENT"> = {
 
 export const darkTheme: Omit<ThemeTokens, "ACCENT"> = {
   BG: "#0B0C10",
-  CARD: "#12141B",
+  CARD: "#111318",
   TEXT: "#F5F7FC",
-  MUTED: "#A6AEC3",
-  BORDER: "rgba(255,255,255,0.10)",
+  MUTED: "#6B7280",
+  BORDER: "rgba(255,255,255,0.06)",
   OVERLAY: "rgba(0,0,0,0.55)",
-  INK: "#0C1222",
+  INK: "#0C0D12",
 
   SUCCESS: "#22C55E",
   ERROR: "#F05252",
 
   ACCENT2: "#7CC6FF",
   ACCENT3: "#22C55E",
-  CHIP_BG: "rgba(255,255,255,0.08)",
-  TRACK: "rgba(255,255,255,0.08)",
-  BORDER_SUBTLE: "rgba(255,255,255,0.08)",
-  SURFACE_ALT: "#0C1222",
+  CHIP_BG: "rgba(255,255,255,0.05)",
+  TRACK: "rgba(255,255,255,0.06)",
+  BORDER_SUBTLE: "rgba(255,255,255,0.05)",
+  SURFACE_ALT: "#0C0D12",
 
-  INPUT_BG: "#0C1222",
+  INPUT_BG: "#0C0D12",
   INPUT_TEXT: "#F5F7FC",
 };
 

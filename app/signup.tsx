@@ -1,7 +1,7 @@
 // app/signup.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -15,14 +15,21 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ToastProvider, useToast } from "../components/Toast";
 import { COLORS } from "../constants/theme";
+import {
+  PENDING_GUEST_BIKE_SYNC_KEY,
+  readPendingTune,
+  useOnboarding,
+} from "../lib/onboarding";
 import { supabase } from "../lib/supabase";
-import { logEvent } from "../lib/usage";
+import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 function SignupInner() {
   const router = useRouter();
   const toast = useToast();
+  const { state, markAccountCreated, setStep } = useOnboarding();
 
   // ✅ allow caller to specify where to go after signup
   // If nothing provided, default to Paywall
@@ -51,6 +58,41 @@ function SignupInner() {
 
   const emailValid = useMemo(() => /^\S+@\S+\.\S+$/.test(email.trim()), [email]);
   const canSubmit = emailValid && password.trim().length > 0 && accepted;
+  const onboardingAgeMs = useMemo(() => {
+    const parsed = Date.parse(state.lastUpdatedAt);
+    return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
+  }, [state.lastUpdatedAt]);
+  const ageMinutesSinceLastStep = Math.round(onboardingAgeMs / 60000);
+
+  useEffect(() => {
+    if (state.onboardingStep !== "signup") return;
+
+    void (async () => {
+      const funnelId = await getOrCreateFunnelId();
+      await logEvent(
+        "onboarding_signup_started",
+        {
+          funnel_id: funnelId,
+          onboarding_step: state.onboardingStep,
+          signed_in: false,
+          account_created: state.accountCreated,
+          trial_started: state.trialStarted,
+          onboarding_complete: state.onboardingComplete,
+          pending_tune_exists: true,
+          resume: ageMinutesSinceLastStep >= 5,
+          age_minutes_since_last_step: ageMinutesSinceLastStep,
+          source_route: "/signup",
+        },
+        { allowAnonymous: true, queueIfAnonymous: true }
+      );
+    })();
+  }, [
+    ageMinutesSinceLastStep,
+    state.accountCreated,
+    state.onboardingComplete,
+    state.onboardingStep,
+    state.trialStarted,
+  ]);
 
   const onSignUp = async () => {
     setEmailErr("");
@@ -77,16 +119,95 @@ function SignupInner() {
       if (error) throw error;
 
       // 2) Immediately sign them in (no email verification required for now)
-      const { error: signInErr } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password.trim(),
       });
-      if (signInErr) throw signInErr;
+      if (signInErr) {
+        // Account was created but auto-login failed — send them to login with email pre-filled.
+        toast.show("Account created! Please sign in to continue.", { kind: "success" });
+        setLoadingUp(false);
+        router.replace({ pathname: "/login", params: { email: email.trim() } } as never);
+        return;
+      }
+
+      // 3) Ensure a profiles row exists so downstream screens never hit null
+      if (signInData?.user?.id) {
+        const { error: profileErr } = await supabase.from("profiles").upsert(
+          {
+            user_id: signInData.user.id,
+            onboarding_step: "trial",
+            onboarding_complete: false,
+            is_pro: false,
+          },
+          { onConflict: "user_id", ignoreDuplicates: false }
+        );
+        if (profileErr) {
+          toast.show("Account created but profile setup failed. Please try signing in.", { kind: "error" });
+          setLoadingUp(false);
+          return;
+        }
+
+        // 4) Migrate guest bike from pending tune into Supabase so hasLegacyUsage
+        //    fires correctly on next cold start and the TrialPromptModal can show.
+        let pendingBike: { make: string; model: string; year: number } | null = null;
+        try {
+          const { tune: pending } = await readPendingTune();
+          if (pending) {
+            const metaObj = JSON.parse(decodeURIComponent(pending.meta));
+            const bike = metaObj?.bike;
+            if (bike?.make && bike?.model && bike?.year) {
+              pendingBike = {
+                make: String(bike.make),
+                model: String(bike.model),
+                year: Number(bike.year),
+              };
+              await supabase.from("bikes").insert({
+                user_id: signInData.user.id,
+                ...pendingBike,
+              });
+              pendingBike = null; // success — no retry needed
+            }
+          }
+        } catch {
+          // Save for retry on next cold start
+          if (pendingBike) {
+            try {
+              await AsyncStorage.setItem(
+                PENDING_GUEST_BIKE_SYNC_KEY,
+                JSON.stringify({ ...pendingBike, userId: signInData.user.id })
+              );
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
 
       toast.show("Account created. You’re signed in ✅", {
         kind: "success",
       });
       await logEvent("sign_up");
+
+      if (state.onboardingStep === "signup") {
+        const funnelId = await getOrCreateFunnelId();
+        await logEvent("onboarding_signup_completed", {
+          funnel_id: funnelId,
+          onboarding_step: "trial",
+          signed_in: true,
+          account_created: true,
+          trial_started: false,
+          onboarding_complete: false,
+          pending_tune_exists: true,
+          resume: ageMinutesSinceLastStep >= 5,
+          age_minutes_since_last_step: ageMinutesSinceLastStep,
+          source_route: "/signup",
+        });
+        await markAccountCreated();
+        await setStep("trial");
+        router.replace("/premium");
+        return;
+      }
 
       // ✅ go to paywall (or whatever returnTo is)
       router.replace(returnTo);
@@ -116,7 +237,11 @@ function SignupInner() {
         <View style={styles.brandTop}>
           <Text style={styles.brandTitle}>Create your account</Text>
           <Text style={styles.brandSub}>
-            Start saving bikes, sessions, and AI-powered presets.
+            {state.onboardingStep === "signup"
+              ? state.hasSeenIntro
+                ? "Almost there — create your account to reveal your tune."
+                : "Your setup is ready. Create your account to reveal it and save your bike."
+              : "Start saving bikes, sessions, and AI-powered presets."}
           </Text>
         </View>
 

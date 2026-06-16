@@ -1,8 +1,8 @@
 // app/login.tsx
 import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
-import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -28,8 +28,11 @@ function LoginInner() {
   const toast = useToast();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const params = useLocalSearchParams<{ email?: string }>();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(
+    typeof params.email === "string" ? params.email : ""
+  );
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
 
@@ -44,14 +47,6 @@ function LoginInner() {
     [email]
   );
   const canSubmitPw = emailValid && password.length > 0;
-
-  // If there is already a session, go straight into the app
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data?.session) router.replace("/(tabs)");
-    })();
-  }, [router]);
 
   const onSignIn = async () => {
     setEmailErr("");

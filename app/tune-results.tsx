@@ -1,6 +1,5 @@
 // app/tune-results.tsx
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -19,17 +18,23 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
 import { ZeroTuneResult } from "../lib/ai";
+import {
+  clearPendingTune,
+  readPendingTune,
+  useOnboarding,
+  writePendingTune,
+  type PendingTunePayload,
+} from "../lib/onboarding";
+import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 /* ---------------- Free / Pro limits ---------------- */
 const FREE_BASELINE_LIMIT = 10;
 
 // ✅ Auth entry route (create account)
 const AUTH_ROUTE = "/signup" as const;
-
-// ✅ AsyncStorage key for returning users to their exact tune after auth
-const PENDING_TUNE_KEY = "pending_tune_v1";
 
 type Mode = "balanced" | "comfort" | "precision";
 
@@ -63,13 +68,6 @@ type ChangedRow = {
   direction: "up" | "down";
 };
 
-type PendingTunePayload = {
-  r: string; // encoded JSON string (same as route param)
-  meta: string; // encoded JSON string (same as route param)
-  bikeId?: string | null;
-  savedAt: number;
-};
-
 export default function TuneResultScreen() {
   const { r, meta, bikeId: bikeIdParam } = useLocalSearchParams<{
     r?: string;
@@ -79,6 +77,7 @@ export default function TuneResultScreen() {
 
   const toast = useToast();
   const router = useRouter();
+  const { state, setStep } = useOnboarding();
   const insets = useSafeAreaInsets();
   const { colors: C } = useTheme();
   const S = useMemo(() => makeStyles(C), [C]);
@@ -86,6 +85,8 @@ export default function TuneResultScreen() {
   // ---------------- Restore pending tune (for post-auth return) ----------------
   const [restored, setRestored] = useState<PendingTunePayload | null>(null);
   const [restoreTried, setRestoreTried] = useState(false);
+  const [tuneExpired, setTuneExpired] = useState(false);
+  const loggedLockedViewRef = React.useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -101,13 +102,13 @@ export default function TuneResultScreen() {
       }
 
       try {
-        const raw = await AsyncStorage.getItem(PENDING_TUNE_KEY);
-        if (!raw) {
+        const { tune: parsed, isExpired } = await readPendingTune();
+        if (isExpired) {
+          setTuneExpired(true);
           setRestoreTried(true);
           return;
         }
-        const parsed = JSON.parse(raw) as PendingTunePayload;
-        if (!parsed?.r || !parsed?.meta) {
+        if (!parsed) {
           setRestoreTried(true);
           return;
         }
@@ -151,6 +152,10 @@ export default function TuneResultScreen() {
   // ✅ Guest/onboarding flags (from Tune)
   const isGuest = !!metaObj?.guest;
   const isOnboarding = !!metaObj?.onboarding;
+  const isResultsLockedStep = state.onboardingStep === "results_locked";
+  const isOnboardingUnlockStep =
+    state.onboardingStep === "results_locked" ||
+    state.onboardingStep === "trial";
 
   // If we’re coming from Tune Two we expect a "previous" tune tucked into meta.
   const previousTune: ZeroTuneResult | null = useMemo(() => {
@@ -190,6 +195,7 @@ export default function TuneResultScreen() {
 
   // Monetization: Pro flag (Supabase-only)
   const [isPro, setIsPro] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   // Load Pro status from Supabase profiles
   useEffect(() => {
@@ -198,9 +204,12 @@ export default function TuneResultScreen() {
         const { data: auth } = await supabase.auth.getUser();
         const user = auth?.user;
         if (!user?.id) {
+          setIsSignedIn(false);
           setIsPro(false);
           return;
         }
+
+        setIsSignedIn(true);
 
         const { data: prof, error: profErr } = await supabase
           .from("profiles")
@@ -215,17 +224,22 @@ export default function TuneResultScreen() {
           return;
         }
 
-        const hasServerPro =
-          !!prof.is_pro ||
-          (!!prof.pro_until && new Date(prof.pro_until).getTime() > Date.now());
-
-        setIsPro(hasServerPro);
+        setIsPro(deriveIsPro(prof));
       } catch (e) {
         console.warn("TuneResults: init failed", e);
+        setIsSignedIn(false);
         setIsPro(false);
       }
     })();
   }, []);
+
+  const hasActiveEntitlement = isPro;
+  const shouldBlur = isOnboardingUnlockStep && !hasActiveEntitlement;
+  const onboardingAgeMs = useMemo(() => {
+    const parsed = Date.parse(state.lastUpdatedAt);
+    return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
+  }, [state.lastUpdatedAt]);
+  const ageMinutesSinceLastStep = Math.round(onboardingAgeMs / 60000);
 
   // variant without showing deltas
   const [mode, setMode] = useState<Mode>("balanced");
@@ -261,11 +275,50 @@ export default function TuneResultScreen() {
   const [unlockDismissed, setUnlockDismissed] = useState(false);
 
   useEffect(() => {
-    if (!base && restoreTried && !restored) {
+    if (!base && restoreTried && !restored && !tuneExpired && isResultsLockedStep) {
       const t = setTimeout(() => router.replace("/(tabs)/tune"), 10);
       return () => clearTimeout(t);
     }
-  }, [base, router, restoreTried, restored]);
+  }, [base, isResultsLockedStep, router, restoreTried, restored, tuneExpired]);
+
+  useEffect(() => {
+    if (!restoreTried || !base || !isOnboardingUnlockStep || loggedLockedViewRef.current) {
+      return;
+    }
+
+    loggedLockedViewRef.current = true;
+    void (async () => {
+      const funnelId = await getOrCreateFunnelId();
+      await logEvent(
+        "onboarding_locked_results_viewed",
+        {
+          funnel_id: funnelId,
+          onboarding_step: state.onboardingStep,
+          signed_in: isSignedIn,
+          account_created: state.accountCreated,
+          trial_started: state.trialStarted,
+          onboarding_complete: state.onboardingComplete,
+          pending_tune_exists: true,
+          bike_id: bikeId,
+          resume: ageMinutesSinceLastStep >= 5,
+          age_minutes_since_last_step: ageMinutesSinceLastStep,
+          source_route: "/tune-results",
+        },
+        { allowAnonymous: true, queueIfAnonymous: true }
+      );
+    })();
+  }, [
+    ageMinutesSinceLastStep,
+    base,
+    bikeId,
+    isOnboardingUnlockStep,
+    isSignedIn,
+    restoreTried,
+    state.accountCreated,
+    state.onboardingComplete,
+    state.onboardingStep,
+    state.trialStarted,
+  ]);
 
   // ---------- meta-derived values (NO early returns above this point) ----------
   const terrainVal = Array.isArray(metaObj?.context?.terrain)
@@ -474,7 +527,11 @@ export default function TuneResultScreen() {
   if (!result) {
     return (
       <View style={S.emptyWrap}>
-        <Text style={S.emptyText}>No result to display.</Text>
+        <Text style={S.emptyText}>
+          {tuneExpired
+            ? "Your saved tune expired (24 hours). Generate a new one to see your setup."
+            : "No result to display."}
+        </Text>
         <View style={{ height: 12 }} />
         <Pressable
           onPress={() => router.replace("/(tabs)/tune")}
@@ -497,25 +554,75 @@ export default function TuneResultScreen() {
     typeof airBar === "number" ? `AER: ${airBar.toFixed(2)} bar` : null,
   ].filter(Boolean) as string[];
 
-  // ✅ Save pending tune BEFORE auth so they return to this exact screen
-  const persistPendingTune = async () => {
+  // ✅ Save pending tune BEFORE auth so they return to this exact screen.
+  // Returns true on success, false on failure.
+  const persistPendingTune = async (): Promise<boolean> => {
     try {
-      if (!effectiveR || !effectiveMeta) return;
+      if (!effectiveR || !effectiveMeta) return true; // nothing to persist
       const payload: PendingTunePayload = {
         r: effectiveR,
         meta: effectiveMeta,
         bikeId: bikeId ?? null,
         savedAt: Date.now(),
       };
-      await AsyncStorage.setItem(PENDING_TUNE_KEY, JSON.stringify(payload));
+      await writePendingTune(payload);
+      return true;
     } catch (e) {
       console.warn("TuneResults: persist pending tune failed", e);
+      return false;
     }
   };
 
   // ✅ Auth funnel for onboarding (signup -> paywall)
   const goToAuth = async () => {
-    await persistPendingTune();
+    const persisted = await persistPendingTune();
+    if (!persisted) {
+      toast.show("Could not save your tune. Please try again.", { kind: "error" });
+      return;
+    }
+
+    if (isOnboardingUnlockStep) {
+      const { tune: pending } = await readPendingTune();
+      if (!pending) {
+        router.replace("/(tabs)/tune");
+        return;
+      }
+
+      const funnelId = await getOrCreateFunnelId();
+      await logEvent(
+        "onboarding_unlock_clicked",
+        {
+          funnel_id: funnelId,
+          onboarding_step: state.onboardingStep,
+          signed_in: isSignedIn,
+          account_created: state.accountCreated,
+          trial_started: state.trialStarted,
+          onboarding_complete: state.onboardingComplete,
+          pending_tune_exists: true,
+          bike_id: bikeId,
+          resume: ageMinutesSinceLastStep >= 5,
+          age_minutes_since_last_step: ageMinutesSinceLastStep,
+          source_route: "/tune-results",
+        },
+        { allowAnonymous: true, queueIfAnonymous: true }
+      );
+
+      if (state.onboardingStep === "trial") {
+        router.replace("/premium");
+        return;
+      }
+
+      const { data: authCheck } = await supabase.auth.getUser();
+      if (state.accountCreated || !!authCheck?.user?.id) {
+        await setStep("trial");
+        router.replace("/premium");
+        return;
+      }
+
+      await setStep("signup");
+      router.replace(AUTH_ROUTE);
+      return;
+    }
 
     router.push({
       pathname: AUTH_ROUTE,
@@ -527,8 +634,9 @@ export default function TuneResultScreen() {
   };
 
   // 🔧 include bikeId inside the context for Tune Two so refine flow can save to right bike
-  const goToFeedback = () => {
-    if (isGuest) return; // Guest refine is locked
+  const goToFeedback = async () => {
+    const { data: authCheck } = await supabase.auth.getUser();
+    if (!authCheck?.user?.id) return; // Guest refine is locked
 
     const ctxForFeedback: any = {
       make: metaObj?.bike?.make ?? metaObj?.bike_hint?.make ?? undefined,
@@ -654,7 +762,12 @@ export default function TuneResultScreen() {
       const { error } = await supabase.from("sessions").insert(insert);
       if (error) throw error;
 
-      await AsyncStorage.removeItem(PENDING_TUNE_KEY);
+      // Only clear the pending tune once onboarding is fully complete.
+      // During results_locked the pending tune must stay in storage so the
+      // unlock flow can restore it after signup/paywall.
+      if (state.onboardingComplete) {
+        await clearPendingTune();
+      }
 
       toast.show(isTuneTwo ? "Refined setup saved ✅" : "Baseline saved ✅", {
         kind: "success",
@@ -744,12 +857,18 @@ export default function TuneResultScreen() {
   const headerTitle = isTuneTwo ? "Refined Setup" : "Your Suggested Setup";
   const headerSubtitle = bikeTitle;
 
-  // ✅ IMPORTANT: blur is based on PRO now (so it unblurs after trial/purchase)
-  const shouldBlur = !isPro;
-
   const onUnlock = async () => {
     await goToAuth();
   };
+
+  const onboardingResumeTitle =
+    state.onboardingStep === "trial" ? "Your tune is ready" : "Your setup is ready";
+  const onboardingResumeBody =
+    state.onboardingStep === "trial"
+      ? "Your tune is ready — start your free trial to unlock it."
+      : state.hasSeenIntro
+        ? "Your setup is still waiting — start your free trial to reveal it."
+        : "Your first tune is ready. Create your account to reveal the exact clickers and notes.";
 
   return (
     <View style={{ flex: 1, backgroundColor: C.BG }}>
@@ -782,12 +901,16 @@ export default function TuneResultScreen() {
           ))}
         </View>
 
-        {isOnboarding && (
+        {isOnboardingUnlockStep ? (
+          <View style={{ marginTop: 10 }}>
+            <Text style={S.onbLine}>{onboardingResumeTitle}</Text>
+            {shouldBlur ? <Text style={S.onbSub}>{onboardingResumeBody}</Text> : null}
+          </View>
+        ) : isOnboarding ? (
           <View style={{ marginTop: 10 }}>
             <Text style={S.onbLine}>Nice — that’s your first tune.</Text>
-            {shouldBlur ? <Text style={S.onbSub}>Unlock to see the exact clicker numbers + notes.</Text> : null}
           </View>
-        )}
+        ) : null}
       </View>
 
       <ScrollView
@@ -958,11 +1081,17 @@ export default function TuneResultScreen() {
               <Ionicons name="close" size={18} color={C.MUTED} />
             </Pressable>
 
-            <Text style={S.unlockTitleBig}>Unlock this tune for free</Text>
-            <Text style={S.unlockSubStack}>Create an account to reveal exact clickers + save your bike.</Text>
+            <Text style={S.unlockTitleBig}>
+              {isOnboardingUnlockStep ? "Reveal your setup" : "Unlock this tune for free"}
+            </Text>
+            <Text style={S.unlockSubStack}>
+              Create an account to reveal exact clickers + save your bike.
+            </Text>
 
             <Pressable onPress={onUnlock} style={S.unlockBtnFull}>
-              <Text style={S.unlockBtnText}>Unlock for free</Text>
+              <Text style={S.unlockBtnText}>
+                {isOnboardingUnlockStep ? "Reveal your setup" : "Unlock for free"}
+              </Text>
             </Pressable>
           </View>
         </View>

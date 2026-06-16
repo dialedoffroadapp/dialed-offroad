@@ -64,10 +64,14 @@ function TuneButton({
 
 export default function TabsLayout() {
   const { colors } = useTheme();
-  const { onboardingActive } = useOnboarding();
+  const { onboardingActive, state } = useOnboarding();
   const styles = makeStyles(colors);
 
-  const hideTabs = onboardingActive;
+  // In the "trial" step the tabs are visible — Tune and Sessions show locked
+  // content instead of their normal screens. For all earlier steps hide the
+  // tab bar entirely so the onboarding flow stays focused.
+  const isTrialStep = onboardingActive && state.onboardingStep === "trial";
+  const hideTabs = onboardingActive && !isTrialStep;
 
   return (
     <Tabs

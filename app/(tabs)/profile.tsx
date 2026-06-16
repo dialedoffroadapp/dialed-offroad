@@ -31,6 +31,7 @@ import { useToast } from "../../components/Toast";
 import type { ThemeTokens } from "../../constants/theme";
 import {
   isPro,
+  resetPurchases,
   restorePurchases,
   syncProFromRevenueCat,
 } from "../../lib/purchases";
@@ -177,6 +178,7 @@ export default function ProfileScreen() {
   const onSignOut = async () => {
     try {
       resetThemeToDefault();
+      await resetPurchases();
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       toast.show("Signed out", { kind: "success" });
@@ -214,7 +216,7 @@ export default function ProfileScreen() {
       toast.show("Account deleted", { kind: "success" });
 
       resetThemeToDefault();
-
+      await resetPurchases();
       await supabase.auth.signOut();
       router.replace("/login");
       if (Platform.OS === "web" && typeof window !== "undefined") {

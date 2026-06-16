@@ -2,8 +2,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -21,8 +21,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../../components/Toast";
 import type { ThemeTokens } from "../../constants/theme";
 import { useOnboarding } from "../../lib/onboarding";
+import { deriveIsPro } from "../../lib/proUtils";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
+import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
 const ICON = Platform.select({ ios: 20, android: 20, default: 20 })!;
 
@@ -454,8 +456,10 @@ export default function GarageScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   // ✅ Onboarding mode is driven by context now (NOT query params)
-  const { onboardingActive } = useOnboarding();
+  const { onboardingActive, state, setGuestBikeId, setStep } = useOnboarding();
   const isOnboarding = onboardingActive;
+  const isGarageLocked =
+    onboardingActive && state.onboardingStep === "garage_locked";
 
   const [loading, setLoading] = useState(true);
   const [bikes, setBikes] = useState<Bike[]>([]);
@@ -506,24 +510,31 @@ export default function GarageScreen() {
         return;
       }
 
-      // If logged in: first auto-sync any guest bikes
+      // If logged in: first auto-sync any guest bikes one-by-one so a partial
+      // failure does not delete bikes that were not successfully inserted.
       const guestBikes = await readGuestBikes();
       if (guestBikes.length > 0) {
         try {
-          const rows = guestBikes.map((b) => ({
-            user_id: userId,
-            make: b.make,
-            model: b.model,
-            year: b.year,
-            nickname: b.nickname ?? null,
-          }));
+          const results = await Promise.all(
+            guestBikes.map((b) =>
+              supabase.from("bikes").insert({
+                user_id: userId,
+                make: b.make,
+                model: b.model,
+                year: b.year,
+                nickname: b.nickname ?? null,
+              })
+            )
+          );
 
-          const { error: syncErr } = await supabase.from("bikes").insert(rows);
-          if (syncErr) {
-            console.warn("Guest bike sync failed:", syncErr);
-          } else {
+          const allSucceeded = results.every((r) => !r.error);
+          if (allSucceeded) {
             await writeGuestBikes([]);
             await writeGuestDefaultBikeId(null);
+          } else {
+            results.forEach((r, i) => {
+              if (r.error) console.warn(`Guest bike sync failed (index ${i}):`, r.error);
+            });
           }
         } catch (e) {
           console.warn("Guest bike sync exception:", e);
@@ -551,38 +562,43 @@ export default function GarageScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pro status (only if logged in)
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const userId = sessionData?.session?.user?.id;
-        if (!userId) {
-          setIsPro(false);
-          return;
-        }
-
-        const { data: prof, error: profErr } = await supabase
-          .from("profiles")
-          .select("pro_until, is_pro")
-          .eq("user_id", userId)
-          .maybeSingle<ProfileMeta>();
-
-        if (profErr || !prof) {
-          setIsPro(false);
-          return;
-        }
-
-        const hasServerPro =
-          !!prof.is_pro ||
-          (!!prof.pro_until && new Date(prof.pro_until).getTime() > Date.now());
-
-        setIsPro(hasServerPro);
-      } catch {
+  // Pro status (only if logged in) — refreshed on every tab focus so post-paywall
+  // Pro status is always current without requiring an app restart.
+  const refreshProStatus = useCallback(async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) {
         setIsPro(false);
+        return;
       }
-    })();
+
+      const { data: prof, error: profErr } = await supabase
+        .from("profiles")
+        .select("pro_until, is_pro")
+        .eq("user_id", userId)
+        .maybeSingle<ProfileMeta>();
+
+      if (profErr || !prof) {
+        setIsPro(false);
+        return;
+      }
+
+      setIsPro(deriveIsPro(prof));
+    } catch {
+      setIsPro(false);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshProStatus();
+  }, [refreshProStatus]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshProStatus();
+    }, [refreshProStatus])
+  );
 
   // Persist guest garage whenever bikes/default change (ONLY when not logged in)
   useEffect(() => {
@@ -674,7 +690,7 @@ export default function GarageScreen() {
       setBikes((cur) => [...cur, localBike]);
 
       // ✅ onboarding: auto-select the newly added bike
-      if (isOnboarding) setDefaultBikeId(localBike.id);
+      if (isGarageLocked) setDefaultBikeId(localBike.id);
 
       setAdding(false);
       setNewBike({ make: "", model: "", year: "", nickname: "" });
@@ -700,7 +716,28 @@ export default function GarageScreen() {
       setBikes((cur) => [...cur, added]);
 
       // ✅ onboarding: auto-select the newly added bike
-      if (isOnboarding) setDefaultBikeId(added.id);
+      if (isGarageLocked) setDefaultBikeId(added.id);
+
+      if (isGarageLocked) {
+        const funnelId = await getOrCreateFunnelId();
+        const ageMinutesSinceLastStep = Math.round(
+          Math.max(0, Date.now() - Date.parse(state.lastUpdatedAt || "")) / 60000
+        );
+        await logEvent(
+          "onboarding_bike_added",
+          {
+            funnel_id: funnelId,
+            onboarding_step: state.onboardingStep,
+            signed_in: false,
+            bike_id: added.id,
+            pending_tune_exists: false,
+            resume: ageMinutesSinceLastStep >= 5,
+            age_minutes_since_last_step: ageMinutesSinceLastStep,
+            source_route: "/(tabs)/garage",
+          },
+          { allowAnonymous: true, queueIfAnonymous: true }
+        );
+      }
 
       setAdding(false);
       setNewBike({ make: "", model: "", year: "", nickname: "" });
@@ -725,7 +762,7 @@ export default function GarageScreen() {
     Haptics.selectionAsync();
   };
 
-  const onOnboardingContinue = () => {
+  const onOnboardingContinue = async () => {
     if (!selectedBikeId) {
       Haptics.selectionAsync();
       setAdding(true);
@@ -734,6 +771,9 @@ export default function GarageScreen() {
     }
 
     const b = bikes.find((x) => x.id === selectedBikeId);
+
+    await setGuestBikeId(selectedBikeId);
+    await setStep("tune");
 
     router.push({
       pathname: "/(tabs)/tune",
@@ -800,9 +840,13 @@ export default function GarageScreen() {
 
           {isOnboarding ? (
             <View style={[styles.onbTipCard, styles.shadow]}>
-              <Text style={[styles.onbTipTitle, styles.noSelect]}>Step 1 of 2</Text>
+              <Text style={[styles.onbTipTitle, styles.noSelect]}>
+                {state.hasSeenIntro ? "Pick up where you left off" : "Step 1 of 2"}
+              </Text>
               <Text style={styles.onbTipText}>
-                Add a bike, then tap it to select. We’ll use it to generate your first tune.
+                {state.hasSeenIntro
+                  ? "Add your bike to continue."
+                  : "Add a bike, then tap it to select. We’ll use it to generate your first tune."}
               </Text>
             </View>
           ) : null}

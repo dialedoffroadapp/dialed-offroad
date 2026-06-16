@@ -6,9 +6,14 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
-import { refreshProFromRC } from "../lib/purchases";
+import {
+  readPendingTune,
+  useOnboarding,
+} from "../lib/onboarding";
+import { syncProFromRevenueCat } from "../lib/purchases";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { clearFunnelId, getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 const DEV_FORCE_PRO_KEY = "dev_force_pro_v1";
 
@@ -17,6 +22,11 @@ export default function PremiumScreen() {
   const toast = useToast();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const {
+    state,
+    completeOnboarding,
+    setStep,
+  } = useOnboarding();
 
   // ✅ Where to go after the paywall closes
   const params = useLocalSearchParams<{ returnTo?: string; dev?: string }>();
@@ -27,9 +37,58 @@ export default function PremiumScreen() {
 
   // ✅ Dev override (use /premium?dev=1)
   const devMode = __DEV__ && params.dev === "1";
+  const isOnboardingTrial = state.onboardingStep === "trial";
+  const onboardingAgeMs = React.useMemo(() => {
+    const parsed = Date.parse(state.lastUpdatedAt);
+    return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
+  }, [state.lastUpdatedAt]);
+  const ageMinutesSinceLastStep = Math.round(onboardingAgeMs / 60000);
 
   useEffect(() => {
     let isMounted = true;
+
+    const handleOnboardingSuccess = async () => {
+      const funnelId = await getOrCreateFunnelId();
+      await logEvent("onboarding_trial_started", {
+        funnel_id: funnelId,
+        onboarding_step: state.onboardingStep,
+        signed_in: true,
+        account_created: state.accountCreated,
+        trial_started: true,
+        onboarding_complete: false,
+        pending_tune_exists: !!(await readPendingTune()).tune,
+        resume: ageMinutesSinceLastStep >= 5,
+        age_minutes_since_last_step: ageMinutesSinceLastStep,
+        source_route: "/premium",
+      });
+      await completeOnboarding();
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user?.id) {
+        await supabase.from("profiles").upsert(
+          {
+            user_id: authData.user.id,
+            onboarding_complete: true,
+            onboarding_step: "complete",
+          },
+          { onConflict: "user_id" }
+        );
+      }
+      const { tune: pending } = await readPendingTune();
+      await logEvent("onboarding_completed", {
+        funnel_id: funnelId,
+        onboarding_step: "complete",
+        signed_in: true,
+        account_created: true,
+        trial_started: true,
+        onboarding_complete: true,
+        pending_tune_exists: !!pending,
+        resume: ageMinutesSinceLastStep >= 5,
+        age_minutes_since_last_step: ageMinutesSinceLastStep,
+        source_route: "/premium",
+      });
+      await clearFunnelId();
+      return pending ? "/tune-results" : "/(tabs)";
+    };
 
     const forceProForDev = async () => {
       // Local flag (nice for debugging / future checks)
@@ -58,11 +117,32 @@ export default function PremiumScreen() {
     };
 
     const showPaywall = async () => {
+      let target = returnTo;
+
       try {
         // ✅ DEV: skip paywall entirely
         if (devMode) {
           await forceProForDev();
+          if (isOnboardingTrial) {
+            target = await handleOnboardingSuccess();
+          }
           return;
+        }
+
+        if (isOnboardingTrial) {
+          const funnelId = await getOrCreateFunnelId();
+          await logEvent("onboarding_paywall_shown", {
+            funnel_id: funnelId,
+            onboarding_step: state.onboardingStep,
+            signed_in: true,
+            account_created: state.accountCreated,
+            trial_started: state.trialStarted,
+            onboarding_complete: state.onboardingComplete,
+            pending_tune_exists: !!(await readPendingTune()).tune,
+            resume: ageMinutesSinceLastStep >= 5,
+            age_minutes_since_last_step: ageMinutesSinceLastStep,
+            source_route: "/premium",
+          });
         }
 
         const result = await RevenueCatUI.presentPaywall({
@@ -76,17 +156,64 @@ export default function PremiumScreen() {
           result === PAYWALL_RESULT.RESTORED
         ) {
           // sync RC entitlements → Supabase profiles
-          await refreshProFromRC();
+          const synced = await syncProFromRevenueCat();
+          if (!synced) {
+            toast.show("Purchase recorded but profile sync failed. Please restart the app.", { kind: "error" });
+            return;
+          }
           toast.show("Pro unlocked 🎉", { kind: "success" });
+          if (isOnboardingTrial) {
+            target = await handleOnboardingSuccess();
+          }
+        } else if (isOnboardingTrial) {
+          const funnelId = await getOrCreateFunnelId();
+          const { tune: pending } = await readPendingTune();
+          await logEvent("onboarding_paywall_dismissed", {
+            funnel_id: funnelId,
+            onboarding_step: state.onboardingStep,
+            signed_in: true,
+            account_created: state.accountCreated,
+            trial_started: state.trialStarted,
+            onboarding_complete: state.onboardingComplete,
+            pending_tune_exists: !!pending,
+            resume: ageMinutesSinceLastStep >= 5,
+            age_minutes_since_last_step: ageMinutesSinceLastStep,
+            source_route: "/premium",
+            paywall_result: "dismissed",
+          });
+          await setStep("trial");
+          // Drop to garage (tabs visible, Tune/Sessions locked) instead of the
+          // blurred-results loop that existed before this change.
+          target = "/(tabs)/garage";
         }
       } catch (e: any) {
         if (!isMounted) return;
         console.log("Paywall error", e);
         toast.show("Could not open paywall", { kind: "error" });
+        if (isOnboardingTrial) {
+          const funnelId = await getOrCreateFunnelId();
+          const { tune: pending } = await readPendingTune();
+          await logEvent("onboarding_paywall_dismissed", {
+            funnel_id: funnelId,
+            onboarding_step: state.onboardingStep,
+            signed_in: true,
+            account_created: state.accountCreated,
+            trial_started: state.trialStarted,
+            onboarding_complete: state.onboardingComplete,
+            pending_tune_exists: !!pending,
+            resume: ageMinutesSinceLastStep >= 5,
+            age_minutes_since_last_step: ageMinutesSinceLastStep,
+            source_route: "/premium",
+            paywall_result: "error",
+            error_code: e?.code ?? e?.message ?? "unknown",
+          });
+          await setStep("trial");
+          target = "/(tabs)/garage";
+        }
       } finally {
         // ✅ Always land back on Tune Results (or whatever returnTo says)
         if (isMounted) {
-          router.replace(returnTo);
+          router.replace(target);
         }
       }
     };
@@ -96,7 +223,20 @@ export default function PremiumScreen() {
     return () => {
       isMounted = false;
     };
-  }, [router, toast, returnTo, devMode]);
+  }, [
+    devMode,
+    ageMinutesSinceLastStep,
+    completeOnboarding,
+    isOnboardingTrial,
+    returnTo,
+    router,
+    setStep,
+    state.accountCreated,
+    state.onboardingComplete,
+    state.onboardingStep,
+    state.trialStarted,
+    toast,
+  ]);
 
   return (
     <View
@@ -110,8 +250,19 @@ export default function PremiumScreen() {
     >
       <ActivityIndicator color={colors.TEXT} />
       <Text style={[styles.text, { color: colors.MUTED }]}>
-        {devMode ? "Enabling Dev Pro…" : "Loading Pro options…"}
+        {devMode
+          ? "Enabling Dev Pro…"
+          : isOnboardingTrial
+            ? "Preparing your setup reveal…"
+            : "Loading Pro options…"}
       </Text>
+      {isOnboardingTrial ? (
+        <Text style={[styles.subtext, { color: colors.MUTED }]}>
+          {state.hasSeenIntro
+            ? "Your tune is ready — start your free trial to unlock it."
+            : "Your tune is ready. Start your free trial to reveal the exact numbers and notes."}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -125,5 +276,12 @@ const styles = StyleSheet.create({
   text: {
     marginTop: 8,
     fontSize: 14,
+  },
+  subtext: {
+    marginTop: 10,
+    fontSize: 14,
+    textAlign: "center",
+    paddingHorizontal: 28,
+    lineHeight: 20,
   },
 });

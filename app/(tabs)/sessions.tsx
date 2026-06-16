@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../../components/Toast";
 import type { ThemeTokens } from "../../constants/theme";
+import { useOnboarding } from "../../lib/onboarding";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
 
@@ -71,6 +72,7 @@ export default function SessionsScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { onboardingActive, state } = useOnboarding();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -280,6 +282,29 @@ export default function SessionsScreen() {
       </Pressable>
     );
   };
+
+  // Trial step — sessions are locked until the user subscribes.
+  if (onboardingActive && state.onboardingStep === "trial") {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top + 6 }]}>
+        <Text style={styles.headerTitle}>My Sessions</Text>
+        <View style={styles.emptyWrap}>
+          <Ionicons name="time-outline" size={40} color={colors.MUTED} style={{ marginBottom: 14 }} />
+          <Text style={styles.emptyTitle}>Your sessions are waiting</Text>
+          <Text style={styles.emptySub}>
+            Start your free trial to save and revisit every tune.
+          </Text>
+          <View style={{ height: 20 }} />
+          <Pressable
+            onPress={() => router.push("/premium")}
+            style={styles.btnPrimary}
+          >
+            <Text style={styles.btnPrimaryText}>Start Free Trial</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 6 }]}>

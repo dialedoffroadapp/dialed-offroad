@@ -39,12 +39,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RiskGate } from "../../components/RiskGate";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
+import {
+  readPendingTune,
+  useOnboarding,
+  writePendingTune,
+  type PendingTunePayload,
+} from "../../lib/onboarding";
 // 🔻 Removed direct RevenueCat gating – Tune now trusts Supabase profile only
 // import { getCustomerInfo, isPro as isProEntitlement } from "../../lib/purchases";
+import { deriveIsPro } from "../../lib/proUtils";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
 import type { UsageEvent } from "../../lib/usage";
-import { logEvent } from "../../lib/usage";
+import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
 /* --------------------------------- Types ---------------------------------- */
 type Bike = {
@@ -219,6 +226,8 @@ function BikePickerSheet({
 export default function TuneScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const router = useRouter();
   const {
     preset,
@@ -239,9 +248,36 @@ export default function TuneScreen() {
     year?: string;
     nickname?: string;
   }>();
+  const { onboardingActive, state, setStep } = useOnboarding();
 
   // ✅ onboarding mode supports either legacy t=onboarding OR onboarding=1
-  const isOnboarding = useMemo(() => t === "onboarding" || onboarding === "1", [t, onboarding]);
+  const hasLegacyOnboardingParams = useMemo(
+    () => t === "onboarding" || onboarding === "1",
+    [t, onboarding]
+  );
+  const isTuneOnboarding =
+    onboardingActive && state.onboardingStep === "tune";
+  const isOnboarding = isTuneOnboarding
+    ? true
+    : hasLegacyOnboardingParams;
+
+  // ——— Trial-locked state (step === "trial") ———
+  const isTrialLocked = onboardingActive && state.onboardingStep === "trial";
+  const [trialPending, setTrialPending] = useState<PendingTunePayload | null>(null);
+  const [trialPendingLoaded, setTrialPendingLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!isTrialLocked) {
+      setTrialPendingLoaded(true);
+      return;
+    }
+    readPendingTune()
+      .then(({ tune }) => {
+        setTrialPending(tune);
+        setTrialPendingLoaded(true);
+      })
+      .catch(() => setTrialPendingLoaded(true));
+  }, [isTrialLocked]);
 
   const { colors: C } = useTheme();
   const S = useMemo(() => makeStyles(C), [C]);
@@ -357,65 +393,71 @@ export default function TuneScreen() {
   // risk + monetization:
   //  - Risk: stored locally in AsyncStorage (per user)
   //  - Trial + Pro: from Supabase profile (account-based, not device-based)
-  useEffect(() => {
-    (async () => {
+  //  - Refreshed on every tab focus so post-paywall Pro status is always current.
+  const refreshProAndTrial = useCallback(async () => {
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth?.user;
+
+      if (!user?.id) {
+        setIsPro(false);
+        setTrialUsed(0);
+        return;
+      }
+
+      // Load local Risk consent (only needed on first mount, but safe to re-run)
       try {
-        const { data: auth } = await supabase.auth.getUser();
-        const user = auth?.user;
-
-        if (!user?.id) {
-          setIsPro(false);
-          setTrialUsed(0);
-          return;
-        }
-
-        // Load local Risk consent
-        try {
-          const rawRisk = await AsyncStorage.getItem(riskKeyForUser(user.id));
-          if (rawRisk) {
-            const parsed: StoredRisk = JSON.parse(rawRisk);
-            if (parsed.version === RISK_VER && parsed.acceptedAt) {
-              setHasRiskConsent(true);
-            }
+        const rawRisk = await AsyncStorage.getItem(riskKeyForUser(user.id));
+        if (rawRisk) {
+          const parsed: StoredRisk = JSON.parse(rawRisk);
+          if (parsed.version === RISK_VER && parsed.acceptedAt) {
+            setHasRiskConsent(true);
           }
-        } catch (e) {
-          console.warn("Tune: failed to load local risk consent", e);
-        }
-
-        // 🔑 Pro + trial usage from Supabase profile (server-driven)
-        try {
-          const { data: prof, error: profErr } = await supabase
-            .from("profiles")
-            .select("is_pro, pro_until, trial_tunes_used")
-            .eq("user_id", user.id)
-            .maybeSingle<ProfileMeta>();
-
-          if (profErr) {
-            console.warn("Tune: profiles select failed", profErr);
-            setIsPro(false);
-            setTrialUsed(0);
-          } else if (!prof) {
-            setIsPro(false);
-            setTrialUsed(0);
-          } else {
-            const proActive =
-              !!prof.is_pro ||
-              (!!prof.pro_until && new Date(prof.pro_until).getTime() > Date.now());
-            setIsPro(proActive);
-            setTrialUsed(prof.trial_tunes_used ?? 0);
-          }
-        } catch (e) {
-          console.warn("Tune: profiles select threw", e);
-          setIsPro(false);
-          setTrialUsed(0);
         }
       } catch (e) {
-        console.warn("Tune: init failed", e);
+        console.warn("Tune: failed to load local risk consent", e);
+      }
+
+      // 🔑 Pro + trial usage from Supabase profile (server-driven)
+      try {
+        const { data: prof, error: profErr } = await supabase
+          .from("profiles")
+          .select("is_pro, pro_until, trial_tunes_used")
+          .eq("user_id", user.id)
+          .maybeSingle<ProfileMeta>();
+
+        if (profErr) {
+          console.warn("Tune: profiles select failed", profErr);
+          setIsPro(false);
+          setTrialUsed(0);
+        } else if (!prof) {
+          setIsPro(false);
+          setTrialUsed(0);
+        } else {
+          setIsPro(deriveIsPro(prof));
+          setTrialUsed(prof.trial_tunes_used ?? 0);
+        }
+      } catch (e) {
+        console.warn("Tune: profiles select threw", e);
         setIsPro(false);
         setTrialUsed(0);
       }
-    })();
+    } catch (e) {
+      console.warn("Tune: init failed", e);
+      setIsPro(false);
+      setTrialUsed(0);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshProAndTrial();
+  }, [refreshProAndTrial]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshProAndTrial();
+    }, [refreshProAndTrial])
+  );
 
   // ---------- bikes helper + live updates ----------
   const applySelected = (b: Bike) => {
@@ -480,11 +522,11 @@ export default function TuneScreen() {
         if (primary) applySelected(primary);
       }
     } catch (e: any) {
-      toast.show(e?.message ?? "Failed to load Garage", { kind: "error" });
+      toastRef.current.show(e?.message ?? "Failed to load Garage", { kind: "error" });
     } finally {
       setBikeLoading(false);
     }
-  }, [toast, bikeId, isOnboarding, selectedBikeId]);
+  }, [bikeId, isOnboarding, selectedBikeId]);
 
   // initial load
   useEffect(() => {
@@ -683,27 +725,70 @@ export default function TuneScreen() {
         guest: !user?.id ? 1 : 0,
       });
 
+      const encodedResult = encodeURIComponent(JSON.stringify(s));
+      const encodedMeta = encodeURIComponent(
+        JSON.stringify({
+          bike: {
+            year: input.year,
+            make: input.make,
+            model: input.model,
+            selectedBikeId,
+          },
+          context: {
+            terrain: terrainLabel,
+            track: input.track,
+            temp_f: input.temp_f,
+            elev_ft: input.elev_ft,
+            wants_air_fork: wantsAirFork,
+            rider_weight_lbs: weight ? Number(weight) : undefined,
+            goals,
+            issues: issues.trim() || undefined,
+          },
+          onboarding: isOnboarding ? true : false,
+          guest: !user?.id,
+        })
+      );
+
+      if (isTuneOnboarding) {
+        await setStep("results_locked");
+        if (user?.id) {
+          const { error: stepErr } = await supabase.from("profiles").upsert(
+            { user_id: user.id, onboarding_step: "results_locked" },
+            { onConflict: "user_id" }
+          );
+          if (stepErr) console.warn("[Tune] onboarding_step upsert failed:", stepErr);
+        }
+        await writePendingTune({
+          r: encodedResult,
+          meta: encodedMeta,
+          bikeId: selectedBikeId ?? null,
+          savedAt: Date.now(),
+        });
+        const funnelId = await getOrCreateFunnelId();
+        const ageMinutesSinceLastStep = Math.round(
+          Math.max(0, Date.now() - Date.parse(state.lastUpdatedAt || "")) / 60000
+        );
+        await logEvent(
+          "onboarding_tune_generated",
+          {
+            funnel_id: funnelId,
+            onboarding_step: "results_locked",
+            signed_in: !!user?.id,
+            bike_id: selectedBikeId ?? null,
+            pending_tune_exists: true,
+            resume: ageMinutesSinceLastStep >= 5,
+            age_minutes_since_last_step: ageMinutesSinceLastStep,
+            source_route: "/(tabs)/tune",
+          },
+          { allowAnonymous: true, queueIfAnonymous: true }
+        );
+      }
+
       router.push({
         pathname: "/tune-results",
         params: {
-          r: encodeURIComponent(JSON.stringify(s)),
-          meta: encodeURIComponent(
-            JSON.stringify({
-              bike: { year: input.year, make: input.make, model: input.model, selectedBikeId },
-              context: {
-                terrain: terrainLabel,
-                track: input.track,
-                temp_f: input.temp_f,
-                elev_ft: input.elev_ft,
-                wants_air_fork: wantsAirFork,
-                rider_weight_lbs: weight ? Number(weight) : undefined,
-                goals,
-                issues: issues.trim() || undefined,
-              },
-              onboarding: isOnboarding ? true : false,
-              guest: !user?.id, // ✅ used later to blur + “Unlock for free”
-            })
-          ),
+          r: encodedResult,
+          meta: encodedMeta,
         },
       });
     } catch (e: any) {
@@ -787,6 +872,148 @@ export default function TuneScreen() {
     return bikes.find((b) => b.id === selectedBikeId) ?? null;
   }, [bikes, selectedBikeId]);
 
+  /* ——— Trial-locked render (onboardingStep === "trial") ———
+   * Shows the pending tune blurred with an unlock CTA, or a simple lock
+   * screen if the pending tune has expired.
+   */
+  if (isTrialLocked && trialPendingLoaded) {
+    const pendingResult = trialPending?.r
+      ? (() => {
+          try {
+            return JSON.parse(decodeURIComponent(trialPending.r)) as {
+              fork: { comp_clicks: number; reb_clicks: number };
+              shock: { lsc_clicks: number; hsc_turns: number; reb_clicks: number; sag_mm: number };
+            };
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+
+    const MetricRow = ({
+      label,
+      value,
+    }: {
+      label: string;
+      value: string;
+    }) => (
+      <View style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.BORDER }}>
+        <Text style={{ color: C.MUTED, fontSize: 14 }}>{label}</Text>
+        <Text style={{ color: C.TEXT, fontSize: 14, fontWeight: "700" }}>{value}</Text>
+      </View>
+    );
+
+    return (
+      <View style={{ flex: 1, backgroundColor: C.BG }}>
+        <View style={{ height: insets.top }} />
+        {/* Accent header */}
+        <View style={[S.headerSolid, { paddingBottom: 16 }]}>
+          <Text style={S.heroTitle}>Your First Tune</Text>
+          <Text style={S.heroSubtitle}>
+            Your tune is ready — start your free trial to unlock it.
+          </Text>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 140 + insets.bottom }}
+          showsVerticalScrollIndicator={false}
+        >
+          {pendingResult ? (
+            <>
+              {/* Blurred fork card */}
+              <View style={[S.card, { marginBottom: 12, overflow: "hidden" }]}>
+                <Text style={[S.h1, { marginBottom: 8 }]}>Fork</Text>
+                <MetricRow label="Compression" value={`${pendingResult.fork.comp_clicks} clicks`} />
+                <MetricRow label="Rebound" value={`${pendingResult.fork.reb_clicks} clicks`} />
+                {/* Blur overlay */}
+                <BlurView
+                  intensity={Platform.OS === "ios" ? 28 : 60}
+                  tint="dark"
+                  style={{ ...StyleSheet.absoluteFillObject, borderRadius: 14, zIndex: 2 }}
+                />
+                <View style={{ ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 3 }}>
+                  <Ionicons name="lock-closed" size={20} color={C.MUTED} />
+                </View>
+              </View>
+
+              {/* Blurred shock card */}
+              <View style={[S.card, { marginBottom: 12, overflow: "hidden" }]}>
+                <Text style={[S.h1, { marginBottom: 8 }]}>Shock</Text>
+                <MetricRow label="Low-Speed Comp" value={`${pendingResult.shock.lsc_clicks} clicks`} />
+                <MetricRow label="High-Speed Comp" value={`${pendingResult.shock.hsc_turns?.toFixed(1) ?? "—"} turns`} />
+                <MetricRow label="Rebound" value={`${pendingResult.shock.reb_clicks} clicks`} />
+                <MetricRow label="Sag" value={`${pendingResult.shock.sag_mm} mm`} />
+                <BlurView
+                  intensity={Platform.OS === "ios" ? 28 : 60}
+                  tint="dark"
+                  style={{ ...StyleSheet.absoluteFillObject, borderRadius: 14, zIndex: 2 }}
+                />
+                <View style={{ ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 3 }}>
+                  <Ionicons name="lock-closed" size={20} color={C.MUTED} />
+                </View>
+              </View>
+            </>
+          ) : (
+            /* Pending tune expired — no blurred preview available */
+            <View style={[S.card, { alignItems: "center", paddingVertical: 32 }]}>
+              <Ionicons name="flash-outline" size={36} color={C.MUTED} style={{ marginBottom: 12 }} />
+              <Text style={[S.h1, { textAlign: "center" }]}>Your tune is waiting</Text>
+              <Text style={[S.muted, { textAlign: "center", marginTop: 6 }]}>
+                Start your free trial to generate and reveal your personalized setup.
+              </Text>
+            </View>
+          )}
+
+          {/* Lock info card */}
+          <View style={[S.card, { marginBottom: 12, alignItems: "center", paddingVertical: 20 }]}>
+            <Ionicons name="lock-closed" size={28} color={C.ACCENT} style={{ marginBottom: 10 }} />
+            <Text style={[S.h1, { textAlign: "center" }]}>Unlock your first tune</Text>
+            <Text style={[S.muted, { textAlign: "center", marginTop: 6 }]}>
+              Your exact compression, rebound, and sag numbers are ready. Start your free trial to reveal them.
+            </Text>
+          </View>
+        </ScrollView>
+
+        {/* Sticky CTA */}
+        <View
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            paddingHorizontal: 16,
+            paddingBottom: insets.bottom + 16,
+            paddingTop: 12,
+            backgroundColor: C.BG,
+            borderTopWidth: 1,
+            borderTopColor: C.BORDER,
+          }}
+        >
+          <Pressable
+            onPress={async () => {
+              if (!trialPending) {
+                // Expired — re-enter onboarding tune flow
+                await setStep("tune");
+                return;
+              }
+              router.push("/premium");
+            }}
+            style={{
+              backgroundColor: C.ACCENT,
+              borderRadius: 999,
+              paddingVertical: 16,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>
+              {trialPending ? "Unlock Your First Tune" : "Generate Your First Tune"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   /* --------------------------------- Render -------------------------------- */
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
@@ -812,7 +1039,9 @@ export default function TuneScreen() {
           <Text style={S.heroTitle}>{isOnboarding ? "Step 2 of 2" : "Suggested setup"}</Text>
           <Text style={S.heroSubtitle}>
             {isOnboarding
-              ? "Confirm today’s conditions, then generate your first tune."
+              ? state.hasSeenIntro
+                ? "Your bike is ready — generate your tune."
+                : "Confirm today’s conditions, then generate your first tune."
               : "Dial in a zero-based tune for today’s conditions."}
           </Text>
 

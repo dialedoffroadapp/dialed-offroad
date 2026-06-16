@@ -8,7 +8,7 @@ const config: ExpoConfig = {
   scheme: "dialedoffroad",
 
   // 🔵 BUMPED APP VERSION (user-facing)
-  version: "1.4.1",
+  version: "1.4.4",
 
   orientation: "portrait",
   icon: "./assets/images/icon.png",
@@ -20,7 +20,7 @@ const config: ExpoConfig = {
     bundleIdentifier: "com.dialedoffroad.app",
 
     // 🔵 iOS build number (must be > previous TF build)
-    buildNumber: "9",
+    buildNumber: "12",
 
     infoPlist: {
       NSPhotoLibraryUsageDescription:
@@ -34,7 +34,7 @@ const config: ExpoConfig = {
     package: "com.dialedoffroad.app",
 
     // 🔵 ANDROID: internal build counter for Play Store
-    versionCode: 8,
+    versionCode: 12,
 
     adaptiveIcon: {
       // Use your main icon as the foreground

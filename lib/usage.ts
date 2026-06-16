@@ -1,12 +1,45 @@
 // lib/usage.ts
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "./supabase";
 
-export type UsageEventType =
+const FUNNEL_ID_KEY = "dialed_onboarding_funnel_id_v1";
+const USAGE_QUEUE_KEY = "dialed_usage_event_queue_v1";
+const MAX_QUEUED_EVENTS = 25;
+
+export type UsageEvent =
   | "ai_tune_generated"
+  | "ai_tune_generated_zero"
   | "session_saved"
   | "session_deleted"
   | "bike_created"
-  | "bike_updated";
+  | "bike_updated"
+  | "preset_applied"
+  | "sign_in"
+  | "sign_up"
+  | "onboarding_intro_completed"
+  | "onboarding_bike_added"
+  | "onboarding_tune_generated"
+  | "onboarding_locked_results_viewed"
+  | "onboarding_unlock_clicked"
+  | "onboarding_signup_started"
+  | "onboarding_signup_completed"
+  | "onboarding_paywall_shown"
+  | "onboarding_paywall_dismissed"
+  | "onboarding_trial_started"
+  | "onboarding_completed";
+
+export type UsageEventType = UsageEvent;
+
+type LogEventOptions = {
+  allowAnonymous?: boolean;
+  queueIfAnonymous?: boolean;
+};
+
+type QueuedUsageEvent = {
+  event_type: UsageEventType;
+  meta: Record<string, any>;
+  queued_at: string;
+};
 
 type Json =
   | string
@@ -41,18 +74,113 @@ function pruneMeta(value: any, depth = 0): Json {
   return null;
 }
 
-/**
- * Logs a usage event for the current authenticated user.
- * Safe to call and will no-op if the user is not logged in.
- */
-export async function logEvent(event_type: UsageEventType, meta?: Record<string, any>): Promise<void> {
+function newId(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function readQueuedUsageEvents(): Promise<QueuedUsageEvent[]> {
   try {
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth?.user?.id) {
-      // Not logged in → skip logging
+    const raw = await AsyncStorage.getItem(USAGE_QUEUE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeQueuedUsageEvents(events: QueuedUsageEvent[]): Promise<void> {
+  await AsyncStorage.setItem(
+    USAGE_QUEUE_KEY,
+    JSON.stringify(events.slice(-MAX_QUEUED_EVENTS))
+  );
+}
+
+async function queueUsageEvent(
+  event_type: UsageEventType,
+  meta: Record<string, any>
+): Promise<void> {
+  const queued = await readQueuedUsageEvents();
+  queued.push({
+    event_type,
+    meta,
+    queued_at: new Date().toISOString(),
+  });
+  await writeQueuedUsageEvents(queued);
+}
+
+export async function getOrCreateFunnelId(): Promise<string> {
+  try {
+    const existing = await AsyncStorage.getItem(FUNNEL_ID_KEY);
+    if (existing && existing.length > 0) return existing;
+
+    const created = newId("funnel");
+    await AsyncStorage.setItem(FUNNEL_ID_KEY, created);
+    return created;
+  } catch {
+    return newId("funnel");
+  }
+}
+
+export async function clearFunnelId(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(FUNNEL_ID_KEY);
+  } catch {
+    // Ignore cleanup failures for analytics IDs.
+  }
+}
+
+export async function flushQueuedUsageEvents(userId?: string): Promise<void> {
+  try {
+    let targetUserId = userId;
+    if (!targetUserId) {
+      const { data: auth } = await supabase.auth.getUser();
+      targetUserId = auth?.user?.id ?? undefined;
+    }
+    if (!targetUserId) return;
+
+    const queued = await readQueuedUsageEvents();
+    if (!queued.length) return;
+
+    const rows = queued.map((evt) => ({
+      user_id: targetUserId,
+      event_type: evt.event_type,
+      meta: evt.meta ?? {},
+    }));
+
+    const { error } = await supabase.from("usage_events").insert(rows);
+    if (error) {
+      console.warn("[usage] queue flush failed:", error.message);
       return;
     }
+
+    await AsyncStorage.removeItem(USAGE_QUEUE_KEY);
+  } catch (e) {
+    console.warn("[usage] queue flush unexpected error:", e);
+  }
+}
+
+/**
+ * Logs a usage event for the current authenticated user.
+ * Can optionally queue anonymous onboarding events until signup/sign-in.
+ */
+export async function logEvent(
+  event_type: UsageEventType,
+  meta?: Record<string, any>,
+  options?: LogEventOptions
+): Promise<void> {
+  try {
     const cleaned = meta ? (pruneMeta(meta) as any) : {};
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth?.user?.id) {
+      if (options?.allowAnonymous && options?.queueIfAnonymous) {
+        await queueUsageEvent(event_type, cleaned ?? {});
+      }
+      return;
+    }
+
+    await flushQueuedUsageEvents(auth.user.id);
+
     const { error } = await supabase.from("usage_events").insert({
       user_id: auth.user.id,
       event_type,

@@ -51,6 +51,23 @@ function getPlatformKey(): string | undefined {
 let configured = false;
 
 /**
+ * Reset RevenueCat state on sign-out so the next user gets a clean session.
+ * Call this before navigating to the login screen on sign-out or account deletion.
+ */
+export async function resetPurchases(): Promise<void> {
+  if (isWeb) return;
+  try {
+    if (configured) {
+      await Purchases.logOut();
+    }
+  } catch (e) {
+    if (__DEV__) console.warn("[RC] logOut error:", e);
+  } finally {
+    configured = false;
+  }
+}
+
+/**
  * Init RevenueCat and (optionally) log in a specific Supabase user.
  *
  * - Call once on app start with no args:    initPurchases()
@@ -175,15 +192,15 @@ export function activeProMeta(
  * - No-op if the user isn't signed in.
  * - Upserts `profiles.is_pro` and `profiles.pro_until`.
  */
-export async function syncProFromRevenueCat(): Promise<void> {
-  if (isWeb) return;
+export async function syncProFromRevenueCat(): Promise<boolean> {
+  if (isWeb) return false;
   try {
     const { data: auth } = await supabase.auth.getUser();
     const user = auth?.user;
-    if (!user?.id) return;
+    if (!user?.id) return false;
 
     const info = await getCustomerInfo();
-    if (!info) return;
+    if (!info) return false;
 
     const { isPro: hasPro, expiration } = activeProMeta(info);
 
@@ -193,9 +210,15 @@ export async function syncProFromRevenueCat(): Promise<void> {
       pro_until: hasPro ? expiration : null,
     };
 
-    await supabase.from("profiles").upsert(payload);
+    const { error } = await supabase.from("profiles").upsert(payload);
+    if (error) {
+      console.warn("[RC] syncProFromRevenueCat upsert failed:", error);
+      return false;
+    }
     if (__DEV__) console.log("[RC] Synced pro → Supabase", payload);
+    return true;
   } catch (e) {
     if (__DEV__) console.warn("[RC] syncProFromRevenueCat error:", e);
+    return false;
   }
 }

@@ -1,4 +1,5 @@
 // app/_layout.tsx
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
@@ -6,8 +7,13 @@ import { Platform, StyleSheet, View } from "react-native";
 
 import Onboarding from "../components/Onboarding";
 import { ToastProvider } from "../components/Toast";
+import TrialPromptModal, {
+  TRIAL_MODAL_DISMISS_KEY,
+  TRIAL_MODAL_MAX_DISMISSALS,
+} from "../components/TrialPromptModal";
 import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
 import { initPurchases } from "../lib/purchases";
+import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { ThemeProvider, useTheme } from "../lib/theme";
 
@@ -56,9 +62,66 @@ function AppStack() {
 function RootInner() {
   const pathname = usePathname();
   const [showOnboardingOverlay, setShowOnboardingOverlay] = useState(true);
-  const { setOnboardingActive } = useOnboarding();
+  const { setOnboardingActive, state, hydrated } = useOnboarding();
   const isRecoveryRoute =
     pathname === "/auth-callback" || pathname === "/reset-password";
+  const shouldShowOnboardingOverlay =
+    showOnboardingOverlay && pathname === "/" && !isRecoveryRoute;
+
+  // ——— Trial prompt modal for existing signed-in non-pro users ———
+  const [showTrialModal, setShowTrialModal] = useState(false);
+  const [trialBikeTitle, setTrialBikeTitle] = useState("");
+
+  useEffect(() => {
+    if (!hydrated) return;
+
+    let mounted = true;
+    (async () => {
+      try {
+        // Check dismiss count first (fast local check)
+        const raw = await AsyncStorage.getItem(TRIAL_MODAL_DISMISS_KEY);
+        const dismissCount = raw ? parseInt(raw, 10) : 0;
+        if (dismissCount >= TRIAL_MODAL_MAX_DISMISSALS) return;
+
+        const { data: auth } = await supabase.auth.getUser();
+        if (!auth?.user?.id) return;
+
+        // Check Pro status
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("is_pro, pro_until")
+          .eq("user_id", auth.user.id)
+          .maybeSingle();
+
+        if (deriveIsPro(prof)) {
+          setShowTrialModal(false);
+          return;
+        }
+
+        // Check has at least one bike
+        const { data: bikes } = await supabase
+          .from("bikes")
+          .select("id, make, model, year, nickname")
+          .eq("user_id", auth.user.id)
+          .order("created_at", { ascending: true })
+          .limit(1);
+
+        if (!mounted) return;
+        if (!bikes || bikes.length === 0) return;
+
+        const b = bikes[0] as any;
+        const fallback = [b.year, b.make, b.model].filter(Boolean).join(" ");
+        setTrialBikeTitle(b.nickname || fallback);
+        setShowTrialModal(true);
+      } catch {
+        // Silently ignore — modal is non-critical
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -95,7 +158,7 @@ function RootInner() {
       <AppStack />
 
       {/* Onboarding overlay on TOP */}
-      {showOnboardingOverlay && !isRecoveryRoute && (
+      {shouldShowOnboardingOverlay && (
         <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
           <Onboarding
             onFinish={() => {
@@ -107,6 +170,13 @@ function RootInner() {
           />
         </View>
       )}
+
+      {/* Trial prompt for existing signed-in non-pro users */}
+      <TrialPromptModal
+        visible={showTrialModal}
+        bikeTitle={trialBikeTitle}
+        onRequestClose={() => setShowTrialModal(false)}
+      />
     </>
   );
 }
