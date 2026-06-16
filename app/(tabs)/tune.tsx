@@ -36,6 +36,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { OnboardingProgress } from "../../components/OnboardingProgress";
 import { RiskGate } from "../../components/RiskGate";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
@@ -1028,12 +1029,7 @@ export default function TuneScreen() {
       >
         {/* Header (solid dark, no gradient) */}
         <View style={S.headerSolid}>
-          {isOnboarding && (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.ACCENT }} />
-              <Text style={{ color: C.ACCENT, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>STEP 2 OF 2</Text>
-            </View>
-          )}
+          <OnboardingProgress />
           <Text style={S.heroTitle}>{"Suggested setup"}</Text>
           <Text style={S.heroSubtitle}>
             {isOnboarding

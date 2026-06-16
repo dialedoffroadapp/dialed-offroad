@@ -18,6 +18,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { OnboardingProgress } from "../../components/OnboardingProgress";
 import { useToast } from "../../components/Toast";
 import type { ThemeTokens } from "../../constants/theme";
 import { useOnboarding } from "../../lib/onboarding";
@@ -819,6 +820,8 @@ export default function GarageScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           >
+          <OnboardingProgress />
+
           <View style={styles.cardHeaderBar}>
             <View style={styles.headerLeft}>
               <View style={styles.iconBadge}>
@@ -843,7 +846,7 @@ export default function GarageScreen() {
           {isOnboarding ? (
             <View style={[styles.onbTipCard, styles.shadow]}>
               <Text style={[styles.onbTipTitle, styles.noSelect]}>
-                {state.hasSeenIntro ? "Pick up where you left off" : "Step 1 of 2"}
+                {state.hasSeenIntro ? "Pick up where you left off" : "Get started"}
               </Text>
               <Text style={styles.onbTipText}>
                 {state.hasSeenIntro

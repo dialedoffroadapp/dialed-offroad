@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { OnboardingProgress } from "../components/OnboardingProgress";
 import { useToast } from "../components/Toast";
 import { ZeroTuneResult } from "../lib/ai";
 import {
@@ -901,8 +902,10 @@ export default function TuneResultScreen() {
           ))}
         </View>
 
+        <OnboardingProgress />
+
         {isOnboardingUnlockStep ? (
-          <View style={{ marginTop: 10 }}>
+          <View style={{ marginTop: 6 }}>
             <Text style={S.onbLine}>{onboardingResumeTitle}</Text>
             {shouldBlur ? <Text style={S.onbSub}>{onboardingResumeBody}</Text> : null}
           </View>
