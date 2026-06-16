@@ -1034,9 +1034,15 @@ export default function TuneScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
-        {/* Header (solid accent, no gradient) */}
+        {/* Header (solid dark, no gradient) */}
         <View style={S.headerSolid}>
-          <Text style={S.heroTitle}>{isOnboarding ? "Step 2 of 2" : "Suggested setup"}</Text>
+          {isOnboarding && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.ACCENT }} />
+              <Text style={{ color: C.ACCENT, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>STEP 2 OF 2</Text>
+            </View>
+          )}
+          <Text style={S.heroTitle}>{"Suggested setup"}</Text>
           <Text style={S.heroSubtitle}>
             {isOnboarding
               ? state.hasSeenIntro
@@ -1056,9 +1062,9 @@ export default function TuneScreen() {
                 hitSlop={8}
                 style={S.manageLink}
               >
-                <Ionicons name="bicycle" size={14} color="#fff" />
+                <Ionicons name="bicycle" size={14} color={C.MUTED} />
                 <Text style={S.manageLinkText}>Manage Garage</Text>
-                <Ionicons name="chevron-forward" size={14} color="#fff" />
+                <Ionicons name="chevron-forward" size={14} color={C.MUTED} />
               </Pressable>
             )}
 
@@ -1071,9 +1077,9 @@ export default function TuneScreen() {
                 hitSlop={8}
                 style={S.manageLink}
               >
-                <Ionicons name="bookmarks" size={14} color="#fff" />
+                <Ionicons name="bookmarks" size={14} color={C.MUTED} />
                 <Text style={S.manageLinkText}>My Presets</Text>
-                <Ionicons name="chevron-forward" size={14} color="#fff" />
+                <Ionicons name="chevron-forward" size={14} color={C.MUTED} />
               </Pressable>
             )}
           </View>
@@ -1670,35 +1676,28 @@ const makeStyles = (C: {
     topSafeSpacer: { backgroundColor: C.BG },
 
     headerSolid: {
-      backgroundColor: C.ACCENT,
+      backgroundColor: "#111318",
       paddingTop: 18,
       paddingBottom: 14,
       paddingHorizontal: 16,
       borderBottomLeftRadius: 18,
       borderBottomRightRadius: 18,
-      ...Platform.select({
-        ios: {
-          shadowColor: "#000",
-          shadowOpacity: 0.25,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-        },
-        android: { elevation: 6 },
-      }),
+      borderBottomWidth: 1,
+      borderBottomColor: "rgba(255,255,255,0.06)",
     },
 
     heroTitle: {
-      color: "#fff",
+      color: C.TEXT,
       fontSize: 22,
       lineHeight: 26,
       fontWeight: "900",
       letterSpacing: -0.2,
     },
     heroSubtitle: {
-      color: "rgba(255,255,255,0.9)",
+      color: C.MUTED,
       fontSize: 14,
       lineHeight: 18,
-      marginTop: 6,
+      marginTop: 4,
     },
 
     headerActions: {
@@ -1716,18 +1715,18 @@ const makeStyles = (C: {
       paddingVertical: 8,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.25)",
-      backgroundColor: "rgba(0,0,0,0.12)",
+      borderColor: "rgba(255,255,255,0.1)",
+      backgroundColor: "rgba(255,255,255,0.04)",
       minHeight: 36,
     },
-    manageLinkText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+    manageLinkText: { color: C.TEXT, fontWeight: "800", fontSize: 12 },
 
     selectorCard: {
       marginTop: 12,
-      backgroundColor: "rgba(0,0,0,0.12)",
+      backgroundColor: "rgba(29,155,240,0.06)",
       borderRadius: 12,
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)",
+      borderColor: "rgba(29,155,240,0.12)",
       padding: 10,
     },
     selectorHeaderRow: {
@@ -1736,18 +1735,18 @@ const makeStyles = (C: {
       justifyContent: "space-between",
       marginBottom: 6,
     },
-    selectorLabel: { color: "#fff", fontWeight: "800", fontSize: 13 },
-    selectorEmpty: { color: "rgba(255,255,255,0.9)" },
+    selectorLabel: { color: C.TEXT, fontWeight: "800", fontSize: 13 },
+    selectorEmpty: { color: C.MUTED },
     seeAllLink: {
       paddingHorizontal: 10,
       paddingVertical: 6,
       borderRadius: 999,
-      backgroundColor: "rgba(0,0,0,0.12)",
+      backgroundColor: "rgba(255,255,255,0.04)",
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.25)",
+      borderColor: "rgba(255,255,255,0.1)",
       minHeight: 32,
     },
-    seeAllText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+    seeAllText: { color: C.TEXT, fontWeight: "800", fontSize: 12 },
 
     onbBikeCard: {
       borderRadius: 12,
@@ -1757,13 +1756,13 @@ const makeStyles = (C: {
       backgroundColor: "rgba(255,255,255,0.10)",
     },
     onbBikeCardTitle: {
-      color: "#fff",
+      color: C.TEXT,
       fontWeight: "900",
       fontSize: 13,
       lineHeight: 18,
     },
     onbBikeCardSub: {
-      color: "rgba(255,255,255,0.86)",
+      color: C.MUTED,
       fontSize: 12,
       marginTop: 6,
     },
@@ -1880,15 +1879,13 @@ const makeStyles = (C: {
       minHeight: 44,
       justifyContent: "center",
     },
-    // brighter + darker border in light mode so it pops
     pillActive: {
-      backgroundColor: isLight ? C.ACCENT + "1A" : C.ACCENT + "2E",
-      borderColor: isLight ? C.ACCENT : C.ACCENT + "73",
+      backgroundColor: "rgba(29,155,240,0.1)",
+      borderColor: "rgba(29,155,240,0.3)",
     },
     pillText: { color: C.TEXT, fontWeight: "600" },
-    // dark text in light mode, light text in dark mode
     pillTextActive: {
-      color: isLight ? C.TEXT : "#EAF2FF",
+      color: "#60A5FA",
       fontWeight: "800",
     },
 
@@ -1909,12 +1906,12 @@ const makeStyles = (C: {
       justifyContent: "center",
     },
     toggleOn: {
-      backgroundColor: isLight ? C.ACCENT + "1A" : C.ACCENT + "2E",
-      borderColor: isLight ? C.ACCENT : C.ACCENT + "73",
+      backgroundColor: "rgba(29,155,240,0.12)",
+      borderColor: "rgba(29,155,240,0.3)",
     },
     toggleText: { color: C.MUTED, fontWeight: "800", fontSize: 12 },
     toggleTextOn: {
-      color: isLight ? C.TEXT : "#EAF2FF",
+      color: "#60A5FA",
       fontWeight: "800",
       fontSize: 12,
     },
@@ -1983,18 +1980,10 @@ const makeStyles = (C: {
       right: 0,
       bottom: 0,
       zIndex: 1000,
-      ...Platform.select({
-        ios: {
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: "rgba(255,255,255,0.12)",
-        },
-        android: {
-          backgroundColor: C.CARD,
-          borderTopWidth: 1,
-          borderTopColor: C.BORDER,
-          elevation: 40,
-        },
-      }),
+      backgroundColor: "#0D0E13",
+      borderTopWidth: 1,
+      borderTopColor: "rgba(255,255,255,0.06)",
+      ...Platform.select({ android: { elevation: 40 } }),
     },
     stickyInner: {
       paddingTop: 8,
@@ -2009,7 +1998,7 @@ const makeStyles = (C: {
       justifyContent: "center",
       minHeight: 52,
     },
-    stickyBtnDisabled: { opacity: 0.55 },
+    stickyBtnDisabled: { opacity: 0.4 },
     stickyBtnText: { color: "#fff", fontWeight: "900" },
 
     sheetWrap: {

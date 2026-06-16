@@ -323,13 +323,14 @@ const makeStyles = (C: ThemeTokens) =>
 
     input: {
       borderWidth: 1,
-      borderColor: C.BORDER,
-      backgroundColor: C.INK,
+      borderColor: "rgba(255,255,255,0.07)",
+      backgroundColor: C.INPUT_BG ?? "#0C0D12",
       borderRadius: 10,
       paddingHorizontal: 12,
-      paddingVertical: Platform.OS === "ios" ? 10 : 10,
-      fontSize: 16,
+      paddingVertical: 10,
+      fontSize: 15,
       color: C.TEXT,
+      minHeight: 44,
     },
     inputError: { borderColor: C.ERROR },
     errorText: { color: C.ERROR, marginTop: 6, fontSize: 12 },
@@ -348,14 +349,14 @@ const makeStyles = (C: ThemeTokens) =>
     btn: {
       backgroundColor: C.ACCENT,
       borderRadius: 12,
-      paddingVertical: 12,
+      paddingVertical: 14,
       alignItems: "center",
     },
     btnText: { color: "#fff", fontWeight: "900" },
     btnDisabled: { opacity: 0.6 },
 
     linkBtn: { paddingVertical: 8, alignSelf: "flex-start" },
-    linkText: { color: C.ACCENT, fontWeight: "800", fontSize: 12 },
+    linkText: { color: C.ACCENT, fontWeight: "800", fontSize: 13 },
 
     help: {
       color: C.MUTED,

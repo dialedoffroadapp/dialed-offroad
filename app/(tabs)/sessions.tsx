@@ -172,8 +172,8 @@ export default function SessionsScreen() {
             bottom: 0,
             width: 4,
             backgroundColor: accent,
-            borderTopLeftRadius: 14,
-            borderBottomLeftRadius: 14,
+            borderTopLeftRadius: 16,
+            borderBottomLeftRadius: 16,
           }}
         />
 
@@ -464,16 +464,10 @@ const makeStyles = (colors: ThemeTokens) =>
       backgroundColor: colors.CARD,
       borderWidth: 1,
       borderColor: colors.BORDER,
-      borderRadius: 14,
+      borderRadius: 16,
       padding: 14,
     },
-    lift: {
-      shadowColor: "#000",
-      shadowOpacity: 0.15,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 3,
-    },
+    lift: {},
 
     h1: { color: colors.TEXT, fontWeight: "900", fontSize: 16 },
 
@@ -503,8 +497,8 @@ const makeStyles = (colors: ThemeTokens) =>
       borderWidth: 1,
     },
     chip: {
-      backgroundColor: colors.CHIP_BG ?? "rgba(0,0,0,0.04)",
-      borderColor: colors.BORDER,
+      backgroundColor: "rgba(255,255,255,0.05)",
+      borderColor: "rgba(255,255,255,0.08)",
       borderWidth: 1,
       borderRadius: 999,
       paddingHorizontal: 10,
@@ -518,7 +512,7 @@ const makeStyles = (colors: ThemeTokens) =>
 
     metricsRow: { flexDirection: "row", marginTop: 8, marginBottom: 4 },
     metricLabel: {
-      color: colors.MUTED,
+      color: "#4B5563",
       fontWeight: "800",
       marginBottom: 4,
       fontSize: 11,
@@ -527,16 +521,14 @@ const makeStyles = (colors: ThemeTokens) =>
       color: colors.TEXT,
       fontWeight: "900",
       marginTop: 3,
-      fontSize: 11,
+      fontSize: 13,
     },
 
     barOuter: {
-      height: 5,
-      backgroundColor: colors.TRACK ?? "rgba(0,0,0,0.06)",
+      height: 3,
+      backgroundColor: "rgba(255,255,255,0.06)",
       borderRadius: 999,
       overflow: "hidden",
-      borderWidth: 1,
-      borderColor: colors.BORDER,
     },
     barFill: { height: "100%", backgroundColor: colors.ACCENT },
 
@@ -576,8 +568,8 @@ const makeStyles = (colors: ThemeTokens) =>
       height: 38,
       borderRadius: 10,
       borderWidth: 1,
-      borderColor: colors.BORDER,
-      backgroundColor: colors.CHIP_BG ?? colors.INK,
+      borderColor: "rgba(255,255,255,0.07)",
+      backgroundColor: "rgba(240,82,82,0.05)",
       alignItems: "center",
       justifyContent: "center",
     },

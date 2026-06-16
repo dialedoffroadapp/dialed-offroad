@@ -257,6 +257,7 @@ function ConfirmSheet({
     <View style={styles.sheetWrap} pointerEvents="box-none">
       <Pressable style={styles.sheetOverlay} onPress={onCancel} />
       <View style={styles.sheet}>
+        <View style={{ alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 14 }} />
         <Text style={[styles.sheetTitle, styles.noSelect]}>{title}</Text>
         {!!subtitle && (
           <Text style={[styles.sheetSubtitle, styles.noSelect]}>{subtitle}</Text>
@@ -315,6 +316,7 @@ function PickerSheet({
     <View style={styles.sheetWrap} pointerEvents="box-none">
       <Pressable style={styles.sheetOverlay} onPress={onClose} />
       <View style={styles.sheet}>
+        <View style={{ alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 14 }} />
         <View style={styles.sheetHeader}>
           <Text style={[styles.sheetTitle, styles.noSelect]}>{title}</Text>
           <Pressable onPress={onClose} hitSlop={10} style={styles.sheetClose}>
@@ -992,7 +994,7 @@ export default function GarageScreen() {
                       left: 0,
                       top: 0,
                       bottom: 0,
-                      width: 6,
+                      width: 4,
                       backgroundColor: hexToRgba(accent, 0.55),
                       borderTopLeftRadius: 16,
                       borderBottomLeftRadius: 16,
@@ -1192,9 +1194,9 @@ const makeStyles = (colors: ThemeTokens) =>
     plusBtn: {
       width: 32,
       height: 32,
-      borderRadius: 16,
+      borderRadius: 10,
       borderWidth: 1,
-      borderColor: colors.BORDER,
+      borderColor: "rgba(255,255,255,0.08)",
       backgroundColor: colors.CARD,
       alignItems: "center",
       justifyContent: "center",
@@ -1230,13 +1232,7 @@ const makeStyles = (colors: ThemeTokens) =>
       marginBottom: 12,
       overflow: "hidden",
     },
-    shadow: {
-      shadowColor: "#000",
-      shadowOpacity: 0.22,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 3,
-    },
+    shadow: {},
 
     headerLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
     iconBadge: {
@@ -1264,29 +1260,30 @@ const makeStyles = (colors: ThemeTokens) =>
     },
 
     countPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: colors.BORDER,
-      backgroundColor: colors.INK,
+      borderColor: "rgba(255,255,255,0.08)",
+      backgroundColor: colors.INPUT_BG ?? "#0C0D12",
     },
     countPillText: { color: colors.TEXT, fontWeight: "900", fontSize: 12 },
 
-    caption: { color: colors.MUTED, fontSize: 12, marginBottom: 6 },
+    caption: { color: "#4B5563", fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginBottom: 6 },
     muted: { color: colors.MUTED, fontSize: 13 },
 
     row: { flexDirection: "row", gap: 12, marginBottom: 10 },
 
     input: {
       borderWidth: 1,
-      borderColor: colors.BORDER,
-      borderRadius: 12,
+      borderColor: "rgba(255,255,255,0.07)",
+      borderRadius: 10,
       paddingHorizontal: 12,
-      paddingVertical: Platform.OS === "ios" ? 12 : 10,
+      paddingVertical: 10,
       fontSize: 15,
       color: colors.TEXT,
-      backgroundColor: colors.CARD,
+      backgroundColor: colors.INPUT_BG ?? "#0C0D12",
+      minHeight: 44,
     },
     inputAffix: { position: "relative" },
     inputIcon: {
@@ -1299,7 +1296,7 @@ const makeStyles = (colors: ThemeTokens) =>
       marginTop: 6,
       backgroundColor: colors.ACCENT,
       borderRadius: 12,
-      paddingVertical: 12,
+      paddingVertical: 14,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1425,9 +1422,9 @@ const makeStyles = (colors: ThemeTokens) =>
       bottom: 0,
       paddingHorizontal: 16,
       paddingTop: 10,
-      backgroundColor: "rgba(0,0,0,0.35)",
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: "rgba(255,255,255,0.12)",
+      backgroundColor: "rgba(13,14,19,0.95)",
+      borderTopWidth: 1,
+      borderTopColor: "rgba(255,255,255,0.06)",
     },
     onbCta: {
       minHeight: 56,
@@ -1473,7 +1470,7 @@ const makeStyles = (colors: ThemeTokens) =>
     sheetBtn: {
       flex: 1,
       borderRadius: 12,
-      paddingVertical: 12,
+      paddingVertical: 14,
       alignItems: "center",
       justifyContent: "center",
     },

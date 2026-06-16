@@ -1,6 +1,6 @@
 // app/_layout.tsx
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Stack, usePathname } from "expo-router";
+import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
@@ -61,8 +61,9 @@ function AppStack() {
  */
 function RootInner() {
   const pathname = usePathname();
+  const router = useRouter();
   const [showOnboardingOverlay, setShowOnboardingOverlay] = useState(true);
-  const { setOnboardingActive, state, hydrated } = useOnboarding();
+  const { setOnboardingActive, state, hydrated, markIntroSeen, setStep } = useOnboarding();
   const isRecoveryRoute =
     pathname === "/auth-callback" || pathname === "/reset-password";
   const shouldShowOnboardingOverlay =
@@ -161,11 +162,20 @@ function RootInner() {
       {shouldShowOnboardingOverlay && (
         <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
           <Onboarding
-            onFinish={() => {
-              // Hide the slides…
-              setShowOnboardingOverlay(false);
-              // …but keep the onboarding FLOW active (locks tabs)
+            onFinish={async () => {
+              // Persist state before navigating so cold-start resume lands correctly.
+              await markIntroSeen();
+              await setStep("garage_locked");
+              // Activate onboarding explicitly before navigation so Garage sees
+              // onboardingActive=true on its first render, avoiding a race with
+              // the OnboardingProvider auto-activation effect.
               setOnboardingActive(true);
+              // Navigate first, then remove the overlay — both are synchronous
+              // calls after the awaits so React 18 batches them in one render.
+              // This means the overlay never disappears before the new screen
+              // is committed, eliminating the blank "/" flash.
+              router.replace("/(tabs)/garage");
+              setShowOnboardingOverlay(false);
             }}
           />
         </View>

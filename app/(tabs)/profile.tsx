@@ -492,8 +492,8 @@ export default function ProfileScreen() {
               style={[
                 styles.planCta,
                 {
-                  borderColor: colors.ACCENT,
-                  backgroundColor: colors.ACCENT + "22",
+                  borderColor: "rgba(29,155,240,0.25)",
+                  backgroundColor: "rgba(29,155,240,0.1)",
                 },
               ]}
               onPress={openPaywall}
@@ -754,24 +754,24 @@ export default function ProfileScreen() {
         />
         <View
           style={{
-            backgroundColor: colors.BG,
+            backgroundColor: "#111318",
             paddingBottom: 24,
             paddingTop: 12,
             paddingHorizontal: 16,
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
+            borderTopLeftRadius: 22,
+            borderTopRightRadius: 22,
             borderTopWidth: 1,
-            borderColor: colors.BORDER,
+            borderColor: "rgba(255,255,255,0.08)",
           }}
         >
           <View
             style={{
               alignSelf: "center",
-              width: 40,
-              height: 5,
-              borderRadius: 3,
-              backgroundColor: colors.BORDER,
-              marginBottom: 12,
+              width: 36,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: "rgba(255,255,255,0.1)",
+              marginBottom: 14,
             }}
           />
           <ScrollView>
@@ -797,8 +797,8 @@ export default function ProfileScreen() {
                   borderRadius: 12,
                   borderWidth: 1,
                   borderColor:
-                    mode === m ? colors.ACCENT : colors.BORDER,
-                  backgroundColor: colors.CARD,
+                    mode === m ? colors.ACCENT : "rgba(255,255,255,0.06)",
+                  backgroundColor: "#111318",
                   marginBottom: 8,
                 }}
               >
@@ -890,14 +890,8 @@ const makeStyles = (colors: ThemeTokens) =>
   StyleSheet.create({
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-    card: { margin: 16, borderWidth: 1, borderRadius: 14, padding: 14 },
-    shadow: {
-      shadowColor: "#000",
-      shadowOpacity: 0.2,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 3,
-    },
+    card: { margin: 16, borderWidth: 1, borderRadius: 16, padding: 14 },
+    shadow: {},
 
     heroRow: {
       flexDirection: "row",
@@ -982,9 +976,9 @@ const makeStyles = (colors: ThemeTokens) =>
     sectionLabel: {
       marginTop: 8,
       marginBottom: 6,
-      fontWeight: "900",
-      fontSize: 12,
-      letterSpacing: 0.3,
+      fontWeight: "700",
+      fontSize: 11,
+      letterSpacing: 0.5,
     },
 
     inputLabel: { fontWeight: "700", marginBottom: 6 },
@@ -1000,7 +994,7 @@ const makeStyles = (colors: ThemeTokens) =>
 
     btnPrimary: {
       borderRadius: 12,
-      paddingVertical: 12,
+      paddingVertical: 14,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1019,12 +1013,12 @@ const makeStyles = (colors: ThemeTokens) =>
       borderRadius: 12,
       paddingVertical: 10,
       paddingHorizontal: 12,
-      backgroundColor: "transparent",
+      backgroundColor: "#111318",
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
       justifyContent: "center",
-      flexBasis: "48%", // pills, 2 per row where possible
+      flexBasis: "48%",
       maxWidth: "48%",
     },
     btnOutlineText: { fontWeight: "800" },

@@ -221,7 +221,7 @@ function SignupInner() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.select({ ios: "padding", android: undefined })}
-      style={{ flex: 1, backgroundColor: COLORS.BG }}
+      style={{ flex: 1, backgroundColor: "#0B0C10" }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
@@ -258,7 +258,7 @@ function SignupInner() {
             autoCorrect={false}
             keyboardType="email-address"
             placeholder="you@example.com"
-            placeholderTextColor={COLORS.MUTED}
+            placeholderTextColor="#6B7280"
             style={[styles.input, emailErr && styles.inputError]}
             returnKeyType="next"
             textContentType="username"
@@ -276,7 +276,7 @@ function SignupInner() {
               }}
               secureTextEntry={!showPw}
               placeholder="At least 6 characters"
-              placeholderTextColor={COLORS.MUTED}
+              placeholderTextColor="#6B7280"
               style={[
                 styles.input,
                 pwErr && styles.inputError,
@@ -299,7 +299,7 @@ function SignupInner() {
               <Ionicons
                 name={showPw ? "eye-off" : "eye"}
                 size={18}
-                color={COLORS.MUTED}
+                color="#6B7280"
               />
               </Pressable>
             </View>
@@ -404,37 +404,40 @@ const styles = StyleSheet.create({
   },
 
   brandTop: { marginBottom: 12, paddingHorizontal: 4 },
-  brandTitle: { color: COLORS.TEXT, fontWeight: "900", fontSize: 22 },
-  brandSub: { color: COLORS.MUTED, marginTop: 4 },
+  brandTitle: { color: "#F5F7FC", fontWeight: "900", fontSize: 22 },
+  brandSub: { color: "#6B7280", marginTop: 4 },
 
   card: {
-    backgroundColor: COLORS.CARD,
+    backgroundColor: "#111318",
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: COLORS.BORDER,
+    borderColor: "rgba(255,255,255,0.06)",
     padding: 16,
     maxWidth: 560,
   },
 
   label: {
-    marginTop: 6,
+    marginTop: 8,
     marginBottom: 6,
-    color: COLORS.MUTED,
+    color: "#6B7280",
     fontWeight: "700",
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
 
   input: {
     borderWidth: 1,
-    borderColor: COLORS.BORDER,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    borderColor: "rgba(255,255,255,0.07)",
+    backgroundColor: "#0C0D12",
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: Platform.OS === "ios" ? 10 : 10,
-    fontSize: 16,
-    color: COLORS.TEXT,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: "#F5F7FC",
+    minHeight: 44,
   },
-  inputError: { borderColor: COLORS.ERROR },
-  errorText: { color: COLORS.ERROR, marginTop: 6, fontSize: 12 },
+  inputError: { borderColor: "#F05252" },
+  errorText: { color: "#F05252", marginTop: 6, fontSize: 12 },
 
   eye: {
     position: "absolute",
@@ -448,18 +451,19 @@ const styles = StyleSheet.create({
   },
 
   btn: {
-    backgroundColor: COLORS.ACCENT,
+    backgroundColor: "#1D9BF0",
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: "center",
+    marginTop: 8,
   },
-  btnText: { color: "#fff", fontWeight: "900" },
-  btnDisabled: { opacity: 0.6 },
+  btnText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  btnDisabled: { opacity: 0.5 },
 
   terms: {
-    color: COLORS.MUTED,
+    color: "#6B7280",
     textAlign: "center",
-    marginTop: 8,
+    marginTop: 6,
     fontSize: 12,
   },
 
@@ -474,26 +478,27 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: COLORS.BORDER,
+    borderColor: "rgba(255,255,255,0.15)",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
   },
   checkboxOn: {
-    backgroundColor: COLORS.ACCENT,
-    borderColor: COLORS.ACCENT,
+    backgroundColor: "#1D9BF0",
+    borderColor: "#1D9BF0",
   },
-  agreeText: { color: COLORS.TEXT, flex: 1, lineHeight: 20 },
-  link: { color: COLORS.ACCENT, fontWeight: "800" },
+  agreeText: { color: "#F5F7FC", flex: 1, lineHeight: 20, fontSize: 13 },
+  link: { color: "#1D9BF0", fontWeight: "800" },
 
   switchBtn: {
-    marginTop: 4,
+    marginTop: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.BORDER,
-    paddingVertical: 10,
+    borderColor: "rgba(255,255,255,0.08)",
+    paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "transparent",
   },
-  switchBtnText: { color: COLORS.TEXT, fontWeight: "800", fontSize: 13 },
+  switchBtnText: { color: "#F5F7FC", fontWeight: "800", fontSize: 13 },
 });
