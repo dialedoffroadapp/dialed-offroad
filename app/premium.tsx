@@ -182,9 +182,10 @@ export default function PremiumScreen() {
             paywall_result: "dismissed",
           });
           await setStep("trial");
-          // Drop to garage (tabs visible, Tune/Sessions locked) instead of the
-          // blurred-results loop that existed before this change.
-          target = "/(tabs)/garage";
+          // Return the user to their tune if it's still valid, so they feel
+          // anchored ("your tune is still here"). Fall back to Tune tab if the
+          // pending result has expired or was never saved.
+          target = pending ? "/tune-results" : "/(tabs)/tune";
         }
       } catch (e: any) {
         if (!isMounted) return;
@@ -208,7 +209,7 @@ export default function PremiumScreen() {
             error_code: e?.code ?? e?.message ?? "unknown",
           });
           await setStep("trial");
-          target = "/(tabs)/garage";
+          target = pending ? "/tune-results" : "/(tabs)/tune";
         }
       } finally {
         // ✅ Always land back on Tune Results (or whatever returnTo says)
