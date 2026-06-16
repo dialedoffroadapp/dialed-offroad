@@ -943,7 +943,18 @@ export default function TuneResultScreen() {
           </View>
         )}
 
-        <BlurCard enabled={shouldBlur} C={C} S={S} title="Fork" subtitle="Unlock to reveal exact clicker numbers.">
+        {shouldBlur && isOnboardingUnlockStep && (
+          <View style={S.lockedHeroCard}>
+            <View style={S.lockedHeroTagRow}>
+              <Ionicons name="lock-closed" size={12} color={C.ACCENT} />
+              <Text style={S.lockedHeroTag}>RESULTS LOCKED</Text>
+            </View>
+            <Text style={S.lockedHeroTitle}>Your suspension setup is dialed 👇</Text>
+            <Text style={S.lockedHeroSub}>Unlock it in 10 seconds</Text>
+          </View>
+        )}
+
+        <BlurCard enabled={shouldBlur} C={C} S={S} title="Fork">
           <Metric C={C} S={S} label="Compression" value={`${num(result.fork.comp_clicks)} clicks`} hint="Clicks out from zero" />
           <Bar C={C} value={num(result.fork.comp_clicks)} max={30} />
           <Metric C={C} S={S} label="Rebound" value={`${num(result.fork.reb_clicks)} clicks`} hint="Clicks out from zero" />
@@ -956,7 +967,7 @@ export default function TuneResultScreen() {
           )}
         </BlurCard>
 
-        <BlurCard enabled={shouldBlur} C={C} S={S} title="Shock" subtitle="Create an account to unlock this tune for free.">
+        <BlurCard enabled={shouldBlur} C={C} S={S} title="Shock">
           <Metric C={C} S={S} label="Low-Speed Comp" value={`${num(result.shock.lsc_clicks)} clicks`} />
           <Bar C={C} value={num(result.shock.lsc_clicks)} max={30} />
           <Metric C={C} S={S} label="High-Speed Comp" value={`${num(result.shock.hsc_turns, 0).toFixed(1)} turns`} />
@@ -969,7 +980,7 @@ export default function TuneResultScreen() {
 
         {base?.notes?.length ? (
           shouldBlur ? (
-            <BlurCard enabled C={C} S={S} title={isTuneTwo ? "Refined test plan" : "Test Plan"} subtitle="Unlock to reveal your full notes + plan.">
+            <BlurCard enabled C={C} S={S} title={isTuneTwo ? "Refined test plan" : "Test Plan"}>
               <Text style={S.bodySmall}>Here’s a quick starter plan while your full notes are locked:</Text>
               <View style={{ marginTop: 8 }}>
                 {teaserSteps.map((n, i) => (
@@ -1141,14 +1152,12 @@ export default function TuneResultScreen() {
 function BlurCard({
   enabled,
   title,
-  subtitle,
   children,
   C,
   S,
 }: {
   enabled: boolean;
   title: string;
-  subtitle?: string;
   children: React.ReactNode;
   C: any;
   S: any;
@@ -1168,17 +1177,11 @@ function BlurCard({
       <View style={{ marginTop: 2 }}>{children}</View>
 
       {enabled ? (
-        <>
-          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-            <BlurView intensity={22} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
-          </View>
-
-          <View style={S.lockOverlay} pointerEvents="none">
-            <Ionicons name="lock-closed" size={18} color="#fff" />
-            <Text style={S.lockOverlayTitle}>Unlock your full tune</Text>
-            {subtitle ? <Text style={S.lockOverlaySub}>{subtitle}</Text> : null}
-          </View>
-        </>
+        // Light blur — shows structure is real, feels intentional not broken.
+        // Per-card overlay removed; single hero card above delivers the message.
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <BlurView intensity={8} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+        </View>
       ) : null}
     </View>
   );
@@ -1482,6 +1485,43 @@ const makeStyles = (C: {
     },
     lockOverlayTitle: { color: "#fff", fontWeight: "900", fontSize: 16, marginTop: 8 },
     lockOverlaySub: { color: "rgba(255,255,255,0.9)", marginTop: 6, textAlign: "center" },
+
+    lockedHeroCard: {
+      marginHorizontal: 12,
+      marginBottom: 8,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: "rgba(29,155,240,0.2)",
+      backgroundColor: "rgba(29,155,240,0.06)",
+      padding: 16,
+      alignItems: "center" as const,
+    },
+    lockedHeroTagRow: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 5,
+      marginBottom: 8,
+    },
+    lockedHeroTag: {
+      color: C.ACCENT,
+      fontSize: 10,
+      fontWeight: "700" as const,
+      letterSpacing: 0.6,
+    },
+    lockedHeroTitle: {
+      color: C.TEXT,
+      fontWeight: "900" as const,
+      fontSize: 18,
+      textAlign: "center" as const,
+      lineHeight: 24,
+      marginBottom: 4,
+    },
+    lockedHeroSub: {
+      color: C.MUTED,
+      fontSize: 13,
+      textAlign: "center" as const,
+      lineHeight: 18,
+    },
 
     lockHintBox: {
       flexDirection: "row",
