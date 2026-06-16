@@ -347,7 +347,7 @@ export default function TuneScreen() {
 
   // ——— Toggles ———
   const [wantsAirFork, setWantsAirFork] = useState(false);
-  const [zeroed, setZeroed] = useState(false); // must be ON to generate
+  const [zeroed, setZeroed] = useState(true); // default on — unchecking no longer blocks generate
   const [generating, setGenerating] = useState(false);
 
   // ——— Safety consent (RiskGate) ———
@@ -365,9 +365,6 @@ export default function TuneScreen() {
   // --- CTA logic for main button ---
   const hasFreeTrialTune = !isPro && trialUsed < TRIAL_LIMIT;
   const trialExhausted = !isPro && !hasFreeTrialTune;
-  // If the CTA actually runs a tune (Pro or still has free trial), we require Zero-based
-  const needsZeroForCta = !trialExhausted;
-
   const primaryCtaLabel = isOnboarding
     ? isPro
       ? "Generate my first tune"
@@ -380,7 +377,7 @@ export default function TuneScreen() {
     ? "Use 1 free tune credit"
     : "Go Pro for unlimited tunes";
 
-  const ctaDisabled = generating || (needsZeroForCta && !zeroed);
+  const ctaDisabled = generating;
 
   // ——— Loaded preset + meta ———
   const [loadedPreset, setLoadedPreset] = useState<ZeroTuneResult | null>(null);
@@ -622,11 +619,6 @@ export default function TuneScreen() {
 
   // ——— Generate with AI (gated by Supabase RPC when signed-in) ———
   const onGenerate = async () => {
-    if (!zeroed) {
-      toast.show("Turn on Zero-based to continue.", { kind: "error" });
-      return;
-    }
-
     const ok = await ensureRiskAccepted();
     if (!ok) return;
 
@@ -1473,13 +1465,10 @@ export default function TuneScreen() {
                 <Ionicons name="help-circle" size={20} color={C.TEXT} />
               </Pressable>
             </View>
-            <View style={S.reqPill}>
-              <Text style={S.reqPillText}>Required</Text>
-            </View>
           </View>
           <View style={[S.rowBetween, { alignItems: "center", marginTop: 6 }]}>
             <Text style={[S.muted, { flex: 1, paddingRight: 12 }]}>
-              All clickers are turned fully in (0). Show clicks out from that zero point.
+              All clickers turned fully in first. We'll guide you if needed.
             </Text>
             <Pressable
               onPress={() => {
@@ -1552,12 +1541,6 @@ export default function TuneScreen() {
               )}
             </Pressable>
 
-            {needsZeroForCta && !zeroed && (
-              <Text style={[S.muted, { textAlign: "left", marginTop: 8 }]}>
-                Turn on <Text style={{ fontWeight: "800", color: C.TEXT }}>Zero-based</Text> to
-                continue.
-              </Text>
-            )}
           </View>
         </View>
       )}
