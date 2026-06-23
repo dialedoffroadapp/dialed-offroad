@@ -27,7 +27,7 @@ const THEME_PREF_KEY = "THEME_PREF_V1";
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = useState<Mode>("system");
+  const [mode, setModeState] = useState<Mode>("dark");
   const [accent, setAccentState] = useState<string>("#1D9BF0");
   const [osScheme, setOsScheme] = useState<ColorSchemeName>(
     Appearance.getColorScheme()

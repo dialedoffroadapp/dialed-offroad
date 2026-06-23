@@ -1,20 +1,23 @@
 // app/tune-results-preview.tsx
 // Preview-only results screen (no Supabase, always locked/blurred)
-// Shows notes/test plan + big CTA to sign in / unlock exact numbers.
+// Shows hero + test plan + blurred setup cards + big CTA to sign in / unlock.
 
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo } from "react";
 import {
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Chip } from "../components/Chip";
+import { SettingRow } from "../components/SettingRow";
+import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
 import { ZeroTuneResult } from "../lib/ai";
 import { useTheme } from "../lib/theme";
 
@@ -26,8 +29,6 @@ export default function TuneResultsPreviewScreen() {
   const insets = useSafeAreaInsets();
   const { colors: C } = useTheme();
   const S = useMemo(() => makeStyles(C), [C]);
-
-  const locked = true;
 
   const base: ZeroTuneResult | null = useMemo(() => {
     try {
@@ -80,7 +81,7 @@ export default function TuneResultsPreviewScreen() {
     );
   }
 
-  // Title / chips
+  // Bike title
   const bikeTitle =
     metaObj?.bike &&
     (metaObj.bike.make || metaObj.bike.model || metaObj.bike.year)
@@ -100,64 +101,104 @@ export default function TuneResultsPreviewScreen() {
 
   const trackName = metaObj?.context?.track ?? metaObj?.track_name ?? null;
 
-  const headerChips = [
-    terrainVal ? `Surface: ${cap(terrainVal)}` : null,
-    trackName ? `Track: ${trackName}` : null,
-    typeof result.shock.sag_mm === "number" ? `Sag: ${num(result.shock.sag_mm)} mm` : null,
-  ].filter(Boolean) as string[];
-
   const onUnlock = () => {
-    // Choose what you want:
-    // - if you want sign-in first:
     router.push("/login");
-
-    // - OR if you want a premium screen first:
-    // router.push("/premium");
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: C.BG }}>
       {/* Safe-area spacer */}
-      <View style={[S.topSafeSpacer, { height: insets.top }]} />
+      <View style={{ height: insets.top, backgroundColor: C.BG }} />
 
-      {/* Header */}
-      <View style={S.headerSolid}>
-        <Text style={S.title}>Preview Setup</Text>
-        <Text style={S.subtitle}>{bikeTitle}</Text>
-
-        <View style={S.chipsRow}>
-          {headerChips.map((c) => (
-            <View key={c} style={S.chip}>
-              <Text numberOfLines={1} style={S.chipText}>
-                {c}
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        <Text style={S.zeroText}>
-          Zero-based: turn each clicker gently all the way IN (clockwise, toward the "+"
-          on the cap) until it lightly stops, then count clicks OUT from there.
-        </Text>
-
-        {/* Mode chips */}
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-          {(["balanced", "comfort", "precision"] as Mode[]).map((m) => (
-            <Pressable
-              key={m}
-              onPress={() => setMode(m)}
-              style={[S.modePill, mode === m && S.modePillOn]}
-            >
-              <Text style={[S.modePillText, mode === m && S.modePillTextOn]}>
-                {cap(m)}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+      {/* Compact header */}
+      <View style={S.compactHeader}>
+        <Pressable onPress={() => router.replace("/")} hitSlop={8} style={S.headerIconBtn}>
+          <Ionicons name="chevron-back-outline" size={24} color={C.TEXT} />
+        </Pressable>
+        <Text style={S.compactHeaderTitle}>Preview Setup</Text>
+        <View style={S.headerIconBtn} />
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 160 }}>
-        {/* Notes / Test plan (UNLOCKED) */}
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 180 }}>
+        {/* Hero section */}
+        <View style={S.heroSection}>
+          <View style={S.heroBadge}>
+            <Ionicons name="lock-closed-outline" size={36} color={C.ACCENT} />
+          </View>
+          <Text style={S.heroTitle}>Your setup is ready</Text>
+          <Text style={S.heroSubtitle}>{bikeTitle}</Text>
+          <Text style={S.heroHint}>
+            Create an account to reveal the exact click numbers and personalized notes.
+          </Text>
+        </View>
+
+        {/* Summary chips */}
+        {(terrainVal || trackName || typeof result.shock.sag_mm === "number") ? (
+          <View style={S.chipsRow}>
+            {terrainVal ? <Chip label={cap(terrainVal)} /> : null}
+            {trackName ? <Chip label={`Track: ${trackName}`} /> : null}
+            {typeof result.shock.sag_mm === "number" ? <Chip label={`Sag: ${num(result.shock.sag_mm)} mm`} /> : null}
+          </View>
+        ) : null}
+
+        {/* Mode selector */}
+        <TuneSegmentedControl value={mode} onChange={setMode} />
+
+        {/* Mode helper */}
+        <View style={S.modeHelperRow}>
+          <Ionicons name="information-circle-outline" size={14} color={C.MUTED} />
+          <Text style={S.modeHelperText}>
+            {mode === "balanced"
+              ? "Factory-balanced for most conditions."
+              : mode === "comfort"
+              ? "Softer — better for rough, physical terrain."
+              : "Stiffer — better for speed and precision."}
+          </Text>
+        </View>
+
+        {/* Fork card (locked) */}
+        <View style={[S.card, S.lift, { overflow: "hidden" }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={S.h1}>Fork</Text>
+            <View style={S.lockPill}>
+              <Ionicons name="lock-closed" size={12} color="#fff" />
+              <Text style={S.lockPillText}>Locked</Text>
+            </View>
+          </View>
+          <SettingRow icon="settings-outline" label="Compression" hint="Clicks out from zero" value="•••" unit="clicks" />
+          <SettingRow icon="refresh-outline" label="Rebound" hint="Clicks out from zero" value="•••" unit="clicks" />
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            {Platform.OS === "ios" ? (
+              <BlurView intensity={30} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+            ) : (
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.35)" }]} />
+            )}
+          </View>
+        </View>
+
+        {/* Shock card (locked) */}
+        <View style={[S.card, S.lift, { overflow: "hidden" }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={S.h1}>Shock</Text>
+            <View style={S.lockPill}>
+              <Ionicons name="lock-closed" size={12} color="#fff" />
+              <Text style={S.lockPillText}>Locked</Text>
+            </View>
+          </View>
+          <SettingRow icon="settings-outline" label="Low-Speed Comp" hint="Clicks out from zero" value="•••" unit="clicks" />
+          <SettingRow icon="flash-outline" label="High-Speed Comp" hint="Turns out from zero" value="•••" unit="turns" />
+          <SettingRow icon="refresh-outline" label="Rebound" hint="Clicks out from zero" value="•••" unit="clicks" />
+          <SettingRow icon="resize-outline" label="Sag" hint="Static sag target" value="•••" unit="mm" />
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            {Platform.OS === "ios" ? (
+              <BlurView intensity={30} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+            ) : (
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.35)" }]} />
+            )}
+          </View>
+        </View>
+
+        {/* Test plan (unlocked) */}
         {base?.notes?.length ? (
           <View style={S.card}>
             <Text style={S.h1}>Test plan</Text>
@@ -176,40 +217,14 @@ export default function TuneResultsPreviewScreen() {
           <View style={S.card}>
             <Text style={S.h1}>Test plan</Text>
             <Text style={S.bodySmall}>
-              Ride 5–10 minutes, then refine with feedback. Unlock to see the exact click numbers.
+              Ride 5-10 minutes, then refine with feedback. Unlock to see the exact click numbers.
             </Text>
           </View>
         )}
-
-        {/* Fork (LOCKED) */}
-        <View style={[S.card, S.lift]}>
-          <Text style={S.h1}>Fork</Text>
-          <Metric S={S} label="Compression" value={locked ? "•••" : `${num(result.fork.comp_clicks)} clicks`} hint="Clicks out from zero" />
-          <Bar C={C} value={locked ? 0 : num(result.fork.comp_clicks)} max={30} />
-          <Metric S={S} label="Rebound" value={locked ? "•••" : `${num(result.fork.reb_clicks)} clicks`} hint="Clicks out from zero" />
-          <Bar C={C} value={locked ? 0 : num(result.fork.reb_clicks)} max={30} />
-
-          {locked && <LockOverlay S={S} onUnlock={onUnlock} />}
-        </View>
-
-        {/* Shock (LOCKED) */}
-        <View style={[S.card, S.lift]}>
-          <Text style={S.h1}>Shock</Text>
-          <Metric S={S} label="Low-Speed Comp" value={locked ? "•••" : `${num(result.shock.lsc_clicks)} clicks`} />
-          <Bar C={C} value={locked ? 0 : num(result.shock.lsc_clicks)} max={30} />
-          <Metric S={S} label="High-Speed Comp" value={locked ? "•••" : `${num(result.shock.hsc_turns, 0).toFixed(1)} turns`} />
-          <Bar C={C} value={locked ? 0 : num(result.shock.hsc_turns, 0)} max={3} />
-          <Metric S={S} label="Rebound" value={locked ? "•••" : `${num(result.shock.reb_clicks)} clicks`} />
-          <Bar C={C} value={locked ? 0 : num(result.shock.reb_clicks)} max={30} />
-          <Metric S={S} label="Sag" value={locked ? "•••" : `${num(result.shock.sag_mm)} mm`} />
-          <Bar C={C} value={locked ? 0 : num(result.shock.sag_mm)} max={120} goodMin={100} goodMax={108} />
-
-          {locked && <LockOverlay S={S} onUnlock={onUnlock} />}
-        </View>
       </ScrollView>
 
-      {/* Big CTA footer (NO TABS needed) */}
-      <View style={[S.bigCtaWrap, { paddingBottom: 14 + insets.bottom }]}>
+      {/* Big CTA footer */}
+      <View pointerEvents="box-none" style={[S.bigCtaWrap, { paddingBottom: 14 + insets.bottom }]}>
         {Platform.OS === "ios" ? (
           <BlurView intensity={25} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
         ) : (
@@ -231,115 +246,6 @@ export default function TuneResultsPreviewScreen() {
           </Pressable>
         </View>
       </View>
-    </View>
-  );
-}
-
-/* ---------- Lock overlay component ---------- */
-function LockOverlay({
-  S,
-  onUnlock,
-}: {
-  S: any;
-  onUnlock: () => void;
-}) {
-  return (
-    <View style={S.lockOverlay} pointerEvents="box-none">
-      {Platform.OS === "ios" ? (
-        <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill} />
-      ) : (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.35)" }]} />
-      )}
-
-      <View style={S.lockCard}>
-        <Ionicons name="lock-closed" size={18} color="#fff" />
-        <Text style={S.lockTitle}>Exact numbers locked</Text>
-        <Text style={S.lockSub}>Create an account to reveal the click settings.</Text>
-
-        <Pressable onPress={onUnlock} style={[S.btnPrimary, { marginTop: 10 }]}>
-          <Text style={S.btnPrimaryText}>Unlock</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-/* ---------- UI pieces ---------- */
-function Metric({
-  label,
-  value,
-  hint,
-  S,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  S: any;
-}) {
-  return (
-    <View style={S.rowBetween}>
-      <View style={{ flexShrink: 1 }}>
-        <Text style={S.metricLabel}>{label}</Text>
-        {hint ? <Text style={S.metricHint}>{hint}</Text> : null}
-      </View>
-      <Text style={S.metricValue}>{value}</Text>
-    </View>
-  );
-}
-
-function Bar({
-  value,
-  max,
-  goodMin,
-  goodMax,
-  C,
-}: {
-  value: number;
-  max: number;
-  goodMin?: number;
-  goodMax?: number;
-  C: any;
-}) {
-  const pct = Math.max(0, Math.min(1, value / max));
-  const inGood =
-    goodMin != null && goodMax != null && value >= goodMin && value <= goodMax;
-
-  return (
-    <View
-      style={{
-        height: 8,
-        backgroundColor: C.INK,
-        borderRadius: 999,
-        overflow: "hidden",
-        marginTop: 6,
-        marginBottom: 10,
-        borderWidth: 1,
-        borderColor: C.BORDER,
-        position: "relative",
-      }}
-    >
-      <View
-        style={{
-          height: "100%",
-          width: `${pct * 100}%`,
-          backgroundColor: inGood ? (C.SUCCESS ?? "#22c55e") : C.ACCENT,
-        }}
-      />
-      {goodMin != null && goodMax != null ? (
-        <View
-          style={{
-            position: "absolute",
-            top: -1,
-            bottom: -1,
-            left: `${(goodMin / max) * 100}%`,
-            right: `${(1 - goodMax / max) * 100}%`,
-            borderRadius: 999,
-            backgroundColor: (C.SUCCESS ?? "#22c55e") + "2E",
-            borderWidth: 1,
-            borderColor: (C.SUCCESS ?? "#22c55e") + "59",
-          }}
-        />
-      ) : null}
     </View>
   );
 }
@@ -366,7 +272,6 @@ const makeStyles = (C: {
   ACCENT: string;
   INK: string;
   SUCCESS?: string;
-  INPUT_BG?: string;
 }) =>
   StyleSheet.create({
     emptyWrap: {
@@ -383,82 +288,90 @@ const makeStyles = (C: {
       textAlign: "center",
     },
 
-    topSafeSpacer: { backgroundColor: C.BG },
+    // ── Compact header ──────────────────────────────────────────────
+    compactHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 4,
+      paddingVertical: 6,
+      backgroundColor: C.BG,
+      borderBottomWidth: 1,
+      borderBottomColor: C.BORDER,
+    },
+    headerIconBtn: {
+      width: 44,
+      height: 44,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    compactHeaderTitle: {
+      flex: 1,
+      textAlign: "center",
+      color: C.TEXT,
+      fontSize: 16,
+      fontWeight: "700",
+    },
 
-    headerSolid: {
-      backgroundColor: C.ACCENT,
-      paddingTop: 18,
-      paddingBottom: 18,
+    // ── Hero section ────────────────────────────────────────────────
+    heroSection: {
+      alignItems: "center",
+      paddingTop: 28,
+      paddingBottom: 12,
       paddingHorizontal: 16,
-      borderBottomLeftRadius: 18,
-      borderBottomRightRadius: 18,
-      ...Platform.select({
-        ios: {
-          shadowColor: "#000",
-          shadowOpacity: 0.25,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-        },
-        android: { elevation: 6 },
-      }),
     },
-    title: {
-      color: "#fff",
-      fontSize: 22,
-      lineHeight: 26,
+    heroBadge: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: C.ACCENT + "2A",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 12,
+    },
+    heroTitle: {
+      color: C.TEXT,
+      fontSize: 24,
       fontWeight: "900",
-      letterSpacing: -0.2,
+      textAlign: "center",
+      letterSpacing: -0.4,
     },
-    subtitle: {
-      color: "rgba(255,255,255,0.9)",
-      marginTop: 4,
+    heroSubtitle: {
+      color: C.MUTED,
       fontSize: 14,
+      marginTop: 4,
+      textAlign: "center",
+    },
+    heroHint: {
+      color: C.MUTED,
+      fontSize: 13,
+      marginTop: 10,
+      textAlign: "center",
       lineHeight: 18,
+      paddingHorizontal: 20,
     },
 
+    // ── Summary chips ───────────────────────────────────────────────
     chipsRow: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: 8,
+      paddingHorizontal: 16,
       marginTop: 10,
-    },
-    chip: {
-      backgroundColor: "rgba(0,0,0,0.18)",
-      borderColor: "rgba(255,255,255,0.2)",
-      borderWidth: 1,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      maxWidth: 220,
-    },
-    chipText: { color: "#fff", fontWeight: "700", fontSize: 12 },
-
-    zeroText: {
-      color: "rgba(255,255,255,0.92)",
-      marginTop: 10,
-      fontSize: 13,
-      lineHeight: 17,
+      marginBottom: 4,
     },
 
-    modePill: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.28)",
-      backgroundColor: "rgba(0,0,0,0.15)",
+    // ── Mode helper ─────────────────────────────────────────────────
+    modeHelperRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      paddingHorizontal: 16,
+      marginTop: 8,
+      marginBottom: 2,
     },
-    modePillOn: {
-      borderColor: "#fff",
-      backgroundColor: "rgba(0,0,0,0.28)",
-    },
-    modePillText: {
-      color: "rgba(255,255,255,0.9)",
-      fontWeight: "800",
-      fontSize: 12,
-    },
-    modePillTextOn: { color: "#fff" },
+    modeHelperText: { color: C.MUTED, fontSize: 12, flex: 1 },
 
+    // ── Card shell ──────────────────────────────────────────────────
     card: {
       backgroundColor: C.CARD,
       borderWidth: 1,
@@ -467,64 +380,67 @@ const makeStyles = (C: {
       padding: 14,
       marginHorizontal: 16,
       marginTop: 12,
-      overflow: "hidden",
     },
     lift: {
-      shadowColor: C.ACCENT,
-      shadowOpacity: 0.18,
-      shadowRadius: 16,
-      shadowOffset: { width: 0, height: 10 },
-      elevation: 5,
+      ...Platform.select({
+        ios: {
+          shadowColor: C.ACCENT,
+          shadowOpacity: 0.18,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 10 },
+        },
+        android: { elevation: 5 },
+      }),
     },
     h1: { fontSize: 15, fontWeight: "900", color: C.TEXT, marginBottom: 8 },
+    bodySmall: { color: C.MUTED, fontSize: 12, lineHeight: 17, marginTop: 2 },
 
-    stepRow: {
+    // ── Lock pill ───────────────────────────────────────────────────
+    lockPill: {
       flexDirection: "row",
-      alignItems: "flex-start",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 10,
       paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: "rgba(0,0,0,0.18)",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.22)",
     },
+    lockPillText: { color: "#fff", fontWeight: "900", fontSize: 12 },
+
+    // ── Test plan steps ─────────────────────────────────────────────
+    stepRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 6 },
     stepBadge: {
       width: 22,
       height: 22,
-      borderRadius: 11,
+      borderRadius: 6,
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: C.ACCENT + "2E",
+      backgroundColor: "rgba(29,155,240,0.12)",
       borderWidth: 1,
-      borderColor: C.ACCENT + "73",
+      borderColor: "rgba(29,155,240,0.25)",
       marginRight: 8,
       marginTop: 1,
     },
-    stepBadgeText: {
-      color: "#EAF2FF",
-      fontWeight: "900",
-      fontSize: 12,
-      lineHeight: 12,
-    },
+    stepBadgeText: { color: "#EAF2FF", fontWeight: "900", fontSize: 12, lineHeight: 12 },
     stepText: { color: C.TEXT, flex: 1, lineHeight: 20 },
 
-    metricLabel: { color: "#DDE2F2", fontWeight: "800" },
-    metricHint: { color: C.MUTED, fontSize: 12, marginTop: 2 },
-    metricValue: {
-      color: "#fff",
-      fontWeight: "900",
-      marginLeft: 8,
-      minWidth: 80,
-      textAlign: "right",
+    // ── Big CTA footer ──────────────────────────────────────────────
+    bigCtaWrap: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: C.BORDER,
     },
-    rowBetween: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginTop: 4,
+    bigCtaInner: {
+      paddingTop: 12,
+      paddingHorizontal: 16,
     },
-
-    bodySmall: {
-      color: C.MUTED,
-      fontSize: 12,
-      lineHeight: 17,
-      marginTop: 2,
-    },
+    bigCtaTitle: { color: C.TEXT, fontWeight: "900", fontSize: 16 },
+    bigCtaSub: { color: C.MUTED, marginTop: 4, marginBottom: 10 },
 
     btnPrimary: {
       backgroundColor: C.ACCENT,
@@ -538,7 +454,7 @@ const makeStyles = (C: {
     btnPrimaryText: { color: "#fff", fontWeight: "900" },
     btnGhost: {
       marginTop: 10,
-      borderColor: "rgba(255,255,255,0.25)",
+      borderColor: C.BORDER,
       borderWidth: 1,
       borderRadius: 12,
       paddingVertical: 12,
@@ -548,44 +464,5 @@ const makeStyles = (C: {
       backgroundColor: "transparent",
       width: "100%",
     },
-    btnGhostText: { color: "#E6E9F2", fontWeight: "800" },
-
-    // LOCK overlay
-    lockOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    lockCard: {
-      width: "86%",
-      borderRadius: 14,
-      padding: 14,
-      backgroundColor: "rgba(0,0,0,0.55)",
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)",
-      alignItems: "center",
-    },
-    lockTitle: { color: "#fff", fontWeight: "900", marginTop: 6, fontSize: 14 },
-    lockSub: {
-      color: "rgba(255,255,255,0.9)",
-      textAlign: "center",
-      marginTop: 4,
-      fontSize: 12,
-    },
-
-    // Big CTA footer
-    bigCtaWrap: {
-      position: "absolute",
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: "rgba(255,255,255,0.12)",
-    },
-    bigCtaInner: {
-      paddingTop: 12,
-      paddingHorizontal: 16,
-    },
-    bigCtaTitle: { color: C.TEXT, fontWeight: "900", fontSize: 16 },
-    bigCtaSub: { color: C.MUTED, marginTop: 4, marginBottom: 10 },
+    btnGhostText: { color: C.TEXT, fontWeight: "800" },
   });

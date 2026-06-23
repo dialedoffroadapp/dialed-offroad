@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { supabase } from "./supabase";
 
 export const ONBOARDING_STORAGE_KEY = "dialed_onboarding_v1";
 export const PENDING_TUNE_STORAGE_KEY = "dialed_pending_tune_v1";
@@ -404,6 +405,39 @@ export function OnboardingProvider({
 
   const completeOnboarding = useCallback(async () => {
     setOnboardingActiveState(false);
+    // Dual-write: also persist to Supabase for signed-in users so both
+    // stores agree (survives reinstall / second device).
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth?.user?.id) {
+        void supabase.from("profiles").upsert(
+          {
+            user_id: auth.user.id,
+            onboarding_complete: true,
+            onboarding_step: "complete",
+          },
+          { onConflict: "user_id" }
+        );
+      }
+    } catch {
+      // Non-critical — AsyncStorage write below is the primary
+    }
+    // Clear stale guest/onboarding flags from any pending tune so restored
+    // tunes reflect current state (user is now signed in + onboarded).
+    try {
+      const { tune } = await readPendingTune();
+      if (tune?.meta) {
+        const parsed = JSON.parse(decodeURIComponent(tune.meta));
+        if (parsed?.guest || parsed?.onboarding) {
+          parsed.guest = false;
+          parsed.onboarding = false;
+          tune.meta = encodeURIComponent(JSON.stringify(parsed));
+          await writePendingTune(tune);
+        }
+      }
+    } catch {
+      // Non-critical — live derivation in tune-results.tsx is the primary guard
+    }
     return markOnboardingComplete();
   }, [markOnboardingComplete]);
 

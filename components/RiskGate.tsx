@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-
-const ACCENT = "#1D9BF0";
+import type { ThemeTokens } from "../constants/theme";
+import { useTheme } from "../lib/theme";
 
 export function RiskGate({
   visible,
@@ -12,6 +12,9 @@ export function RiskGate({
   onAccept: () => void;
   onCancel: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   const bullets = [
     "Suggestions are informational only (not professional advice)",
     "You will verify against your owner's manual & torque specs",
@@ -47,78 +50,79 @@ export function RiskGate({
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)" },
-  sheet: {
-    backgroundColor: "#111318",
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    padding: 16,
-    paddingBottom: 32,
-  },
-  handle: {
-    alignSelf: "center",
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    marginBottom: 14,
-  },
-  title: {
-    color: "#F5F7FC",
-    fontSize: 18,
-    fontWeight: "900",
-    letterSpacing: -0.2,
-    marginBottom: 6,
-  },
-  intro: {
-    color: "#6B7280",
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 10,
-  },
-  bulletCard: {
-    backgroundColor: "rgba(255,255,255,0.03)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-  },
-  bulletRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-  },
-  bulletDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: ACCENT,
-    marginTop: 7,
-    flexShrink: 0,
-  },
-  bulletText: {
-    color: "#9CA3AF",
-    fontSize: 12,
-    lineHeight: 18,
-    flex: 1,
-  },
-  btnPrimary: {
-    backgroundColor: ACCENT,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  btnPrimaryText: { color: "#fff", fontWeight: "900", fontSize: 16 },
-  btnCancel: {
-    paddingVertical: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 4,
-  },
-  btnCancelText: { color: "#4B5563", fontSize: 14, fontWeight: "700" },
-});
+const makeStyles = (C: ThemeTokens) =>
+  StyleSheet.create({
+    backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)" },
+    sheet: {
+      backgroundColor: C.CARD,
+      borderTopLeftRadius: 22,
+      borderTopRightRadius: 22,
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      padding: 16,
+      paddingBottom: 32,
+    },
+    handle: {
+      alignSelf: "center",
+      width: 36,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: C.BORDER,
+      marginBottom: 14,
+    },
+    title: {
+      color: C.TEXT,
+      fontSize: 18,
+      fontWeight: "900",
+      letterSpacing: -0.2,
+      marginBottom: 6,
+    },
+    intro: {
+      color: C.MUTED,
+      fontSize: 13,
+      lineHeight: 20,
+      marginBottom: 10,
+    },
+    bulletCard: {
+      backgroundColor: C.INPUT_BG,
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 12,
+    },
+    bulletRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 8,
+    },
+    bulletDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 2.5,
+      backgroundColor: C.ACCENT,
+      marginTop: 7,
+      flexShrink: 0,
+    },
+    bulletText: {
+      color: C.MUTED,
+      fontSize: 12,
+      lineHeight: 18,
+      flex: 1,
+    },
+    btnPrimary: {
+      backgroundColor: C.ACCENT,
+      borderRadius: 12,
+      paddingVertical: 14,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    btnPrimaryText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+    btnCancel: {
+      paddingVertical: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 4,
+    },
+    btnCancelText: { color: C.MUTED, fontSize: 14, fontWeight: "700" },
+  });

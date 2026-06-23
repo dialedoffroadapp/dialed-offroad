@@ -10,7 +10,7 @@ import {
   readPendingTune,
   useOnboarding,
 } from "../lib/onboarding";
-import { syncProFromRevenueCat } from "../lib/purchases";
+import { getCustomerInfo, isPro as isProEntitlement, syncProFromRevenueCat } from "../lib/purchases";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { clearFunnelId, getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -166,6 +166,20 @@ export default function PremiumScreen() {
             target = await handleOnboardingSuccess();
           }
         } else if (isOnboardingTrial) {
+          // Paywall dismissed without PURCHASED/RESTORED — but the user may
+          // already have an active entitlement (e.g. "already a member" from
+          // the same Apple ID). Check RevenueCat directly before giving up.
+          const info = await getCustomerInfo();
+          if (isProEntitlement(info)) {
+            const synced = await syncProFromRevenueCat();
+            if (synced) {
+              toast.show("Pro unlocked", { kind: "success" });
+              target = await handleOnboardingSuccess();
+              // Skip the dismissal log — this is a success, not a dismissal.
+              return;
+            }
+          }
+
           const funnelId = await getOrCreateFunnelId();
           const { tune: pending } = await readPendingTune();
           await logEvent("onboarding_paywall_dismissed", {
@@ -182,9 +196,6 @@ export default function PremiumScreen() {
             paywall_result: "dismissed",
           });
           await setStep("trial");
-          // Return the user to their tune if it's still valid, so they feel
-          // anchored ("your tune is still here"). Fall back to Tune tab if the
-          // pending result has expired or was never saved.
           target = pending ? "/tune-results" : "/(tabs)/tune";
         }
       } catch (e: any) {
@@ -192,6 +203,17 @@ export default function PremiumScreen() {
         console.log("Paywall error", e);
         toast.show("Could not open paywall", { kind: "error" });
         if (isOnboardingTrial) {
+          // Same fallback: the error may mask an existing entitlement
+          const info = await getCustomerInfo();
+          if (isProEntitlement(info)) {
+            const synced = await syncProFromRevenueCat();
+            if (synced) {
+              toast.show("Pro unlocked", { kind: "success" });
+              target = await handleOnboardingSuccess();
+              return;
+            }
+          }
+
           const funnelId = await getOrCreateFunnelId();
           const { tune: pending } = await readPendingTune();
           await logEvent("onboarding_paywall_dismissed", {

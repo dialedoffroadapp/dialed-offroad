@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -24,6 +24,7 @@ import type { ThemeTokens } from "../../constants/theme";
 import { useOnboarding } from "../../lib/onboarding";
 import { deriveIsPro } from "../../lib/proUtils";
 import { supabase } from "../../lib/supabase";
+import { isProfane } from "../../lib/profanity";
 import { useTheme } from "../../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
@@ -233,6 +234,25 @@ type ProfileMeta = {
   is_pro: boolean | null;
 };
 
+/** Most recent session per bike, keyed by bike ID. */
+type LastSessionMap = Record<string, { rode_on: string; surface: string | null }>;
+
+function cap(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function relativeDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return `${diff}d ago`;
+  if (diff < 30) return `${Math.floor(diff / 7)}w ago`;
+  if (diff < 365) return `${Math.floor(diff / 30)}mo ago`;
+  return `${Math.floor(diff / 365)}y ago`;
+}
+
 /* ------------------------- Simple confirm bottom sheet -------------------- */
 function ConfirmSheet({
   open,
@@ -278,6 +298,68 @@ function ConfirmSheet({
             <Text style={[styles.sheetBtnText, styles.noSelect]}>{confirmText}</Text>
           </Pressable>
         </View>
+      </View>
+    </View>
+  );
+}
+
+/* ----------------------------- Overflow menu sheet ------------------------ */
+function OverflowSheet({
+  open,
+  bike,
+  isDefault,
+  onClose,
+  onSetDefault,
+  onDelete,
+  colors,
+  styles,
+}: {
+  open: boolean;
+  bike: Bike | null;
+  isDefault: boolean;
+  onClose: () => void;
+  onSetDefault: () => void;
+  onDelete: () => void;
+  colors: ThemeTokens;
+  styles: any;
+}) {
+  if (!open || !bike) return null;
+  return (
+    <View style={styles.sheetWrap} pointerEvents="box-none">
+      <Pressable style={styles.sheetOverlay} onPress={onClose} />
+      <View style={styles.sheet}>
+        <View style={{ alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 14 }} />
+        <Text style={[styles.sheetTitle, styles.noSelect]}>
+          {bike.make} {bike.model}
+        </Text>
+        <Text style={[styles.sheetSubtitle, styles.noSelect]}>
+          {bike.year}{bike.nickname ? ` · ${bike.nickname}` : ""}
+        </Text>
+        <View style={{ height: 12 }} />
+
+        <Pressable
+          onPress={() => { onSetDefault(); onClose(); }}
+          style={styles.overflowRow}
+        >
+          <Ionicons
+            name={isDefault ? "star" : "star-outline"}
+            size={18}
+            color={isDefault ? colors.ACCENT : colors.TEXT}
+          />
+          <Text style={[styles.overflowRowText, styles.noSelect]}>
+            {isDefault ? "Remove as default" : "Set as default"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => { onDelete(); onClose(); }}
+          style={styles.overflowRow}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.ERROR} />
+          <Text style={[styles.overflowRowText, { color: colors.ERROR }, styles.noSelect]}>
+            Delete bike
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -476,6 +558,14 @@ export default function GarageScreen() {
 
   const [isPro, setIsPro] = useState<boolean>(false);
   const [defaultBikeId, setDefaultBikeId] = useState<string | null>(null);
+  const [lastSession, setLastSession] = useState<LastSessionMap>({});
+
+  // overflow menu
+  const [overflowBikeId, setOverflowBikeId] = useState<string | null>(null);
+  const overflowBike = useMemo(
+    () => bikes.find((b) => b.id === overflowBikeId) ?? null,
+    [bikes, overflowBikeId]
+  );
 
   // pickers
   const [makeOpen, setMakeOpen] = useState(false);
@@ -553,6 +643,31 @@ export default function GarageScreen() {
 
       if (bikeErr) throw bikeErr;
       setBikes(bikeRows || []);
+
+      // Batch-fetch most recent session per bike for the state line
+      if (bikeRows && bikeRows.length > 0) {
+        try {
+          const bikeIds = bikeRows.map((b: Bike) => b.id);
+          const { data: sessionRows } = await supabase
+            .from("sessions")
+            .select("bike_id, rode_on, surface")
+            .eq("user_id", userId)
+            .in("bike_id", bikeIds)
+            .order("rode_on", { ascending: false });
+
+          if (sessionRows) {
+            const map: LastSessionMap = {};
+            for (const s of sessionRows as { bike_id: string; rode_on: string | null; surface: string | null }[]) {
+              if (s.bike_id && s.rode_on && !map[s.bike_id]) {
+                map[s.bike_id] = { rode_on: s.rode_on, surface: s.surface };
+              }
+            }
+            setLastSession(map);
+          }
+        } catch {
+          // Non-critical — state line just won't show
+        }
+      }
     } catch (e: any) {
       toast.show(e?.message ?? "Failed to load garage", { kind: "error" });
     } finally {
@@ -663,6 +778,11 @@ export default function GarageScreen() {
       );
       Haptics.selectionAsync();
       router.push("/premium");
+      return;
+    }
+
+    if (newBike.nickname.trim() && isProfane(newBike.nickname)) {
+      toast.show("Please choose a different nickname.", { kind: "error" });
       return;
     }
 
@@ -946,13 +1066,16 @@ export default function GarageScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Add bike"
               >
+                <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 6 }} />
                 <Text style={[styles.btnPrimaryText, styles.noSelect]}>Add Bike</Text>
               </Pressable>
 
-              <Text style={[styles.muted, { marginTop: 10, textAlign: "center" }]}>
-                Not signed in yet? We’ll save your bikes on this device and sync them after you
-                create an account.
-              </Text>
+              <View style={styles.syncNote}>
+                <Ionicons name="cloud-outline" size={14} color={colors.MUTED} />
+                <Text style={[styles.syncNoteText, styles.noSelect]}>
+                  Bikes save locally and sync when you create an account.
+                </Text>
+              </View>
             </View>
           )}
 
@@ -974,6 +1097,7 @@ export default function GarageScreen() {
             ordered.map((b) => {
               const accent = BRAND_ACCENTS[b.make] ?? "#3A3F4C";
               const isSelected = defaultBikeId === b.id;
+              const session = lastSession[b.id];
 
               return (
                 <Pressable
@@ -983,125 +1107,102 @@ export default function GarageScreen() {
                   }}
                   style={[
                     styles.card,
-                    styles.rowItem,
                     styles.shadow,
-                    { paddingLeft: 0 },
                     isOnboarding && isSelected
                       ? { borderColor: colors.ACCENT, shadowOpacity: 0.32 }
                       : null,
                   ]}
                 >
-                  <View
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: 4,
-                      backgroundColor: hexToRgba(accent, 0.55),
-                      borderTopLeftRadius: 16,
-                      borderBottomLeftRadius: 16,
-                    }}
-                  />
+                  {/* ── Top row: icon chip + name + star + overflow ── */}
+                  <View style={styles.cardTopRow}>
+                    <View style={[styles.iconChip, { backgroundColor: hexToRgba(accent, 0.14) }]}>
+                      <Ionicons name="bicycle" size={20} color={accent} />
+                    </View>
 
-                  <View style={{ padding: 16, paddingLeft: 20 }}>
-                    <View style={styles.rowItemTop}>
-                      <View style={styles.rowItemLeft}>
-                        <View style={styles.rowIcon}>
-                          <Ionicons name="bicycle" size={16} color="#fff" />
-                        </View>
+                    <View style={styles.cardNameCol}>
+                      <Text style={[styles.bikeName, styles.noSelect]} numberOfLines={1}>
+                        {b.make} {b.model}
+                      </Text>
+                      <Text style={[styles.bikeSub, styles.noSelect]} numberOfLines={1}>
+                        {b.year}{b.nickname ? ` · ${b.nickname}` : ""}
+                      </Text>
+                    </View>
 
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={[styles.makeTitle, styles.noSelect]} numberOfLines={1}>
-                            {b.make}
-                          </Text>
-                          <Text style={[styles.modelTitle, styles.noSelect]} numberOfLines={1}>
-                            {b.model}
-                          </Text>
-
-                          {b.nickname ? (
-                            <Text style={[styles.nickname, styles.noSelect]} numberOfLines={1}>
-                              {b.nickname}
-                            </Text>
-                          ) : null}
-
-                          {!isOnboarding && (
-                            <Pressable
-                              onPress={() =>
-                                router.push({
-                                  pathname: "/(tabs)/tune",
-                                  params: { bikeId: b.id },
-                                })
-                              }
-                              style={[
-                                styles.btnInline,
-                                {
-                                  borderColor: accent,
-                                  backgroundColor: hexToRgba(accent, 0.12),
-                                },
-                              ]}
-                            >
-                              <Ionicons name="flash-outline" size={14} color={accent} />
-                              <Text style={[styles.btnInlineText, { color: accent }]}>
-                                Tune this bike
-                              </Text>
-                            </Pressable>
-                          )}
-
-                          {isOnboarding && (
-                            <View style={{ marginTop: 10 }}>
-                              <View
-                                style={[
-                                  styles.onbSelectPill,
-                                  isSelected && styles.onbSelectPillOn,
-                                ]}
-                              >
-                                <Ionicons
-                                  name={isSelected ? "checkmark-circle" : "ellipse-outline"}
-                                  size={16}
-                                  color={isSelected ? "#fff" : colors.MUTED}
-                                />
-                                <Text
-                                  style={[
-                                    styles.onbSelectPillText,
-                                    isSelected && styles.onbSelectPillTextOn,
-                                  ]}
-                                >
-                                  {isSelected ? "Selected" : "Tap to select"}
-                                </Text>
-                              </View>
-                            </View>
-                          )}
-                        </View>
+                    {!isOnboarding && (
+                      <View style={styles.cardActions}>
+                        <Pressable onPress={() => toggleDefault(b.id)} style={styles.iconBtn} hitSlop={8}>
+                          <Ionicons
+                            name={isSelected ? "star" : "star-outline"}
+                            size={ICON}
+                            color={isSelected ? colors.ACCENT : colors.MUTED}
+                          />
+                        </Pressable>
+                        <Pressable onPress={() => setOverflowBikeId(b.id)} style={styles.iconBtn} hitSlop={8}>
+                          <Ionicons name="ellipsis-horizontal" size={ICON} color={colors.MUTED} />
+                        </Pressable>
                       </View>
+                    )}
+                  </View>
 
-                      <View style={styles.rowRight}>
-                        {!isOnboarding && (
-                          <Pressable onPress={() => toggleDefault(b.id)} style={styles.iconBtn}>
-                            <Ionicons
-                              name={isSelected ? "star" : "star-outline"}
-                              size={ICON + 2}
-                              color={isSelected ? colors.ACCENT : colors.MUTED}
-                            />
-                          </Pressable>
-                        )}
+                  {/* ── State line: last tuned ── */}
+                  {!isOnboarding && (
+                    <View style={styles.stateLine}>
+                      <Ionicons
+                        name={session ? "time-outline" : "ellipse-outline"}
+                        size={13}
+                        color={colors.MUTED}
+                      />
+                      <Text style={[styles.stateText, styles.noSelect]}>
+                        {session
+                          ? `Last tuned ${relativeDate(session.rode_on)}${session.surface ? ` · ${cap(session.surface)}` : ""}`
+                          : "No tune yet"}
+                      </Text>
+                    </View>
+                  )}
 
-                        <View style={styles.yearPill}>
-                          <Text style={styles.yearPillText}>{b.year}</Text>
-                        </View>
-
-                        {!isOnboarding && (
-                          <Pressable onPress={() => requestDelete(b)} style={styles.iconBtn}>
-                            <Ionicons
-                              name="trash-outline"
-                              size={ICON + 2}
-                              color={colors.ERROR}
-                            />
-                          </Pressable>
-                        )}
+                  {/* ── Onboarding select pill ── */}
+                  {isOnboarding && (
+                    <View style={{ marginTop: 10 }}>
+                      <View
+                        style={[
+                          styles.onbSelectPill,
+                          isSelected && styles.onbSelectPillOn,
+                        ]}
+                      >
+                        <Ionicons
+                          name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                          size={16}
+                          color={isSelected ? "#fff" : colors.MUTED}
+                        />
+                        <Text
+                          style={[
+                            styles.onbSelectPillText,
+                            isSelected && styles.onbSelectPillTextOn,
+                          ]}
+                        >
+                          {isSelected ? "Selected" : "Tap to select"}
+                        </Text>
                       </View>
                     </View>
-                  </View>
+                  )}
+
+                  {/* ── Tune button ── */}
+                  {!isOnboarding && (
+                    <Pressable
+                      onPress={() =>
+                        router.push({
+                          pathname: "/(tabs)/tune",
+                          params: { bikeId: b.id },
+                        })
+                      }
+                      style={[styles.tuneBtn, { backgroundColor: accent }]}
+                    >
+                      <Ionicons name="flash" size={15} color="#fff" />
+                      <Text style={[styles.tuneBtnText, styles.noSelect]}>
+                        Tune this bike
+                      </Text>
+                    </Pressable>
+                  )}
                 </Pressable>
               );
             })
@@ -1163,6 +1264,17 @@ export default function GarageScreen() {
         confirmText="Delete"
         onCancel={() => setConfirmOpen(false)}
         onConfirm={onDeleteConfirmed}
+        colors={colors}
+        styles={styles}
+      />
+
+      <OverflowSheet
+        open={!!overflowBikeId}
+        bike={overflowBike}
+        isDefault={overflowBikeId === defaultBikeId}
+        onClose={() => setOverflowBikeId(null)}
+        onSetDefault={() => { if (overflowBikeId) toggleDefault(overflowBikeId); }}
+        onDelete={() => { if (overflowBike) requestDelete(overflowBike); }}
         colors={colors}
         styles={styles}
       />
@@ -1300,92 +1412,103 @@ const makeStyles = (colors: ThemeTokens) =>
       backgroundColor: colors.ACCENT,
       borderRadius: 12,
       paddingVertical: 14,
+      flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
     },
     btnPrimaryText: { color: "#FFFFFF", fontWeight: "900" },
 
-    rowItem: { justifyContent: "space-between" },
-    rowItemTop: {
+    syncNote: {
       flexDirection: "row",
-      alignItems: "flex-start",
-      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 10,
+      justifyContent: "center",
     },
-    rowItemLeft: {
+    syncNoteText: { color: colors.MUTED, fontSize: 12, flexShrink: 1 },
+
+    // ── New bike card layout ──
+    cardTopRow: {
       flexDirection: "row",
-      alignItems: "flex-start",
+      alignItems: "center",
       gap: 12,
+    },
+    iconChip: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    cardNameCol: {
       flex: 1,
       minWidth: 0,
     },
-    rowIcon: {
-      width: 30,
-      height: 30,
-      borderRadius: 999,
-      backgroundColor: colors.CHIP_BG ?? "rgba(255,255,255,0.08)",
-      alignItems: "center",
-      justifyContent: "center",
-      marginTop: 2,
-    },
-
-    makeTitle: {
-      color: colors.TEXT,
-      fontWeight: "900",
-      fontSize: 17,
-      lineHeight: 21,
-      flexShrink: 1,
-    },
-    modelTitle: {
+    bikeName: {
       color: colors.TEXT,
       fontWeight: "900",
       fontSize: 16,
       lineHeight: 20,
-      flexShrink: 1,
     },
-    nickname: {
-      marginTop: 2,
+    bikeSub: {
       color: colors.MUTED,
       fontSize: 13,
+      lineHeight: 17,
+      marginTop: 1,
     },
-
-    rowRight: {
+    cardActions: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 10,
-      marginLeft: 8,
+      gap: 2,
       flexShrink: 0,
     },
     iconBtn: { padding: 8, borderRadius: 10 },
 
-    yearPill: {
-      minWidth: 54,
-      alignItems: "center",
-      paddingHorizontal: 10,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: colors.CHIP_BG ?? "rgba(255,255,255,0.08)",
-      borderWidth: 1,
-      borderColor: colors.BORDER,
-    },
-    yearPillText: { color: colors.TEXT, fontWeight: "900", fontSize: 13 },
-
-    btnInline: {
+    stateLine: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 8,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderRadius: 999,
-      borderWidth: 2,
-      borderColor: colors.BORDER,
-      backgroundColor: colors.CARD,
-      alignSelf: "flex-start",
-      minHeight: 44,
-      minWidth: 150,
-      flexShrink: 0,
+      gap: 6,
       marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: colors.BORDER,
     },
-    btnInlineText: { fontWeight: "900", fontSize: 14 },
+    stateText: {
+      color: colors.MUTED,
+      fontSize: 12,
+      fontWeight: "600",
+    },
+
+    tuneBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      marginTop: 12,
+      paddingVertical: 12,
+      borderRadius: 12,
+    },
+    tuneBtnText: {
+      color: "#fff",
+      fontWeight: "900",
+      fontSize: 14,
+    },
+
+    // overflow menu rows
+    overflowRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 4,
+      borderBottomWidth: 1,
+      borderColor: colors.BORDER,
+    },
+    overflowRowText: {
+      color: colors.TEXT,
+      fontWeight: "700",
+      fontSize: 15,
+    },
 
     // onboarding select pill
     onbSelectPill: {

@@ -1,4 +1,4 @@
-// app/sessions/[id]/index.tsx
+// app/(tabs)/sessions/[id].tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../../../components/Toast";
+import type { ThemeTokens } from "../../../constants/theme";
 import { supabase } from "../../../lib/supabase";
 import { useTheme } from "../../../lib/theme";
 
@@ -75,6 +76,7 @@ export default function SessionDetail() {
   const [row, setRow] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -100,11 +102,15 @@ export default function SessionDetail() {
     })();
   }, [id, toast]);
 
-  const onDelete = async () => {
+  const actuallyDelete = async () => {
     if (!row) return;
+    setConfirmingDelete(false);
     setDeleting(true);
     try {
-      const { error } = await supabase.from("sessions").delete().eq("id", row.id);
+      const { error } = await supabase
+        .from("sessions")
+        .delete()
+        .eq("id", row.id);
       if (error) throw error;
       toast.show("Session deleted", { kind: "success" });
       router.replace("/(tabs)/sessions");
@@ -131,9 +137,10 @@ export default function SessionDetail() {
         <View style={{ height: 12 }} />
         <Pressable
           onPress={() => router.replace("/(tabs)/sessions")}
-          style={S.btnGhost}
+          style={S.backBtn}
         >
-          <Text style={S.btnGhostText}>Back to Sessions</Text>
+          <Ionicons name="chevron-back" size={18} color={C.ACCENT} />
+          <Text style={S.backText}>Sessions</Text>
         </Pressable>
       </View>
     );
@@ -149,14 +156,13 @@ export default function SessionDetail() {
     return b.nickname ? `${b.nickname} · ${name}` : name || "Bike";
   })();
 
-  // Inline helpers so they can share styles
   const Chip = ({ label }: { label: string }) => (
     <View style={S.chip}>
       <Text style={S.chipText}>{label}</Text>
     </View>
   );
 
-  const Metric = ({
+  const MeterRow = ({
     label,
     value,
     max,
@@ -168,14 +174,16 @@ export default function SessionDetail() {
     const v = typeof value === "number" ? value : 0;
     const pct = Math.max(0, Math.min(1, v / max));
     return (
-      <View style={{ marginBottom: 10 }}>
-        <Text style={S.metricLabel}>{label}</Text>
-        <View style={S.barOuter}>
-          <View style={[S.barFill, { width: `${pct * 100}%` }]} />
+      <View style={S.meterRow}>
+        <View style={S.meterLabelRow}>
+          <Text style={S.meterLabel}>{label}</Text>
+          <Text style={S.meterValue}>
+            {typeof value === "number" ? `${value}` : "—"}
+          </Text>
         </View>
-        <Text style={S.metricValue}>
-          {typeof value === "number" ? `${value}` : "—"}
-        </Text>
+        <View style={S.meterTrack}>
+          <View style={[S.meterFill, { width: `${pct * 100}%` }]} />
+        </View>
       </View>
     );
   };
@@ -188,17 +196,32 @@ export default function SessionDetail() {
         paddingTop: insets.top + 6,
       }}
     >
+      {/* Top back affordance */}
+      <Pressable
+        onPress={() => router.replace("/(tabs)/sessions")}
+        style={S.backBtn}
+        hitSlop={8}
+      >
+        <Ionicons name="chevron-back" size={20} color={C.ACCENT} />
+        <Text style={S.backText}>Sessions</Text>
+      </Pressable>
+
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 32 }}
       >
-        <View style={[S.card, S.lift]}>
-          {/* Brand accent stripe */}
-          <View style={[S.stripe, { backgroundColor: accent }]} />
-
-          {/* Title + date */}
-          <View style={S.rowBetween}>
-            <View style={S.titleWrap}>
+        <View style={S.card}>
+          {/* Header: brand chip + title + date */}
+          <View style={S.cardHeader}>
+            <View
+              style={[
+                S.brandChip,
+                { backgroundColor: hexToRgba(accent, 0.14) },
+              ]}
+            >
+              <Ionicons name="bicycle" size={20} color={accent} />
+            </View>
+            <View style={S.cardTitleWrap}>
               <Text
                 style={S.title}
                 numberOfLines={2}
@@ -206,22 +229,12 @@ export default function SessionDetail() {
               >
                 {bikeTitle}
               </Text>
+              <Text style={S.date}>{date}</Text>
             </View>
-            <Text style={S.date}>{date}</Text>
           </View>
 
+          {/* Chips */}
           <View style={S.chipsRow}>
-            <View
-              style={[
-                S.brandChip,
-                {
-                  borderColor: accent,
-                  backgroundColor: hexToRgba(accent, 0.14),
-                },
-              ]}
-            >
-              <Ionicons name="bicycle-outline" size={12} color={accent} />
-            </View>
             {row.surface ? <Chip label={cap(row.surface)} /> : null}
             {typeof row.sag_mm === "number" ? (
               <Chip label={`Sag: ${row.sag_mm} mm`} />
@@ -229,79 +242,67 @@ export default function SessionDetail() {
             {row.track ? <Chip label={row.track} /> : null}
           </View>
 
-          {/* Slider-style metrics */}
-          <View style={{ marginTop: 12 }}>
-            <Metric label="F Comp" value={row.fork_comp} max={30} />
-            <Metric label="F Reb" value={row.fork_reb} max={30} />
-            <Metric label="S LSC" value={row.shock_comp} max={30} />
-            <Metric label="S Reb" value={row.shock_reb} max={30} />
-            <Metric label="Sag" value={row.sag_mm} max={120} />
+          {/* Readable meters */}
+          <View style={{ marginTop: 16 }}>
+            <MeterRow label="F Comp" value={row.fork_comp} max={30} />
+            <MeterRow label="F Reb" value={row.fork_reb} max={30} />
+            <MeterRow label="S LSC" value={row.shock_comp} max={30} />
+            <MeterRow label="S Reb" value={row.shock_reb} max={30} />
+            <MeterRow label="Sag" value={row.sag_mm} max={120} />
           </View>
+        </View>
 
-          {row.notes ? (
+        {/* Notes card */}
+        {row.notes ? (
+          <View style={S.notesCard}>
+            <Text style={S.notesTitle}>Notes</Text>
+            <Text style={S.notesBody}>{row.notes}</Text>
+          </View>
+        ) : null}
+
+        {/* Delete — recessed text button */}
+        <Pressable
+          onPress={() => setConfirmingDelete(true)}
+          style={S.deleteBtn}
+          disabled={deleting}
+        >
+          {deleting ? (
+            <ActivityIndicator color={C.ERROR} size="small" />
+          ) : (
             <>
-              <View style={{ height: 14 }} />
-              <Text style={S.h2}>Notes</Text>
-              <Text style={S.notes}>{row.notes}</Text>
+              <Ionicons name="trash-outline" size={14} color={C.ERROR} />
+              <Text style={S.deleteText}>Delete session</Text>
             </>
-          ) : null}
-        </View>
+          )}
+        </Pressable>
+      </ScrollView>
 
-        <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Pressable
-              onPress={() => router.replace("/(tabs)/sessions")}
-              style={[
-                S.btnGhost,
-                {
-                  borderColor: accent,
-                  backgroundColor: hexToRgba(accent, 0.14),
-                  flex: 1,
-                },
-              ]}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 6,
-                }}
+      {/* Confirm delete dialog */}
+      {confirmingDelete && (
+        <View style={S.modalWrap} pointerEvents="box-none">
+          <Pressable
+            style={S.backdrop}
+            onPress={() => setConfirmingDelete(false)}
+          />
+          <View style={S.modalCard}>
+            <Text style={S.modalTitle}>Delete session?</Text>
+            <Text style={S.modalSub}>This can't be undone.</Text>
+            <View style={{ height: 16 }} />
+            <View style={S.modalFooter}>
+              <Pressable
+                onPress={() => setConfirmingDelete(false)}
+                style={S.btnCancel}
               >
-                <Ionicons
-                  name="arrow-back-outline"
-                  size={14}
-                  color={accent}
-                />
-                <Text style={[S.btnGhostText, { color: accent }]}>Back</Text>
-              </View>
-            </Pressable>
-
-            <View style={{ width: 10 }} />
-
-            <Pressable
-              onPress={onDelete}
-              style={S.btnDangerSmall}
-              disabled={deleting}
-              hitSlop={6}
-            >
-              {deleting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                >
-                  <Ionicons name="trash-outline" size={14} color="#fff" />
-                  <Text style={S.btnDangerText}>Delete</Text>
-                </View>
-              )}
-            </Pressable>
+                <Text style={S.btnCancelText}>Cancel</Text>
+              </Pressable>
+              <View style={{ width: 10 }} />
+              <Pressable onPress={actuallyDelete} style={S.btnDelete}>
+                <Text style={S.btnDeleteText}>Delete</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </ScrollView>
+      )}
     </View>
   );
 }
@@ -310,15 +311,9 @@ function cap(s: string) {
   return s.replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-const makeStyles = (C: {
-  BG: string;
-  CARD: string;
-  TEXT: string;
-  MUTED: string;
-  BORDER: string;
-  ACCENT: string;
-  ERROR: string;
-}) =>
+/* --------------------------------- Styles --------------------------------- */
+
+const makeStyles = (C: ThemeTokens) =>
   StyleSheet.create({
     center: {
       flex: 1,
@@ -326,77 +321,67 @@ const makeStyles = (C: {
       alignItems: "center",
       justifyContent: "center",
     },
+
+    /* Top back affordance */
+    backBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      gap: 2,
+    },
+    backText: {
+      color: C.ACCENT,
+      fontWeight: "700",
+      fontSize: 15,
+    },
+
+    /* Main card */
     card: {
       backgroundColor: C.CARD,
       borderWidth: 1,
       borderColor: C.BORDER,
-      borderRadius: 14,
+      borderRadius: 16,
       padding: 16,
-      marginTop: 16,
+      marginTop: 8,
       marginHorizontal: 16,
     },
-    stripe: {
-      position: "absolute",
-      left: 0,
-      top: 0,
-      bottom: 0,
-      width: 5,
-      borderTopLeftRadius: 14,
-      borderBottomLeftRadius: 14,
-    },
-    lift: {
-      shadowColor: C.ACCENT,
-      shadowOpacity: 0.18,
-      shadowRadius: 16,
-      shadowOffset: { width: 0, height: 10 },
-      elevation: 5,
-    },
-    rowBetween: {
+
+    cardHeader: {
       flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "flex-end",
+      alignItems: "center",
     },
-
-    titleWrap: {
+    brandChip: {
+      width: 42,
+      height: 42,
+      borderRadius: 11,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    cardTitleWrap: {
       flex: 1,
+      marginLeft: 12,
       minWidth: 0,
-      paddingRight: 8,
     },
 
-    title: { color: C.TEXT, fontWeight: "900", fontSize: 18 },
-
+    title: { color: C.TEXT, fontWeight: "900", fontSize: 17 },
     date: {
       color: C.MUTED,
       fontSize: 12,
-      marginLeft: 4,
-      flexShrink: 0,
+      marginTop: 2,
     },
-
-    h2: { color: C.TEXT, fontWeight: "900", marginTop: 8 },
-    notes: { color: C.MUTED, marginTop: 4, lineHeight: 20 },
     muted: { color: C.MUTED },
 
+    /* Chips */
     chipsRow: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: 8,
-      marginTop: 8,
-    },
-    brandChip: {
-      paddingHorizontal: 8,
-      paddingVertical: 6,
-      borderRadius: 999,
-      borderWidth: 1,
+      marginTop: 10,
     },
     chip: {
-      backgroundColor:
-        C.BG === "#FFFFFF"
-          ? "rgba(0,0,0,0.04)"
-          : "rgba(255,255,255,0.05)",
-      borderColor:
-        C.BG === "#FFFFFF"
-          ? "rgba(0,0,0,0.06)"
-          : "rgba(255,255,255,0.18)",
+      backgroundColor: C.CHIP_BG ?? "rgba(255,255,255,0.05)",
+      borderColor: C.BORDER_SUBTLE ?? C.BORDER,
       borderWidth: 1,
       borderRadius: 999,
       paddingHorizontal: 10,
@@ -404,49 +389,122 @@ const makeStyles = (C: {
     },
     chipText: { color: C.TEXT, fontWeight: "800", fontSize: 12 },
 
-    metricLabel: {
-      color: C.MUTED,
-      fontWeight: "800",
-      marginBottom: 4,
-      fontSize: 12,
+    /* Readable meters */
+    meterRow: {
+      marginBottom: 12,
     },
-    metricValue: {
+    meterLabelRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "baseline",
+      marginBottom: 6,
+    },
+    meterLabel: {
+      color: C.MUTED,
+      fontWeight: "700",
+      fontSize: 13,
+    },
+    meterValue: {
       color: C.TEXT,
       fontWeight: "900",
-      marginTop: 3,
-      fontSize: 12,
+      fontSize: 15,
     },
-    barOuter: {
-      height: 6,
-      backgroundColor:
-        C.BG === "#FFFFFF"
-          ? "rgba(0,0,0,0.06)"
-          : "rgba(255,255,255,0.06)",
+    meterTrack: {
+      height: 4,
+      backgroundColor: C.TRACK ?? "rgba(255,255,255,0.06)",
       borderRadius: 999,
       overflow: "hidden",
+    },
+    meterFill: {
+      height: "100%",
+      backgroundColor: C.ACCENT,
+      borderRadius: 999,
+    },
+
+    /* Notes card */
+    notesCard: {
+      backgroundColor: C.CARD,
       borderWidth: 1,
       borderColor: C.BORDER,
+      borderRadius: 16,
+      padding: 16,
+      marginTop: 12,
+      marginHorizontal: 16,
     },
-    barFill: { height: "100%", backgroundColor: C.ACCENT },
+    notesTitle: {
+      color: C.TEXT,
+      fontWeight: "900",
+      fontSize: 14,
+      marginBottom: 6,
+    },
+    notesBody: {
+      color: C.MUTED,
+      lineHeight: 20,
+      fontSize: 14,
+    },
 
-    btnGhost: {
-      borderColor: "rgba(255,255,255,0.25)",
+    /* Delete text button (recessed) */
+    deleteBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      paddingVertical: 14,
+      marginTop: 8,
+    },
+    deleteText: {
+      color: C.ERROR,
+      fontWeight: "600",
+      fontSize: 13,
+    },
+
+    /* Confirm modal */
+    modalWrap: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: "center",
+      alignItems: "center",
+      zIndex: 1000,
+    },
+    backdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: C.OVERLAY,
+    },
+    modalCard: {
+      width: "86%",
+      backgroundColor: C.CARD,
+      borderColor: C.BORDER,
+      borderWidth: 1,
+      borderRadius: 16,
+      padding: 20,
+    },
+    modalTitle: {
+      color: C.TEXT,
+      fontWeight: "900",
+      fontSize: 17,
+    },
+    modalSub: { color: C.MUTED, marginTop: 4, fontSize: 14 },
+    modalFooter: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    btnCancel: {
+      borderColor: C.BORDER,
       borderWidth: 1,
       borderRadius: 12,
-      paddingVertical: 11,
+      paddingVertical: 12,
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: "transparent",
+      flex: 1,
     },
-    btnGhostText: { color: C.TEXT, fontWeight: "800" },
-
-    btnDangerSmall: {
+    btnCancelText: { color: C.TEXT, fontWeight: "800" },
+    btnDelete: {
       backgroundColor: C.ERROR,
       borderRadius: 12,
-      paddingVertical: 10,
-      paddingHorizontal: 14,
+      paddingVertical: 12,
+      paddingHorizontal: 18,
       alignItems: "center",
       justifyContent: "center",
     },
-    btnDangerText: { color: "#fff", fontWeight: "900" },
+    btnDeleteText: { color: "#fff", fontWeight: "900" },
   });

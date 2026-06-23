@@ -96,7 +96,17 @@ export default function IndexGate() {
             // Non-critical
           }
 
+          // Only run the legacy-usage heuristic for genuine pre-onboarding-system
+          // users (onboarding_step is null/absent). If onboarding_step is a known
+          // mid-flow value, the user is mid-onboarding — not a legacy user — and
+          // must NOT be auto-completed just because they have a bike from the flow.
+          const isMidOnboarding =
+            profile?.onboarding_step != null &&
+            isOnboardingStep(profile.onboarding_step) &&
+            profile.onboarding_step !== "complete";
+
           if (
+            !isMidOnboarding &&
             !profile?.onboarding_complete &&
             !profile?.is_pro &&
             !(
@@ -179,7 +189,7 @@ export default function IndexGate() {
                 target = "/(tabs)/garage";
                 break;
               case "trial":
-                target = "/(tabs)/garage";
+                target = "/premium";
                 break;
               default:
                 target = "/(tabs)";

@@ -1,5 +1,6 @@
 // app/_layout.tsx
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Linking from "expo-linking";
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
@@ -15,11 +16,42 @@ import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
 import { initPurchases } from "../lib/purchases";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
+import { darkTheme } from "../constants/theme";
 import { ThemeProvider, useTheme } from "../lib/theme";
+
+// ─── Early deep-link capture ───────────────────────────────────────────────
+// Expo Router consumes the incoming URL for routing before useURL() or
+// getInitialURL() can return it to a screen component. We capture the raw URL
+// (including the #fragment) at module load time — before any component mounts —
+// so auth-callback.tsx can reliably read the recovery tokens.
+let _capturedDeepLinkUrl: string | null = null;
+
+// Cold start: grab the URL synchronously (or as early as possible)
+Linking.getInitialURL().then((url) => {
+  if (url && url.includes("auth-callback")) {
+    console.log("[deep-link] captured initial URL:", url);
+    _capturedDeepLinkUrl = url;
+  }
+});
+
+// Warm start: listen for URL events fired while the app is backgrounded
+const _deepLinkSub = Linking.addEventListener("url", ({ url }) => {
+  if (url && url.includes("auth-callback")) {
+    console.log("[deep-link] captured warm-start URL:", url);
+    _capturedDeepLinkUrl = url;
+  }
+});
+
+/** Read (and consume) the captured deep-link URL. */
+export function consumeCapturedDeepLink(): string | null {
+  const url = _capturedDeepLinkUrl;
+  _capturedDeepLinkUrl = null;
+  return url;
+}
 
 function ThemedStatusBar() {
   const { colors } = useTheme();
-  const isDark = colors.BG === "#0B1220";
+  const isDark = colors.BG === darkTheme.BG;
   return (
     <StatusBar style={isDark ? "light" : "dark"} backgroundColor={colors.BG} />
   );

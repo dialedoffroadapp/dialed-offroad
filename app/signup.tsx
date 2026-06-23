@@ -17,18 +17,21 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ToastProvider, useToast } from "../components/Toast";
-import { COLORS } from "../constants/theme";
+import type { ThemeTokens } from "../constants/theme";
 import {
   PENDING_GUEST_BIKE_SYNC_KEY,
   readPendingTune,
   useOnboarding,
 } from "../lib/onboarding";
 import { supabase } from "../lib/supabase";
+import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 function SignupInner() {
   const router = useRouter();
   const toast = useToast();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const { state, markAccountCreated, setStep } = useOnboarding();
 
   // ✅ allow caller to specify where to go after signup
@@ -112,11 +115,64 @@ function SignupInner() {
     setLoadingUp(true);
     try {
       // 1) Create the account
-      const { error } = await supabase.auth.signUp({
+      const { error: signUpErr } = await supabase.auth.signUp({
         email: email.trim(),
         password: password.trim(),
       });
-      if (error) throw error;
+
+      // If the user already exists (half-created state from a prior failed attempt),
+      // try to sign them in and create the missing profile instead of dead-ending.
+      if (signUpErr) {
+        const isAlreadyRegistered =
+          signUpErr.message?.toLowerCase().includes("already registered") ||
+          signUpErr.message?.toLowerCase().includes("already been registered") ||
+          signUpErr.message?.toLowerCase().includes("user already exists");
+
+        if (isAlreadyRegistered) {
+          // Attempt to recover: sign in with these credentials
+          const { data: recoveryData, error: recoveryErr } =
+            await supabase.auth.signInWithPassword({
+              email: email.trim(),
+              password: password.trim(),
+            });
+
+          if (recoveryErr) {
+            // Credentials don't match the existing account — send to login
+            toast.show("An account with this email already exists. Please sign in.", { kind: "info" });
+            setLoadingUp(false);
+            router.replace({ pathname: "/login", params: { email: email.trim() } } as never);
+            return;
+          }
+
+          // Signed in successfully — ensure the profile row exists (it may be missing)
+          if (recoveryData?.user?.id) {
+            await supabase.from("profiles").upsert(
+              {
+                user_id: recoveryData.user.id,
+                onboarding_step: state.onboardingStep === "signup" ? "trial" : "complete",
+                onboarding_complete: state.onboardingStep !== "signup",
+                is_pro: false,
+              },
+              { onConflict: "user_id", ignoreDuplicates: false }
+            );
+          }
+
+          toast.show("Welcome back! Signed in ✅", { kind: "success" });
+          await logEvent("sign_in");
+
+          if (state.onboardingStep === "signup") {
+            await markAccountCreated();
+            await setStep("trial");
+            router.replace("/premium");
+          } else {
+            router.replace("/(tabs)");
+          }
+          return;
+        }
+
+        // Some other signup error (network, etc.) — surface it
+        throw signUpErr;
+      }
 
       // 2) Immediately sign them in (no email verification required for now)
       const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
@@ -131,21 +187,33 @@ function SignupInner() {
         return;
       }
 
-      // 3) Ensure a profiles row exists so downstream screens never hit null
+      // 3) Ensure a profiles row exists so downstream screens never hit null.
+      //    Retry up to 2 times to handle transient RLS/timing issues where the
+      //    new session JWT may not be fully propagated yet.
       if (signInData?.user?.id) {
-        const { error: profileErr } = await supabase.from("profiles").upsert(
-          {
-            user_id: signInData.user.id,
-            onboarding_step: "trial",
-            onboarding_complete: false,
-            is_pro: false,
-          },
-          { onConflict: "user_id", ignoreDuplicates: false }
-        );
-        if (profileErr) {
-          toast.show("Account created but profile setup failed. Please try signing in.", { kind: "error" });
-          setLoadingUp(false);
-          return;
+        let profileCreated = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { error: profileErr } = await supabase.from("profiles").upsert(
+            {
+              user_id: signInData.user.id,
+              onboarding_step: "trial",
+              onboarding_complete: false,
+              is_pro: false,
+            },
+            { onConflict: "user_id", ignoreDuplicates: false }
+          );
+          if (!profileErr) {
+            profileCreated = true;
+            break;
+          }
+          // Brief pause before retry to let the JWT propagate
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+        }
+        if (!profileCreated) {
+          // Profile creation failed after retries — still route the user forward
+          // rather than stranding them. Login will detect the missing profile
+          // and create it on next sign-in.
+          console.warn("[Signup] profile upsert failed after retries");
         }
 
         // 4) Migrate guest bike from pending tune into Supabase so hasLegacyUsage
@@ -221,157 +289,157 @@ function SignupInner() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.select({ ios: "padding", android: undefined })}
-      style={{ flex: 1, backgroundColor: "#0B0C10" }}
+      style={{ flex: 1, backgroundColor: colors.BG }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <View style={styles.page}>
-        {/* Top bar with logo */}
-        <View style={styles.headerRow}>
+          {/* Logo */}
           <Image
             source={require("../assets/images/android-icon-foreground.png")}
-            style={styles.logoImage}
+            style={styles.logo}
           />
-        </View>
 
-        <View style={styles.brandTop}>
-          <Text style={styles.brandTitle}>Create your account</Text>
-          <Text style={styles.brandSub}>
+          {/* Headline + context-aware subtitle */}
+          <Text style={styles.headline}>Create your account</Text>
+          <Text style={styles.subtitle}>
             {state.onboardingStep === "signup"
               ? state.hasSeenIntro
                 ? "Almost there — create your account to reveal your tune."
                 : "Your setup is ready. Create your account to reveal it and save your bike."
               : "Start saving bikes, sessions, and AI-powered presets."}
           </Text>
-        </View>
 
-          <View style={styles.card}>
-          {/* Email */}
-          <Text style={styles.label}>Email</Text>
+          {/* Form */}
+          <View style={styles.form}>
+            {/* Email */}
+            <Text style={styles.label}>Email</Text>
             <TextInput
-            value={email}
-            onChangeText={(v) => {
-              setEmail(v);
-              if (emailErr) setEmailErr("");
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            placeholder="you@example.com"
-            placeholderTextColor="#6B7280"
-            style={[styles.input, emailErr && styles.inputError]}
-            returnKeyType="next"
-            textContentType="username"
+              value={email}
+              onChangeText={(v) => {
+                setEmail(v);
+                if (emailErr) setEmailErr("");
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              placeholder="you@example.com"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              style={[styles.input, emailErr && styles.inputError]}
+              returnKeyType="next"
+              textContentType="username"
             />
             {!!emailErr && <Text style={styles.errorText}>{emailErr}</Text>}
 
-          {/* Password + eye */}
-            <Text style={[styles.label, { marginTop: 12 }]}>Password</Text>
+            {/* Password + eye */}
+            <Text style={[styles.label, { marginTop: 14 }]}>Password</Text>
             <View style={{ position: "relative" }}>
               <TextInput
-              value={password}
-              onChangeText={(v) => {
-                setPassword(v);
-                if (pwErr) setPwErr("");
-              }}
-              secureTextEntry={!showPw}
-              placeholder="At least 6 characters"
-              placeholderTextColor="#6B7280"
-              style={[
-                styles.input,
-                pwErr && styles.inputError,
-                { paddingRight: 44 },
-              ]}
-              returnKeyType="done"
-              onSubmitEditing={() => {
-                Keyboard.dismiss();
-                onSignUp();
-              }}
-              textContentType="newPassword"
+                value={password}
+                onChangeText={(v) => {
+                  setPassword(v);
+                  if (pwErr) setPwErr("");
+                }}
+                secureTextEntry={!showPw}
+                placeholder="At least 6 characters"
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                style={[
+                  styles.input,
+                  pwErr && styles.inputError,
+                  { paddingRight: 44 },
+                ]}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  Keyboard.dismiss();
+                  onSignUp();
+                }}
+                textContentType="newPassword"
               />
               <Pressable
-              onPress={() => setShowPw((s) => !s)}
-              hitSlop={8}
-              style={styles.eye}
-              accessibilityRole="button"
-              accessibilityLabel={showPw ? "Hide password" : "Show password"}
-            >
-              <Ionicons
-                name={showPw ? "eye-off" : "eye"}
-                size={18}
-                color="#6B7280"
-              />
+                onPress={() => setShowPw((s) => !s)}
+                hitSlop={8}
+                style={styles.eye}
+                accessibilityRole="button"
+                accessibilityLabel={showPw ? "Hide password" : "Show password"}
+              >
+                <Ionicons
+                  name={showPw ? "eye-off" : "eye"}
+                  size={18}
+                  color="rgba(255,255,255,0.4)"
+                />
               </Pressable>
             </View>
             {!!pwErr && <Text style={styles.errorText}>{pwErr}</Text>}
 
-          {/* Agreement row */}
+            {/* Agreement row */}
             <View style={styles.agreeRow}>
               <Pressable
-              onPress={() => setAccepted((a) => !a)}
-              hitSlop={8}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: accepted }}
-              style={[styles.checkbox, accepted && styles.checkboxOn]}
-            >
-              {accepted ? (
-                <Ionicons name="checkmark" size={14} color="#fff" />
-              ) : null}
+                onPress={() => setAccepted((a) => !a)}
+                hitSlop={8}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: accepted }}
+                style={[styles.checkbox, accepted && styles.checkboxOn]}
+              >
+                {accepted ? (
+                  <Ionicons name="checkmark" size={14} color="#fff" />
+                ) : null}
               </Pressable>
               <Text style={styles.agreeText}>
-              I agree to the{" "}
-              <Text
-                style={styles.link}
-                onPress={() => router.push("/legal/terms")}
-              >
-                Terms of Service
-              </Text>{" "}
-              and{" "}
-              <Text
-                style={styles.link}
-                onPress={() => router.push("/legal/privacy")}
-              >
-                Privacy Policy
-              </Text>
-              .
+                I agree to the{" "}
+                <Text
+                  style={styles.legalLink}
+                  onPress={() => router.push("/legal/terms")}
+                >
+                  Terms of Service
+                </Text>{" "}
+                and{" "}
+                <Text
+                  style={styles.legalLink}
+                  onPress={() => router.push("/legal/privacy")}
+                >
+                  Privacy Policy
+                </Text>
+                .
               </Text>
             </View>
 
-            <View style={{ height: 12 }} />
-
-          {/* Create account button */}
+            {/* Create account button */}
             <Pressable
-            onPress={onSignUp}
-            disabled={loadingUp || !canSubmit}
-            style={({ pressed }) => [
-              styles.btn,
-              (loadingUp || !canSubmit) && styles.btnDisabled,
-              pressed && canSubmit && { opacity: 0.95 },
-            ]}
-          >
-            {loadingUp ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.btnText}>Create Account</Text>
-            )}
+              onPress={onSignUp}
+              disabled={loadingUp || !canSubmit}
+              style={({ pressed }) => [
+                styles.btn,
+                !canSubmit && !loadingUp && styles.btnDisabled,
+                loadingUp && styles.btnDisabled,
+                pressed && canSubmit && { opacity: 0.92 },
+              ]}
+            >
+              {loadingUp ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text
+                  style={[styles.btnText, !canSubmit && styles.btnTextDisabled]}
+                >
+                  Create Account
+                </Text>
+              )}
             </Pressable>
 
-            <Text style={styles.terms}>
+            <Text style={styles.helper}>
               You’ll use this email and password to sign in.
             </Text>
-
-            <View style={{ height: 12 }} />
-
-          {/* Sign in instead -> button */}
-            <Pressable
-              onPress={() => router.replace("/login")}
-              style={styles.switchBtn}
-            >
-              <Text style={styles.switchBtnText}>
-                Already have an account? Sign in
-              </Text>
-            </Pressable>
           </View>
+
+          {/* Switch to login */}
+          <Pressable
+            onPress={() => router.replace("/login")}
+            style={styles.switchRow}
+          >
+            <Text style={styles.switchText}>
+              Already have an account?{" "}
+              <Text style={styles.switchAccent}>Sign in</Text>
+            </Text>
+          </Pressable>
         </View>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
@@ -386,119 +454,142 @@ export default function SignupScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  page: { flex: 1, padding: 16, paddingTop: 56 },
+const makeStyles = (C: ThemeTokens) =>
+  StyleSheet.create({
+    page: {
+      flex: 1,
+      paddingHorizontal: 24,
+      paddingTop: 60,
+      backgroundColor: C.BG,
+    },
 
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-    paddingHorizontal: 4,
-  },
-  logoImage: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    resizeMode: "contain",
-  },
+    logo: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      resizeMode: "contain",
+      marginBottom: 28,
+    },
 
-  brandTop: { marginBottom: 12, paddingHorizontal: 4 },
-  brandTitle: { color: "#F5F7FC", fontWeight: "900", fontSize: 22 },
-  brandSub: { color: "#6B7280", marginTop: 4 },
+    headline: {
+      color: C.TEXT,
+      fontWeight: "700",
+      fontSize: 24,
+      letterSpacing: -0.3,
+      marginBottom: 6,
+    },
+    subtitle: {
+      color: "rgba(255,255,255,0.55)",
+      fontSize: 15,
+      lineHeight: 21,
+      marginBottom: 28,
+    },
 
-  card: {
-    backgroundColor: "#111318",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-    padding: 16,
-    maxWidth: 560,
-  },
+    form: {
+      backgroundColor: C.CARD,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      padding: 20,
+    },
 
-  label: {
-    marginTop: 8,
-    marginBottom: 6,
-    color: "#6B7280",
-    fontWeight: "700",
-    fontSize: 11,
-    letterSpacing: 0.5,
-  },
+    label: {
+      marginBottom: 6,
+      color: "rgba(255,255,255,0.6)",
+      fontWeight: "600",
+      fontSize: 13,
+    },
 
-  input: {
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.07)",
-    backgroundColor: "#0C0D12",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: "#F5F7FC",
-    minHeight: 44,
-  },
-  inputError: { borderColor: "#F05252" },
-  errorText: { color: "#F05252", marginTop: 6, fontSize: 12 },
+    input: {
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      backgroundColor: C.INPUT_BG,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+      color: C.TEXT,
+      minHeight: 46,
+    },
+    inputError: { borderColor: C.ERROR },
+    errorText: { color: C.ERROR, marginTop: 6, fontSize: 12 },
 
-  eye: {
-    position: "absolute",
-    right: 4,
-    top: 0,
-    bottom: 0,
-    paddingHorizontal: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-  },
+    eye: {
+      position: "absolute",
+      right: 4,
+      top: 0,
+      bottom: 0,
+      paddingHorizontal: 10,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 8,
+    },
 
-  btn: {
-    backgroundColor: "#1D9BF0",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  btnText: { color: "#fff", fontWeight: "900", fontSize: 16 },
-  btnDisabled: { opacity: 0.5 },
+    agreeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginTop: 16,
+    },
+    checkbox: {
+      width: 20,
+      height: 20,
+      borderRadius: 5,
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "transparent",
+    },
+    checkboxOn: {
+      backgroundColor: C.ACCENT,
+      borderColor: C.ACCENT,
+    },
+    agreeText: {
+      color: "rgba(255,255,255,0.55)",
+      flex: 1,
+      lineHeight: 20,
+      fontSize: 13,
+    },
+    legalLink: {
+      color: "rgba(255,255,255,0.75)",
+      fontWeight: "600",
+    },
 
-  terms: {
-    color: "#6B7280",
-    textAlign: "center",
-    marginTop: 6,
-    fontSize: 12,
-  },
+    btn: {
+      backgroundColor: C.ACCENT,
+      borderRadius: 12,
+      paddingVertical: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 18,
+      minHeight: 52,
+    },
+    btnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
+    btnDisabled: {
+      backgroundColor: "rgba(255,255,255,0.08)",
+    },
+    btnTextDisabled: {
+      color: "rgba(255,255,255,0.3)",
+    },
 
-  agreeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 10,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-  checkboxOn: {
-    backgroundColor: "#1D9BF0",
-    borderColor: "#1D9BF0",
-  },
-  agreeText: { color: "#F5F7FC", flex: 1, lineHeight: 20, fontSize: 13 },
-  link: { color: "#1D9BF0", fontWeight: "800" },
+    helper: {
+      color: "rgba(255,255,255,0.35)",
+      textAlign: "center",
+      marginTop: 10,
+      fontSize: 12,
+    },
 
-  switchBtn: {
-    marginTop: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    paddingVertical: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-  switchBtnText: { color: "#F5F7FC", fontWeight: "800", fontSize: 13 },
-});
+    switchRow: {
+      marginTop: 20,
+      alignItems: "center",
+    },
+    switchText: {
+      color: "rgba(255,255,255,0.45)",
+      fontSize: 14,
+    },
+    switchAccent: {
+      color: C.ACCENT,
+      fontWeight: "700",
+    },
+  });

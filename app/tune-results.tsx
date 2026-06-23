@@ -1,8 +1,8 @@
 // app/tune-results.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -16,8 +16,11 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Chip } from "../components/Chip";
 import { OnboardingProgress } from "../components/OnboardingProgress";
+import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
+import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
 import { ZeroTuneResult } from "../lib/ai";
 import {
   clearPendingTune,
@@ -26,6 +29,7 @@ import {
   writePendingTune,
   type PendingTunePayload,
 } from "../lib/onboarding";
+import { isProfane } from "../lib/profanity";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
@@ -78,7 +82,7 @@ export default function TuneResultScreen() {
 
   const toast = useToast();
   const router = useRouter();
-  const { state, setStep } = useOnboarding();
+  const { state, setStep, onboardingActive, completeOnboarding } = useOnboarding();
   const insets = useSafeAreaInsets();
   const { colors: C } = useTheme();
   const S = useMemo(() => makeStyles(C), [C]);
@@ -150,15 +154,19 @@ export default function TuneResultScreen() {
     }
   }, [effectiveMeta]);
 
-  // ✅ Guest/onboarding flags (from Tune)
-  const isGuest = !!metaObj?.guest;
-  const isOnboarding = !!metaObj?.onboarding;
+  // ✅ Guest/onboarding flags — derive from LIVE state, not stale meta snapshot.
+  // metaObj.guest was set at tune-generation time (before signup); a signed-in
+  // user is never a guest regardless of what the pending tune's meta says.
+  // Gate on proResolved so the first render (before auth check) doesn't flash
+  // guest/locked UI for a frame then flip — this prevents the "free credit" flash.
+  const isGuest = proResolved ? (!!metaObj?.guest && !isSignedIn) : false;
+  const isOnboarding = !!metaObj?.onboarding && onboardingActive;
   const isResultsLockedStep = state.onboardingStep === "results_locked";
   const isOnboardingUnlockStep =
     state.onboardingStep === "results_locked" ||
     state.onboardingStep === "trial";
 
-  // If we’re coming from Tune Two we expect a "previous" tune tucked into meta.
+  // If we're coming from Tune Two we expect a "previous" tune tucked into meta.
   const previousTune: ZeroTuneResult | null = useMemo(() => {
     const cand =
       metaObj?.previous ?? metaObj?.previousTune ?? metaObj?.prev ?? null;
@@ -197,45 +205,71 @@ export default function TuneResultScreen() {
   // Monetization: Pro flag (Supabase-only)
   const [isPro, setIsPro] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [proResolved, setProResolved] = useState(false);
 
-  // Load Pro status from Supabase profiles
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data: auth } = await supabase.auth.getUser();
-        const user = auth?.user;
-        if (!user?.id) {
-          setIsSignedIn(false);
-          setIsPro(false);
-          return;
+  // Load Pro status from Supabase profiles — re-checks on every focus
+  // so returning from the paywall reflects a new purchase immediately.
+  useFocusEffect(
+    useCallback(() => {
+      let mounted = true;
+      (async () => {
+        try {
+          const { data: auth } = await supabase.auth.getUser();
+          const user = auth?.user;
+          if (!user?.id) {
+            if (mounted) { setIsSignedIn(false); setIsPro(false); }
+            return;
+          }
+
+          if (mounted) setIsSignedIn(true);
+
+          const { data: prof, error: profErr } = await supabase
+            .from("profiles")
+            .select("pro_until, is_pro")
+            .eq("user_id", user.id)
+            .maybeSingle<ProfileMeta>();
+
+          if (!mounted) return;
+          if (profErr || !prof) {
+            if (profErr)
+              console.warn("TuneResults: profiles select failed", profErr);
+            setIsPro(false);
+            return;
+          }
+
+          setIsPro(deriveIsPro(prof));
+        } catch (e) {
+          console.warn("TuneResults: init failed", e);
+          if (mounted) { setIsSignedIn(false); setIsPro(false); }
+        } finally {
+          if (mounted) setProResolved(true);
         }
-
-        setIsSignedIn(true);
-
-        const { data: prof, error: profErr } = await supabase
-          .from("profiles")
-          .select("pro_until, is_pro")
-          .eq("user_id", user.id)
-          .maybeSingle<ProfileMeta>();
-
-        if (profErr || !prof) {
-          if (profErr)
-            console.warn("TuneResults: profiles select failed", profErr);
-          setIsPro(false);
-          return;
-        }
-
-        setIsPro(deriveIsPro(prof));
-      } catch (e) {
-        console.warn("TuneResults: init failed", e);
-        setIsSignedIn(false);
-        setIsPro(false);
-      }
-    })();
-  }, []);
+      })();
+      return () => { mounted = false; };
+    }, [])
+  );
 
   const hasActiveEntitlement = isPro;
   const shouldBlur = isOnboardingUnlockStep && !hasActiveEntitlement;
+
+  // Auto-complete onboarding for users who are already Pro at results_locked.
+  // Without this, the "Reveal Your Setup" CTA never renders (shouldBlur is false),
+  // so goToAuth/completeOnboarding are never called and the step is stuck forever.
+  const didAutoCompleteRef = useRef(false);
+  useEffect(() => {
+    if (
+      !didAutoCompleteRef.current &&
+      proResolved &&
+      isPro &&
+      onboardingActive &&
+      isOnboardingUnlockStep &&
+      !state.onboardingComplete
+    ) {
+      didAutoCompleteRef.current = true;
+      completeOnboarding();
+    }
+  }, [proResolved, isPro, onboardingActive, isOnboardingUnlockStep, state.onboardingComplete, completeOnboarding]);
+
   const onboardingAgeMs = useMemo(() => {
     const parsed = Date.parse(state.lastUpdatedAt);
     return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
@@ -272,15 +306,26 @@ export default function TuneResultScreen() {
   const [presetName, setPresetName] = useState("");
   const [savingPreset, setSavingPreset] = useState(false);
 
-  // ✅ Sticky unlock CTA (guest only)
-  const [unlockDismissed, setUnlockDismissed] = useState(false);
+  const [whyExpanded, setWhyExpanded] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!base && restoreTried && !restored && !tuneExpired && isResultsLockedStep) {
-      const t = setTimeout(() => router.replace("/(tabs)/tune"), 10);
+      const t = setTimeout(async () => {
+        // Reset stale results_locked step so the user isn't stranded
+        await setStep("tune");
+        const { data: auth } = await supabase.auth.getUser();
+        if (auth?.user?.id) {
+          void supabase.from("profiles").upsert(
+            { user_id: auth.user.id, onboarding_step: "tune" },
+            { onConflict: "user_id" }
+          );
+        }
+        router.replace("/(tabs)/tune");
+      }, 10);
       return () => clearTimeout(t);
     }
-  }, [base, isResultsLockedStep, router, restoreTried, restored, tuneExpired]);
+  }, [base, isResultsLockedStep, router, restoreTried, restored, setStep, tuneExpired]);
 
   useEffect(() => {
     if (!restoreTried || !base || !isOnboardingUnlockStep || loggedLockedViewRef.current) {
@@ -502,7 +547,7 @@ export default function TuneResultScreen() {
   // Teaser steps for guest
   // ✅ MUST be above early returns (hook order)
   const teaserSteps = useMemo(() => {
-    const surface = terrainVal ? cap(terrainVal) : "today’s terrain";
+    const surface = terrainVal ? cap(terrainVal) : "today's terrain";
     const goals = goalsForMeta.length
       ? goalsForMeta.slice(0, 2).map(cap).join(" + ")
       : null;
@@ -616,11 +661,18 @@ export default function TuneResultScreen() {
       const { data: authCheck } = await supabase.auth.getUser();
       if (state.accountCreated || !!authCheck?.user?.id) {
         await setStep("trial");
+        if (authCheck?.user?.id) {
+          void supabase.from("profiles").upsert(
+            { user_id: authCheck.user.id, onboarding_step: "trial" },
+            { onConflict: "user_id" }
+          );
+        }
         router.replace("/premium");
         return;
       }
 
       await setStep("signup");
+      // Guest at this point — no Supabase write needed
       router.replace(AUTH_ROUTE);
       return;
     }
@@ -810,6 +862,10 @@ export default function TuneResultScreen() {
   };
 
   const confirmSavePreset = async () => {
+    if (presetName.trim() && isProfane(presetName)) {
+      toast.show("Please choose a different preset name.", { kind: "error" });
+      return;
+    }
     try {
       setSavingPreset(true);
       const { data: auth } = await supabase.auth.getUser();
@@ -862,6 +918,32 @@ export default function TuneResultScreen() {
     await goToAuth();
   };
 
+  const goToTuneWithPrefill = (mode: "terrain" | "race_trail") => {
+    const params: Record<string, string> = {};
+    const b = metaObj?.bike;
+    if (b?.selectedBikeId) params.bikeId = b.selectedBikeId;
+    if (b?.make) params.make = b.make;
+    if (b?.model) params.model = b.model;
+    if (b?.year != null) params.year = String(b.year);
+    const ctx = metaObj?.context;
+    const pf: Record<string, any> = { mode };
+    if (ctx) {
+      if (typeof ctx.rider_weight_lbs === "number") pf.rider_weight_lbs = ctx.rider_weight_lbs;
+      if (mode === "race_trail") {
+        // Carry existing goals + append race/trail goal if not already present
+        const existing: string[] = Array.isArray(ctx.goals) ? ctx.goals : [];
+        const hasRaceGoal = existing.some(
+          (g: string) => g.toLowerCase().includes("race") || g.toLowerCase().includes("trail")
+        );
+        pf.goals = hasRaceGoal ? existing : [...existing, "race vs trail"];
+      }
+      // "terrain" mode: no goals carried — user picks their intent fresh on Tune screen
+      if (typeof ctx.issues === "string" && ctx.issues.length > 0) pf.issues = ctx.issues;
+    }
+    params.prefill = encodeURIComponent(JSON.stringify(pf));
+    router.push({ pathname: "/(tabs)/tune", params });
+  };
+
   const onboardingResumeTitle =
     state.onboardingStep === "trial" ? "Your tune is ready" : "Your setup is ready";
   const onboardingResumeBody =
@@ -873,55 +955,26 @@ export default function TuneResultScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.BG }}>
-      <View style={[S.topSafeSpacer, { height: insets.top }]} />
+      {/* Safe area top */}
+      <View style={{ height: insets.top, backgroundColor: C.BG }} />
 
-      <View style={S.headerSolid}>
-        <Text style={S.title}>{headerTitle}</Text>
-        <Text style={S.subtitle}>{headerSubtitle}</Text>
-
-        <View style={S.chipsRow}>
-          {headerChips.map((c) => (
-            <View key={c} style={S.chip}>
-              <Text numberOfLines={1} ellipsizeMode="tail" style={S.chipText}>
-                {c}
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        <Text style={S.zeroText}>
-          Zero-based: turn each clicker gently all the way IN (clockwise, toward the "+") until it lightly stops, then
-          count clicks OUT from there.
-        </Text>
-
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-          {(["balanced", "comfort", "precision"] as Mode[]).map((m) => (
-            <Pressable key={m} onPress={() => setMode(m)} style={[S.modePill, mode === m && S.modePillOn]}>
-              <Text style={[S.modePillText, mode === m && S.modePillTextOn]}>{cap(m)}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <OnboardingProgress />
-
-        {isOnboardingUnlockStep ? (
-          <View style={{ marginTop: 6 }}>
-            <Text style={S.onbLine}>{onboardingResumeTitle}</Text>
-            {shouldBlur ? <Text style={S.onbSub}>{onboardingResumeBody}</Text> : null}
-          </View>
-        ) : isOnboarding ? (
-          <View style={{ marginTop: 10 }}>
-            <Text style={S.onbLine}>Nice — that’s your first tune.</Text>
-          </View>
-        ) : null}
+      {/* Compact header */}
+      <View style={S.compactHeader}>
+        <Pressable onPress={() => router.replace("/(tabs)/tune")} hitSlop={8} style={S.headerIconBtn}>
+          <Ionicons name="chevron-back-outline" size={24} color={C.TEXT} />
+        </Pressable>
+        <Text style={S.compactHeaderTitle}>Setup</Text>
+        {/* placeholder to balance chevron */}
+        <View style={S.headerIconBtn} />
       </View>
 
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{
-          paddingBottom: 24 + (shouldBlur && !unlockDismissed ? 170 + insets.bottom : 0),
+          paddingBottom: 24 + insets.bottom,
         }}
       >
+        {/* TuneTwo: What changed — untouched */}
         {isTuneTwo && changedRows.length > 0 && (
           <View style={[S.card, S.lift]}>
             <Text style={S.h1}>What changed from last time</Text>
@@ -946,48 +999,161 @@ export default function TuneResultScreen() {
           </View>
         )}
 
-        {shouldBlur && isOnboardingUnlockStep && (
-          <View style={S.lockedHeroCard}>
-            <View style={S.lockedHeroTagRow}>
-              <Ionicons name="lock-closed" size={12} color={C.ACCENT} />
-              <Text style={S.lockedHeroTag}>RESULTS LOCKED</Text>
+        {/* Hero section (non-TuneTwo) */}
+        {!isTuneTwo && (
+          <View style={S.heroSection}>
+            <View style={[
+              S.heroBadge,
+              shouldBlur && { backgroundColor: C.ACCENT + "2A" },
+            ]}>
+              <Ionicons
+                name={shouldBlur ? "lock-closed-outline" : "checkmark-circle"}
+                size={36}
+                color={shouldBlur ? C.ACCENT : (C.SUCCESS ?? "#22C55E")}
+              />
             </View>
-            <Text style={S.lockedHeroTitle}>Your suspension setup is dialed 👇</Text>
-            <Text style={S.lockedHeroSub}>Unlock it in 10 seconds</Text>
+            <Text style={S.heroTitle}>
+              {shouldBlur ? "Your setup is ready" : "Your setup is dialed."}
+            </Text>
+            <Text style={S.heroSubtitle}>{bikeTitle}</Text>
+            {shouldBlur ? (
+              <Text style={S.heroLockHint}>{onboardingResumeBody}</Text>
+            ) : null}
           </View>
         )}
 
+        {/* OnboardingProgress */}
+        <View style={{ paddingHorizontal: 16, marginTop: 2 }}>
+          <OnboardingProgress />
+        </View>
+
+        {/* Summary chips */}
+        {(terrainVal || typeof result.shock.sag_mm === "number" || typeof airBar === "number") ? (
+          <View style={S.summaryChipsRow}>
+            {terrainVal ? <Chip label={cap(terrainVal)} /> : null}
+            {typeof result.shock.sag_mm === "number" ? <Chip label={`Sag ${num(result.shock.sag_mm)} mm`} /> : null}
+            {typeof airBar === "number" ? <Chip label={`AER ${airBar.toFixed(2)} bar`} /> : null}
+          </View>
+        ) : null}
+
+        {/* Segmented mode control */}
+        <TuneSegmentedControl value={mode} onChange={setMode} />
+
+        {/* Helper line */}
+        <View style={S.modeHelperRow}>
+          <Ionicons name="information-circle-outline" size={14} color={C.MUTED} />
+          <Text style={S.modeHelperText}>
+            {mode === "balanced"
+              ? "Factory-balanced for most conditions."
+              : mode === "comfort"
+              ? "Softer — better for rough, physical terrain."
+              : "Stiffer — better for speed and precision."}
+          </Text>
+        </View>
+
+        {/* Fork card */}
         <BlurCard enabled={shouldBlur} C={C} S={S} title="Fork">
-          <Metric C={C} S={S} label="Compression" value={`${num(result.fork.comp_clicks)} clicks`} hint="Clicks out from zero" />
-          <Bar C={C} value={num(result.fork.comp_clicks)} max={30} />
-          <Metric C={C} S={S} label="Rebound" value={`${num(result.fork.reb_clicks)} clicks`} hint="Clicks out from zero" />
-          <Bar C={C} value={num(result.fork.reb_clicks)} max={30} />
-          {typeof airBar === "number" && (
-            <>
-              <Metric C={C} S={S} label="Air (AER)" value={`${airBar.toFixed(2)} bar`} hint="WP AER fork pressure" />
-              <Bar C={C} value={airBar} max={14} />
-            </>
-          )}
+          <SettingRow
+            icon="settings-outline"
+            label="Compression"
+            hint="Clicks out from zero"
+            value={shouldBlur ? "•••" : String(num(result.fork.comp_clicks))}
+            unit="clicks"
+            onPress={shouldBlur ? undefined : () => router.push({
+              pathname: "/setting-detail",
+              params: { id: "fork_comp", value: String(num(result.fork.comp_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+            } as any)}
+          />
+          <SettingRow
+            icon="refresh-outline"
+            label="Rebound"
+            hint="Clicks out from zero"
+            value={shouldBlur ? "•••" : String(num(result.fork.reb_clicks))}
+            unit="clicks"
+            onPress={shouldBlur ? undefined : () => router.push({
+              pathname: "/setting-detail",
+              params: { id: "fork_reb", value: String(num(result.fork.reb_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+            } as any)}
+          />
+          {typeof airBar === "number" ? (
+            <SettingRow
+              icon="water-outline"
+              label="Air (AER)"
+              hint="WP AER fork pressure"
+              value={shouldBlur ? "•••" : airBar.toFixed(2)}
+              unit="bar"
+              onPress={shouldBlur ? undefined : () => router.push({
+                pathname: "/setting-detail",
+                params: { id: "fork_air", value: airBar!.toFixed(2), unit: "bar", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+              } as any)}
+            />
+          ) : null}
         </BlurCard>
 
+        {/* Shock card */}
         <BlurCard enabled={shouldBlur} C={C} S={S} title="Shock">
-          <Metric C={C} S={S} label="Low-Speed Comp" value={`${num(result.shock.lsc_clicks)} clicks`} />
-          <Bar C={C} value={num(result.shock.lsc_clicks)} max={30} />
-          <Metric C={C} S={S} label="High-Speed Comp" value={`${num(result.shock.hsc_turns, 0).toFixed(1)} turns`} />
-          <Bar C={C} value={num(result.shock.hsc_turns, 0)} max={3} />
-          <Metric C={C} S={S} label="Rebound" value={`${num(result.shock.reb_clicks)} clicks`} />
-          <Bar C={C} value={num(result.shock.reb_clicks)} max={30} />
-          <Metric C={C} S={S} label="Sag" value={`${num(result.shock.sag_mm)} mm`} />
-          <Bar C={C} value={num(result.shock.sag_mm)} max={120} goodMin={100} goodMax={108} />
+          <SettingRow
+            icon="settings-outline"
+            label="Low-Speed Comp"
+            hint="Clicks out from zero"
+            value={shouldBlur ? "•••" : String(num(result.shock.lsc_clicks))}
+            unit="clicks"
+            onPress={shouldBlur ? undefined : () => router.push({
+              pathname: "/setting-detail",
+              params: { id: "shock_lsc", value: String(num(result.shock.lsc_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+            } as any)}
+          />
+          <SettingRow
+            icon="flash-outline"
+            label="High-Speed Comp"
+            hint="Turns out from zero"
+            value={shouldBlur ? "•••" : num(result.shock.hsc_turns, 0).toFixed(1)}
+            unit="turns"
+            onPress={shouldBlur ? undefined : () => router.push({
+              pathname: "/setting-detail",
+              params: { id: "shock_hsc", value: num(result.shock.hsc_turns, 0).toFixed(1), unit: "turns", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+            } as any)}
+          />
+          <SettingRow
+            icon="refresh-outline"
+            label="Rebound"
+            hint="Clicks out from zero"
+            value={shouldBlur ? "•••" : String(num(result.shock.reb_clicks))}
+            unit="clicks"
+            onPress={shouldBlur ? undefined : () => router.push({
+              pathname: "/setting-detail",
+              params: { id: "shock_reb", value: String(num(result.shock.reb_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+            } as any)}
+          />
+          <SettingRow
+            icon="resize-outline"
+            label="Sag"
+            hint="Static sag target"
+            value={shouldBlur ? "•••" : String(num(result.shock.sag_mm))}
+            unit="mm"
+            onPress={shouldBlur ? undefined : () => router.push({
+              pathname: "/setting-detail",
+              params: { id: "shock_sag", value: String(num(result.shock.sag_mm)), unit: "mm", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+            } as any)}
+          />
         </BlurCard>
 
-        {base?.notes?.length ? (
-          shouldBlur ? (
-            <BlurCard enabled C={C} S={S} title={isTuneTwo ? "Refined test plan" : "Test Plan"}>
-              <Text style={S.bodySmall}>Here’s a quick starter plan while your full notes are locked:</Text>
-              <View style={{ marginTop: 8 }}>
-                {teaserSteps.map((n, i) => (
-                  <View key={`${i}-${n}`} style={S.stepRow}>
+        {/* Why this setup? — collapsible (unlocked only) */}
+        {!shouldBlur && base?.notes?.length ? (
+          <View style={[S.card, { overflow: "hidden" }]}>
+            <Pressable onPress={() => setWhyExpanded(!whyExpanded)} style={S.whyRow}>
+              <Ionicons name="sparkles-outline" size={16} color={C.ACCENT} style={{ marginRight: 8 }} />
+              <Text style={[S.h1, { flex: 1, marginBottom: 0 }]}>Why this setup?</Text>
+              <Ionicons
+                name={whyExpanded ? "chevron-up-outline" : "chevron-down-outline"}
+                size={16}
+                color={C.MUTED}
+              />
+            </Pressable>
+            {whyExpanded ? (
+              <View style={{ marginTop: 10 }}>
+                {base.notes.map((n, i) => (
+                  <View key={`why-${i}`} style={S.stepRow}>
                     <View style={S.stepBadge}>
                       <Text style={S.stepBadgeText}>{i + 1}</Text>
                     </View>
@@ -995,9 +1161,27 @@ export default function TuneResultScreen() {
                   </View>
                 ))}
               </View>
+            ) : null}
+          </View>
+        ) : null}
 
+        {/* Today's Test Plan */}
+        {base?.notes?.length ? (
+          shouldBlur ? (
+            <BlurCard enabled C={C} S={S} title="Today's Test Plan">
+              <Text style={S.bodySmall}>Here's a quick starter plan while your full notes are locked:</Text>
+              <View style={{ marginTop: 8 }}>
+                {teaserSteps.map((n, i) => (
+                  <View key={`ts-${i}`} style={S.stepRow}>
+                    <View style={S.stepBadge}>
+                      <Text style={S.stepBadgeText}>{i + 1}</Text>
+                    </View>
+                    <Text style={S.stepText}>{n}</Text>
+                  </View>
+                ))}
+              </View>
               <View style={[S.lockHintBox, { marginTop: 10 }]}>
-                <Ionicons name="lock-closed" size={16} color={C.WARN ?? "#FFC36A"} />
+                <Ionicons name="lock-closed" size={16} color={(C as any).WARN ?? "#FFC36A"} />
                 <Text style={S.lockHintText}>
                   Unlock to see exact clickers + your personalized notes based on your goals/issues.
                 </Text>
@@ -1005,10 +1189,10 @@ export default function TuneResultScreen() {
             </BlurCard>
           ) : (
             <View style={S.card}>
-              <Text style={S.h1}>{isTuneTwo ? "Refined test plan" : "Test Plan"}</Text>
+              <Text style={S.h1}>{isTuneTwo ? "Refined test plan" : "Today's Test Plan"}</Text>
               <View style={{ marginTop: 4 }}>
                 {base.notes.map((n, i) => (
-                  <View key={`${i}-${n}`} style={S.stepRow}>
+                  <View key={`tp-${i}`} style={S.stepRow}>
                     <View style={S.stepBadge}>
                       <Text style={S.stepBadgeText}>{i + 1}</Text>
                     </View>
@@ -1020,97 +1204,96 @@ export default function TuneResultScreen() {
           )
         ) : null}
 
-        {!isTuneTwo && (
-          <View style={S.card}>
-            <View style={S.rowBetweenAlign}>
-              <Text style={S.h1}>Ride & refine (optional)</Text>
-              <View style={S.tunePill}>
-                <Text style={S.tunePillText}>Tune Two</Text>
-              </View>
-            </View>
-            <Text style={S.body}>
-              1. Set these numbers on your bike.{"\n"}
-              2. Ride 5–10 minutes on today&apos;s terrain.{"\n"}
-              3. Come back and we&apos;ll use your feedback for a second-pass pro adjustment.
+        {/* Pro tip */}
+        {!shouldBlur ? (
+          <View style={S.proTipRow}>
+            <Ionicons name="bulb-outline" size={16} color={(C as any).WARN ?? "#FFC36A"} />
+            <Text style={S.proTipText}>
+              Only adjust one setting at a time — then ride before changing anything else.
             </Text>
-            <View style={{ height: 6 }} />
-            <Text style={S.bodySmall}>
-              We&apos;ll only move things a few clicks / 0.1–0.2 bar at a time. You&apos;ll rate this setup and flag
-              issues like harshness, kicks, or bottoming, and we&apos;ll build a refined tune on top of this baseline.
-            </Text>
-
-            {shouldBlur ? (
-              <Pressable onPress={() => {}} disabled style={[S.btnPrimary, S.btnDisabled, { marginTop: 14 }]}>
-                <Text style={S.btnPrimaryText}>Unlock to refine</Text>
-              </Pressable>
-            ) : (
-              <Pressable onPress={goToFeedback} style={[S.btnPrimary, { marginTop: 14 }]}>
-                <Text style={S.btnPrimaryText}>Refine this tune after my ride</Text>
-              </Pressable>
-            )}
           </View>
-        )}
+        ) : null}
 
-        <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-          {!shouldBlur && !canSave ? (
-            <View style={S.helperBox}>
-              <Ionicons name="alert-circle" size={16} color={C.WARN ?? "#FFC36A"} />
-              <Text style={S.helperText}>
-                Select or add a bike in your Garage to enable {isTuneTwo ? "“Save refined setup”." : "“Save baseline”."}
-              </Text>
-            </View>
-          ) : null}
-
-          {!shouldBlur ? (
-            <Pressable
-              onPress={onSaveBaseline}
-              style={[S.btnPrimary, (!canSave || savingBaseline) && S.btnDisabled]}
-              disabled={!canSave || savingBaseline}
-            >
-              {savingBaseline ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={S.btnPrimaryText}>{isTuneTwo ? "Save refined setup" : "Save baseline"}</Text>
-              )}
+        {/* Bottom action bar */}
+        <View style={S.bottomActionBar}>
+          {shouldBlur ? (
+            <Pressable onPress={onUnlock} style={[S.btnRefinePrimary, { flex: 1 }]}>
+              <Ionicons name="lock-open-outline" size={18} color="#fff" />
+              <Text style={S.btnRefinePrimaryText}>Reveal Your Setup</Text>
             </Pressable>
-          ) : null}
-
-          <View style={{ height: 10 }} />
-          <Pressable onPress={() => router.replace("/(tabs)/tune")} style={S.btnGhost}>
-            <Text style={S.btnGhostText}>Back</Text>
-          </Pressable>
+          ) : (
+            <>
+              <Pressable onPress={goToFeedback} style={[S.btnRefinePrimary, { flex: 1 }]}>
+                <Ionicons name="swap-horizontal-outline" size={18} color="#fff" />
+                <Text style={S.btnRefinePrimaryText}>Refine After Ride</Text>
+              </Pressable>
+              <Pressable onPress={() => setMoreMenuOpen(true)} style={S.btnMoreSquare}>
+                <Ionicons name="ellipsis-horizontal-outline" size={20} color={C.TEXT} />
+              </Pressable>
+            </>
+          )}
         </View>
+
+        <View style={{ height: 8 }} />
       </ScrollView>
 
-      {shouldBlur && !unlockDismissed && (
-        <View style={[S.unlockBarWrap, { paddingBottom: insets.bottom + 12 }]}>
-          {Platform.OS === "ios" ? (
-            <BlurView intensity={25} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
-          ) : (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: C.CARD }]} />
-          )}
-
-          <View style={S.unlockCard}>
-            <Pressable onPress={() => setUnlockDismissed(true)} hitSlop={10} style={S.unlockClose}>
-              <Ionicons name="close" size={18} color={C.MUTED} />
-            </Pressable>
-
-            <Text style={S.unlockTitleBig}>
-              {isOnboardingUnlockStep ? "Reveal your setup" : "Unlock this tune for free"}
-            </Text>
-            <Text style={S.unlockSubStack}>
-              Create an account to reveal exact clickers + save your bike.
-            </Text>
-
-            <Pressable onPress={onUnlock} style={S.unlockBtnFull}>
-              <Text style={S.unlockBtnText}>
-                {isOnboardingUnlockStep ? "Reveal your setup" : "Unlock for free"}
+      {/* More menu */}
+      <Modal
+        visible={moreMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMoreMenuOpen(false)}
+      >
+        <View style={S.moreMenuWrap}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setMoreMenuOpen(false)} />
+          <View style={[S.moreMenuCard, { paddingBottom: insets.bottom + 8 }]}>
+            <Pressable
+              onPress={async () => { setMoreMenuOpen(false); await onSaveBaseline(); }}
+              style={S.moreMenuItem}
+            >
+              <Ionicons name="bookmark-outline" size={20} color={C.TEXT} />
+              <Text style={S.moreMenuItemText}>
+                {isTuneTwo ? "Save Refined Setup" : "Save Setup"}
               </Text>
+            </Pressable>
+            <View style={S.moreMenuDivider} />
+            <Pressable
+              onPress={() => { setMoreMenuOpen(false); startSavePreset(); }}
+              style={S.moreMenuItem}
+            >
+              <Ionicons name="layers-outline" size={20} color={C.TEXT} />
+              <Text style={S.moreMenuItemText}>Save as Preset</Text>
+              {!isPro ? (
+                <View style={S.proBadge}>
+                  <Text style={S.proBadgeText}>PRO</Text>
+                </View>
+              ) : null}
+            </Pressable>
+            <View style={S.moreMenuDivider} />
+            <Pressable
+              onPress={() => { setMoreMenuOpen(false); goToTuneWithPrefill("terrain"); }}
+              style={S.moreMenuItem}
+            >
+              <Ionicons name="map-outline" size={20} color={C.TEXT} />
+              <Text style={S.moreMenuItemText}>Try Another Terrain</Text>
+            </Pressable>
+            <View style={S.moreMenuDivider} />
+            <Pressable
+              onPress={() => { setMoreMenuOpen(false); router.replace("/(tabs)/tune"); }}
+              style={S.moreMenuItem}
+            >
+              <Ionicons name="arrow-back-outline" size={20} color={C.TEXT} />
+              <Text style={S.moreMenuItemText}>Back to Tune</Text>
+            </Pressable>
+            <View style={S.moreMenuDivider} />
+            <Pressable onPress={() => setMoreMenuOpen(false)} style={S.moreMenuCancel}>
+              <Text style={S.moreMenuCancelText}>Cancel</Text>
             </Pressable>
           </View>
         </View>
-      )}
+      </Modal>
 
+      {/* Preset rename modal (unchanged) */}
       <Modal visible={showNameModal} transparent animationType="fade" onRequestClose={() => setShowNameModal(false)}>
         <View style={S.modalWrap}>
           <Pressable
@@ -1183,12 +1366,13 @@ function BlurCard({
         // Light blur — shows structure is real, feels intentional not broken.
         // Per-card overlay removed; single hero card above delivers the message.
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <BlurView intensity={8} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+          <BlurView intensity={30} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
         </View>
       ) : null}
     </View>
   );
 }
+
 
 /* utils */
 function num(v: unknown, fallback = 0) {
@@ -1272,84 +1456,6 @@ function buildKeyAreasFromContext(metaObj: any): KeyAreaMeta[] {
   return areas.slice(0, 2);
 }
 
-function Metric({
-  label,
-  value,
-  hint,
-  C,
-  S,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  C: any;
-  S: any;
-}) {
-  return (
-    <View style={S.rowBetween}>
-      <View style={{ flexShrink: 1 }}>
-        <Text style={S.metricLabel}>{label}</Text>
-        {hint ? <Text style={S.metricHint}>{hint}</Text> : null}
-      </View>
-      <Text style={S.metricValue}>{value}</Text>
-    </View>
-  );
-}
-
-function Bar({
-  value,
-  max,
-  goodMin,
-  goodMax,
-  C,
-}: {
-  value: number;
-  max: number;
-  goodMin?: number;
-  goodMax?: number;
-  C: any;
-}) {
-  const pct = Math.max(0, Math.min(1, value / max));
-  const inGood = goodMin != null && goodMax != null && value >= goodMin && value <= goodMax;
-  return (
-    <View
-      style={{
-        height: 8,
-        backgroundColor: C.INK,
-        borderRadius: 999,
-        overflow: "hidden",
-        marginTop: 6,
-        marginBottom: 10,
-        borderWidth: 1,
-        borderColor: C.BORDER,
-        position: "relative",
-      }}
-    >
-      <View
-        style={{
-          height: "100%",
-          width: `${pct * 100}%`,
-          backgroundColor: inGood ? (C.SUCCESS ?? "#22c55e") : C.ACCENT,
-        }}
-      />
-      {goodMin != null && goodMax != null ? (
-        <View
-          style={{
-            position: "absolute",
-            top: -1,
-            bottom: -1,
-            left: `${(goodMin / max) * 100}%`,
-            right: `${(1 - goodMax / max) * 100}%`,
-            borderRadius: 999,
-            backgroundColor: (C.SUCCESS ?? "#22c55e") + "2E",
-            borderWidth: 1,
-            borderColor: (C.SUCCESS ?? "#22c55e") + "59",
-          }}
-        />
-      ) : null}
-    </View>
-  );
-}
 
 const makeStyles = (C: {
   BG: string;
@@ -1365,6 +1471,7 @@ const makeStyles = (C: {
   INPUT_BG?: string;
 }) =>
   StyleSheet.create({
+    // ── Empty / loading states ──────────────────────────────────────
     emptyWrap: {
       flex: 1,
       backgroundColor: C.BG,
@@ -1378,79 +1485,100 @@ const makeStyles = (C: {
       fontSize: 16,
       textAlign: "center",
     },
+    btnGhost: {
+      borderColor: C.BORDER,
+      borderWidth: 1,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "transparent",
+    },
+    btnGhostText: { color: C.TEXT, fontWeight: "800" },
 
-    topSafeSpacer: { backgroundColor: C.BG },
-
-    headerSolid: {
-      backgroundColor: "#111318",
-      paddingTop: 18,
-      paddingBottom: 18,
-      paddingHorizontal: 16,
-      borderBottomLeftRadius: 18,
-      borderBottomRightRadius: 18,
+    // ── Compact header ──────────────────────────────────────────────
+    compactHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 4,
+      paddingVertical: 6,
+      backgroundColor: C.BG,
       borderBottomWidth: 1,
-      borderBottomColor: "rgba(255,255,255,0.06)",
+      borderBottomColor: C.BORDER,
     },
-    title: {
+    headerIconBtn: {
+      width: 44,
+      height: 44,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    compactHeaderTitle: {
+      flex: 1,
+      textAlign: "center",
       color: C.TEXT,
-      fontSize: 22,
-      lineHeight: 26,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+
+    // ── Hero section ────────────────────────────────────────────────
+    heroSection: {
+      alignItems: "center",
+      paddingTop: 28,
+      paddingBottom: 12,
+      paddingHorizontal: 16,
+    },
+    heroBadge: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: (C.SUCCESS ?? "#22C55E") + "2A",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 12,
+    },
+    heroTitle: {
+      color: C.TEXT,
+      fontSize: 24,
       fontWeight: "900",
-      letterSpacing: -0.2,
+      textAlign: "center",
+      letterSpacing: -0.4,
     },
-    subtitle: {
+    heroSubtitle: {
       color: C.MUTED,
-      marginTop: 2,
       fontSize: 14,
+      marginTop: 4,
+      textAlign: "center",
+    },
+    heroLockHint: {
+      color: C.MUTED,
+      fontSize: 13,
+      marginTop: 10,
+      textAlign: "center",
       lineHeight: 18,
+      paddingHorizontal: 20,
     },
 
-    onbLine: { color: C.TEXT, fontWeight: "900", marginTop: 2 },
-    onbSub: { color: C.MUTED, marginTop: 4, fontSize: 12 },
-
-    chipsRow: {
+    // ── Summary chips ───────────────────────────────────────────────
+    summaryChipsRow: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: 8,
+      paddingHorizontal: 16,
       marginTop: 10,
+      marginBottom: 4,
     },
-    chip: {
-      backgroundColor: "rgba(255,255,255,0.05)",
-      borderColor: "rgba(255,255,255,0.08)",
-      borderWidth: 1,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      maxWidth: 220,
-    },
-    chipText: { color: C.TEXT, fontWeight: "700", fontSize: 12 },
-
-    zeroText: {
-      color: C.MUTED,
+    modeHelperRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      paddingHorizontal: 16,
       marginTop: 8,
-      fontSize: 12,
-      lineHeight: 17,
+      marginBottom: 2,
     },
+    modeHelperText: { color: C.MUTED, fontSize: 12, flex: 1 },
 
-    modePill: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.1)",
-      backgroundColor: "rgba(255,255,255,0.05)",
-    },
-    modePillOn: {
-      borderColor: "rgba(29,155,240,0.3)",
-      backgroundColor: "rgba(29,155,240,0.12)",
-    },
-    modePillText: {
-      color: "#9CA3AF",
-      fontWeight: "800",
-      fontSize: 12,
-    },
-    modePillTextOn: { color: "#60A5FA" },
-
+    // ── Card shell ──────────────────────────────────────────────────
     card: {
       backgroundColor: C.CARD,
       borderWidth: 1,
@@ -1462,7 +1590,9 @@ const makeStyles = (C: {
     },
     lift: {},
     h1: { fontSize: 15, fontWeight: "900", color: C.TEXT, marginBottom: 8 },
+    bodySmall: { color: C.MUTED, fontSize: 12, lineHeight: 17, marginTop: 2 },
 
+    // ── BlurCard lock pill ──────────────────────────────────────────
     lockPill: {
       flexDirection: "row",
       alignItems: "center",
@@ -1475,56 +1605,23 @@ const makeStyles = (C: {
       borderColor: "rgba(255,255,255,0.22)",
     },
     lockPillText: { color: "#fff", fontWeight: "900", fontSize: 12 },
-    lockOverlay: {
-      position: "absolute",
-      left: 12,
-      right: 12,
-      top: 48,
-      bottom: 12,
-      borderRadius: 12,
+
+    // ── Test plan steps ─────────────────────────────────────────────
+    stepRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 6 },
+    stepBadge: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
       alignItems: "center",
       justifyContent: "center",
-      paddingHorizontal: 12,
-    },
-    lockOverlayTitle: { color: "#fff", fontWeight: "900", fontSize: 16, marginTop: 8 },
-    lockOverlaySub: { color: "rgba(255,255,255,0.9)", marginTop: 6, textAlign: "center" },
-
-    lockedHeroCard: {
-      marginHorizontal: 12,
-      marginBottom: 8,
-      borderRadius: 16,
+      backgroundColor: "rgba(29,155,240,0.12)",
       borderWidth: 1,
-      borderColor: "rgba(29,155,240,0.2)",
-      backgroundColor: "rgba(29,155,240,0.06)",
-      padding: 16,
-      alignItems: "center" as const,
+      borderColor: "rgba(29,155,240,0.25)",
+      marginRight: 8,
+      marginTop: 1,
     },
-    lockedHeroTagRow: {
-      flexDirection: "row" as const,
-      alignItems: "center" as const,
-      gap: 5,
-      marginBottom: 8,
-    },
-    lockedHeroTag: {
-      color: C.ACCENT,
-      fontSize: 10,
-      fontWeight: "700" as const,
-      letterSpacing: 0.6,
-    },
-    lockedHeroTitle: {
-      color: C.TEXT,
-      fontWeight: "900" as const,
-      fontSize: 18,
-      textAlign: "center" as const,
-      lineHeight: 24,
-      marginBottom: 4,
-    },
-    lockedHeroSub: {
-      color: C.MUTED,
-      fontSize: 13,
-      textAlign: "center" as const,
-      lineHeight: 18,
-    },
+    stepBadgeText: { color: "#EAF2FF", fontWeight: "900", fontSize: 12, lineHeight: 12 },
+    stepText: { color: C.TEXT, flex: 1, lineHeight: 20 },
 
     lockHintBox: {
       flexDirection: "row",
@@ -1544,92 +1641,117 @@ const makeStyles = (C: {
       lineHeight: 18,
     },
 
-    stepRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 6 },
-    stepBadge: {
-      width: 22,
-      height: 22,
-      borderRadius: 6,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: "rgba(29,155,240,0.12)",
-      borderWidth: 1,
-      borderColor: "rgba(29,155,240,0.25)",
-      marginRight: 8,
-      marginTop: 1,
-    },
-    stepBadgeText: { color: "#EAF2FF", fontWeight: "900", fontSize: 12, lineHeight: 12 },
-    stepText: { color: C.TEXT, flex: 1, lineHeight: 20 },
-
-    metricLabel: { color: "#DDE2F2", fontWeight: "800" },
-    metricHint: { color: C.MUTED, fontSize: 12, marginTop: 2 },
-    metricValue: {
-      color: "#fff",
-      fontWeight: "900",
-      marginLeft: 8,
-      minWidth: 80,
-      textAlign: "right",
-    },
-    rowBetween: {
+    // ── Why this setup ──────────────────────────────────────────────
+    whyRow: {
       flexDirection: "row",
-      justifyContent: "space-between",
       alignItems: "center",
-      marginTop: 4,
-    },
-    rowBetweenAlign: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 6,
+      paddingVertical: 2,
     },
 
-    body: { color: C.TEXT, fontSize: 13, lineHeight: 18 },
-    bodySmall: { color: C.MUTED, fontSize: 12, lineHeight: 17, marginTop: 2 },
-
-    tunePill: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 999,
-      backgroundColor: "rgba(255,255,255,0.05)",
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.08)",
-    },
-    tunePillText: { color: C.TEXT, fontWeight: "800", fontSize: 12 },
-
-    btnPrimary: {
-      backgroundColor: C.ACCENT,
-      borderRadius: 12,
-      paddingVertical: 13,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    btnDisabled: { opacity: 0.5 },
-    btnPrimaryText: { color: "#fff", fontWeight: "900" },
-    btnGhost: {
-      borderColor: "rgba(255,255,255,0.12)",
-      borderWidth: 1,
-      borderRadius: 12,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: "transparent",
-    },
-    btnGhostText: { color: "#E6E9F2", fontWeight: "800" },
-
-    helperBox: {
+    // ── Pro tip ─────────────────────────────────────────────────────
+    proTipRow: {
       flexDirection: "row",
       alignItems: "flex-start",
       gap: 8,
+      marginHorizontal: 16,
+      marginTop: 12,
+      padding: 12,
+      backgroundColor: (C.WARN ?? "#FFC36A") + "12",
       borderRadius: 10,
       borderWidth: 1,
-      borderColor: (C.WARN ?? "#FFC36A") + "66",
-      backgroundColor: (C.WARN ?? "#FFC36A") + "1F",
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      marginBottom: 8,
+      borderColor: (C.WARN ?? "#FFC36A") + "33",
     },
-    helperText: { color: C.WARN ?? "#FFD9A8", fontWeight: "700", flex: 1 },
+    proTipText: {
+      color: C.WARN ?? "#FFD9A8",
+      fontSize: 12,
+      flex: 1,
+      lineHeight: 17,
+      fontWeight: "600",
+    },
 
+    // ── Bottom action bar ───────────────────────────────────────────
+    bottomActionBar: {
+      flexDirection: "row",
+      gap: 10,
+      marginHorizontal: 16,
+      marginTop: 16,
+    },
+    btnRefinePrimary: {
+      backgroundColor: C.ACCENT,
+      borderRadius: 12,
+      paddingVertical: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    },
+    btnRefinePrimaryText: { color: "#fff", fontWeight: "900", fontSize: 15 },
+    btnMoreSquare: {
+      width: 50,
+      height: 50,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: C.CARD,
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      alignSelf: "center",
+    },
+
+    // ── More menu (bottom sheet) ────────────────────────────────────
+    moreMenuWrap: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: "rgba(0,0,0,0.45)",
+    },
+    moreMenuCard: {
+      backgroundColor: C.CARD,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      borderTopWidth: 1,
+      borderTopColor: C.BORDER,
+      overflow: "hidden",
+    },
+    moreMenuItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+    },
+    moreMenuItemText: {
+      color: C.TEXT,
+      fontSize: 16,
+      fontWeight: "700",
+      flex: 1,
+    },
+    moreMenuDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: C.BORDER,
+    },
+    moreMenuCancel: {
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      alignItems: "center",
+    },
+    moreMenuCancelText: { color: C.MUTED, fontSize: 16, fontWeight: "700" },
+
+    proBadge: {
+      backgroundColor: C.ACCENT + "22",
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderWidth: 1,
+      borderColor: C.ACCENT + "44",
+    },
+    proBadgeText: {
+      color: C.ACCENT,
+      fontSize: 10,
+      fontWeight: "900",
+      letterSpacing: 0.5,
+    },
+
+    // ── TuneTwo changed rows ────────────────────────────────────────
     changeRow: { flexDirection: "row", alignItems: "center", paddingVertical: 6 },
     changeLabel: { color: C.TEXT, fontWeight: "800", marginBottom: 2 },
     changeSub: { color: C.MUTED, fontSize: 12 },
@@ -1643,17 +1765,17 @@ const makeStyles = (C: {
       marginLeft: 8,
     },
 
+    // ── Sticky unlock bar ───────────────────────────────────────────
     unlockBarWrap: {
       position: "absolute",
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: "#0D0E13",
+      backgroundColor: C.BG,
       borderTopWidth: 1,
-      borderTopColor: "rgba(255,255,255,0.06)",
+      borderTopColor: C.BORDER,
       zIndex: 1000,
     },
-
     unlockCard: {
       marginHorizontal: 12,
       marginTop: 10,
@@ -1664,7 +1786,6 @@ const makeStyles = (C: {
       padding: 16,
       paddingTop: 18,
     },
-
     unlockClose: {
       position: "absolute",
       top: 10,
@@ -1678,7 +1799,6 @@ const makeStyles = (C: {
       borderWidth: 1,
       borderColor: "rgba(255,255,255,0.14)",
     },
-
     unlockTitleBig: { color: C.TEXT, fontWeight: "900", fontSize: 20 },
     unlockSubStack: {
       color: C.MUTED,
@@ -1687,7 +1807,6 @@ const makeStyles = (C: {
       lineHeight: 17,
       fontWeight: "700",
     },
-
     unlockBtnFull: {
       backgroundColor: C.ACCENT,
       borderRadius: 14,
@@ -1699,6 +1818,7 @@ const makeStyles = (C: {
     },
     unlockBtnText: { color: "#fff", fontWeight: "900", fontSize: 16 },
 
+    // ── Preset rename modal ─────────────────────────────────────────
     modalWrap: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.45)",
@@ -1714,7 +1834,6 @@ const makeStyles = (C: {
       padding: 16,
     },
     modalTitle: { color: C.TEXT, fontSize: 16, fontWeight: "900", marginBottom: 10 },
-
     input: {
       borderWidth: 1,
       borderColor: C.BORDER,
@@ -1726,7 +1845,6 @@ const makeStyles = (C: {
       color: C.TEXT,
       marginBottom: 12,
     },
-
     row: { flexDirection: "row", alignItems: "center" },
     modalBtnGhost: {
       borderRadius: 10,

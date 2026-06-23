@@ -151,6 +151,9 @@ export default function SessionsScreen() {
       ? new Date(item.rode_on).toLocaleDateString()
       : "—";
     const accent = BRAND_ACCENTS[item.bikes?.make ?? ""] ?? "#3A3F4C";
+    const subtitle = [date, item.surface ? cap(item.surface) : null]
+      .filter(Boolean)
+      .join(" · ");
 
     return (
       <Pressable
@@ -159,126 +162,70 @@ export default function SessionsScreen() {
         }
         style={({ pressed }) => [
           styles.card,
-          styles.lift,
           pressed && { opacity: 0.94 },
         ]}
       >
-        {/* Accent stripe */}
-        <View
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 4,
-            backgroundColor: accent,
-            borderTopLeftRadius: 16,
-            borderBottomLeftRadius: 16,
-          }}
-        />
-
-        {/* Header row: title + date */}
-        <View style={styles.rowBetween}>
-          <View style={styles.titleWrap}>
+        {/* Header: brand chip + title/subtitle + overflow */}
+        <View style={styles.cardHeader}>
+          <View
+            style={[
+              styles.brandChip,
+              { backgroundColor: hexToRgba(accent, 0.14) },
+            ]}
+          >
+            <Ionicons name="bicycle" size={20} color={accent} />
+          </View>
+          <View style={styles.cardTitleWrap}>
             <Text
-              style={styles.h1}
-              numberOfLines={2}
+              style={styles.bikeName}
+              numberOfLines={1}
               ellipsizeMode="tail"
             >
               {bikeTitle(item)}
             </Text>
+            <Text style={styles.cardSubtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
           </View>
-          <Text style={styles.date}>{date}</Text>
-        </View>
-
-        <View style={styles.chipsRow}>
-          <View
-            style={[
-              styles.brandChip,
-              {
-                borderColor: accent,
-                backgroundColor: hexToRgba(accent, 0.14),
-              },
-            ]}
-          >
-            <Ionicons name="bicycle-outline" size={12} color={accent} />
-          </View>
-          {item.surface ? (
-            <Chip label={cap(item.surface)} styles={styles} colors={colors} />
-          ) : null}
-          {typeof item.sag_mm === "number" ? (
-            <Chip
-              label={`Sag: ${item.sag_mm} mm`}
-              styles={styles}
-              colors={colors}
-            />
-          ) : null}
-          {item.track ? (
-            <Chip label={item.track} styles={styles} colors={colors} />
-          ) : null}
-        </View>
-
-        {/* Metrics (sliders) */}
-        <View style={styles.metricsRow}>
-          <Metric
-            label="F Comp"
-            value={item.fork_comp}
-            max={30}
-            styles={styles}
-            colors={colors}
-          />
-          <Metric
-            label="F Reb"
-            value={item.fork_reb}
-            max={30}
-            styles={styles}
-            colors={colors}
-          />
-          <Metric
-            label="S LSC"
-            value={item.shock_comp}
-            max={30}
-            styles={styles}
-            colors={colors}
-          />
-          <Metric
-            label="S Reb"
-            value={item.shock_reb}
-            max={30}
-            styles={styles}
-            colors={colors}
-          />
-        </View>
-
-        <View style={styles.footerRow}>
-          <Pressable
-            onPress={() =>
-              router.push({ pathname: "sessions/[id]", params: { id: item.id } })
-            }
-            style={[
-              styles.btnView,
-              {
-                borderColor: accent,
-                backgroundColor: hexToRgba(accent, 0.1),
-              },
-            ]}
-          >
-            <Ionicons name="eye-outline" size={14} color={accent} />
-            <Text style={[styles.btnViewText, { color: accent }]}>View</Text>
-          </Pressable>
-
-          {/* Stop propagation so the card onPress doesn't fire */}
           <Pressable
             onPress={(e: any) => {
               e?.stopPropagation?.();
               confirmDelete(item.id);
             }}
-            style={styles.iconDanger}
+            style={styles.overflowBtn}
             hitSlop={12}
           >
-            <Ionicons name="trash-outline" size={18} color={colors.ERROR} />
+            <Ionicons
+              name="ellipsis-horizontal"
+              size={18}
+              color={colors.MUTED}
+            />
           </Pressable>
         </View>
+
+        {/* Stat boxes */}
+        <View style={styles.statsRow}>
+          <StatBox label="F Comp" value={item.fork_comp} styles={styles} />
+          <StatBox label="F Reb" value={item.fork_reb} styles={styles} />
+          <StatBox label="S LSC" value={item.shock_comp} styles={styles} />
+          <StatBox label="S Reb" value={item.shock_reb} styles={styles} />
+          <StatBox
+            label="Sag"
+            value={item.sag_mm}
+            accent={accent}
+            styles={styles}
+          />
+        </View>
+
+        {/* View session button */}
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: "sessions/[id]", params: { id: item.id } })
+          }
+          style={[styles.viewBtn, { backgroundColor: accent }]}
+        >
+          <Text style={styles.viewBtnText}>View session</Text>
+        </Pressable>
       </Pressable>
     );
   };
@@ -287,9 +234,14 @@ export default function SessionsScreen() {
   if (onboardingActive && state.onboardingStep === "trial") {
     return (
       <View style={[styles.screen, { paddingTop: insets.top + 6 }]}>
-        <Text style={styles.headerTitle}>My Sessions</Text>
+        <Text style={styles.headerTitleSolo}>My Sessions</Text>
         <View style={styles.emptyWrap}>
-          <Ionicons name="time-outline" size={40} color={colors.MUTED} style={{ marginBottom: 14 }} />
+          <Ionicons
+            name="time-outline"
+            size={40}
+            color={colors.MUTED}
+            style={{ marginBottom: 14 }}
+          />
           <Text style={styles.emptyTitle}>Your sessions are waiting</Text>
           <Text style={styles.emptySub}>
             Start your free trial to save and revisit every tune.
@@ -308,13 +260,23 @@ export default function SessionsScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 6 }]}>
-      <Text style={styles.headerTitle}>My Sessions</Text>
+      {/* Header with count pill */}
+      <View style={styles.headerRow}>
+        <Text style={styles.headerTitle}>My Sessions</Text>
+        {rows.length > 0 && (
+          <View style={styles.countPill}>
+            <Text style={styles.countText}>{rows.length}</Text>
+          </View>
+        )}
+      </View>
 
       {loading && rows.length === 0 ? (
         <View style={styles.emptyWrap}>
           <ActivityIndicator color={colors.TEXT} />
           <Text style={styles.emptyTitle}>Loading sessions…</Text>
-          <Text style={styles.emptySub}>We’ll show your ride history here.</Text>
+          <Text style={styles.emptySub}>
+            We'll show your ride history here.
+          </Text>
         </View>
       ) : rows.length === 0 ? (
         <View style={styles.emptyWrap}>
@@ -347,7 +309,7 @@ export default function SessionsScreen() {
         />
       )}
 
-      {/* Delete confirm */}
+      {/* Delete confirm modal */}
       {deletingId && (
         <View style={styles.modalWrap} pointerEvents="box-none">
           <Pressable
@@ -355,18 +317,18 @@ export default function SessionsScreen() {
             onPress={() => setDeletingId(null)}
           />
           <View style={styles.modalCard}>
-            <Text style={styles.h1}>Delete session?</Text>
-            <Text style={styles.modalSub}>This can’t be undone.</Text>
-            <View style={{ height: 12 }} />
-            <View style={styles.footerRow}>
+            <Text style={styles.modalTitle}>Delete session?</Text>
+            <Text style={styles.modalSub}>This can't be undone.</Text>
+            <View style={{ height: 16 }} />
+            <View style={styles.modalFooter}>
               <Pressable
                 onPress={() => setDeletingId(null)}
-                style={styles.btnGhost}
+                style={styles.btnCancel}
               >
-                <Text style={styles.btnGhostText}>Cancel</Text>
+                <Text style={styles.btnCancelText}>Cancel</Text>
               </Pressable>
               <View style={{ width: 10 }} />
-              <Pressable onPress={actuallyDelete} style={styles.btnDangerWide}>
+              <Pressable onPress={actuallyDelete} style={styles.btnDanger}>
                 <Text style={styles.btnDangerText}>Delete</Text>
               </Pressable>
             </View>
@@ -377,45 +339,37 @@ export default function SessionsScreen() {
   );
 }
 
-function Chip({
-  label,
-  styles,
-  colors,
-}: {
-  label: string;
-  styles: ReturnType<typeof makeStyles>;
-  colors: ThemeTokens;
-}) {
-  return (
-    <View style={styles.chip}>
-      <Text style={styles.chipText}>{label}</Text>
-    </View>
-  );
-}
+/* -------------------------------- Components -------------------------------- */
 
-function Metric({
+function StatBox({
   label,
   value,
-  max,
+  accent,
   styles,
-  colors,
 }: {
   label: string;
   value: number | null;
-  max: number;
+  accent?: string;
   styles: ReturnType<typeof makeStyles>;
-  colors: ThemeTokens;
 }) {
-  const v = typeof value === "number" ? value : 0;
-  const pct = Math.max(0, Math.min(1, v / max));
+  const display = typeof value === "number" ? `${value}` : "—";
   return (
-    <View style={{ flex: 1, marginRight: 10 }}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <View style={styles.barOuter}>
-        <View style={[styles.barFill, { width: `${pct * 100}%` }]} />
-      </View>
-      <Text style={styles.metricValue}>
-        {typeof value === "number" ? `${value}` : "—"}
+    <View
+      style={[
+        styles.statBox,
+        accent
+          ? { backgroundColor: hexToRgba(accent, 0.1) }
+          : undefined,
+      ]}
+    >
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text
+        style={[
+          styles.statValue,
+          accent ? { color: accent } : undefined,
+        ]}
+      >
+        {display}
       </Text>
     </View>
   );
@@ -425,123 +379,150 @@ function cap(s: string) {
   return s.replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-/* ------------------------------- Styles ------------------------------- */
+/* --------------------------------- Styles --------------------------------- */
 
-const makeStyles = (colors: ThemeTokens) =>
+const makeStyles = (C: ThemeTokens) =>
   StyleSheet.create({
     screen: {
       flex: 1,
-      backgroundColor: colors.BG,
+      backgroundColor: C.BG,
     },
 
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginLeft: 18,
+      marginBottom: 4,
+      gap: 10,
+    },
     headerTitle: {
-      color: colors.TEXT,
+      color: C.TEXT,
+      fontWeight: "900",
+      fontSize: 22,
+    },
+    headerTitleSolo: {
+      color: C.TEXT,
       fontWeight: "900",
       fontSize: 22,
       marginLeft: 18,
       marginBottom: 4,
     },
+    countPill: {
+      backgroundColor: C.CHIP_BG ?? "rgba(255,255,255,0.05)",
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+    },
+    countText: {
+      color: C.MUTED,
+      fontWeight: "800",
+      fontSize: 12,
+    },
+
     emptyWrap: {
       flex: 1,
-      backgroundColor: colors.BG,
+      backgroundColor: C.BG,
       alignItems: "center",
       justifyContent: "center",
       padding: 20,
     },
     emptyTitle: {
-      color: colors.TEXT,
+      color: C.TEXT,
       fontWeight: "900",
       fontSize: 18,
       marginTop: 12,
     },
     emptySub: {
-      color: colors.MUTED,
+      color: C.MUTED,
       marginTop: 6,
       textAlign: "center",
     },
 
+    /* ---- Card ---- */
     card: {
-      backgroundColor: colors.CARD,
+      backgroundColor: C.CARD,
       borderWidth: 1,
-      borderColor: colors.BORDER,
+      borderColor: C.BORDER,
       borderRadius: 16,
       padding: 14,
     },
-    lift: {},
 
-    h1: { color: colors.TEXT, fontWeight: "900", fontSize: 16 },
-
-    titleWrap: {
-      flex: 1,
-      minWidth: 0,
-      paddingRight: 8,
-    },
-
-    date: {
-      color: colors.MUTED,
-      fontSize: 12,
-      marginLeft: 4,
-      flexShrink: 0,
-    },
-
-    chipsRow: {
+    cardHeader: {
       flexDirection: "row",
-      flexWrap: "wrap",
-      gap: 8,
-      marginTop: 6,
+      alignItems: "center",
     },
     brandChip: {
-      paddingHorizontal: 8,
-      paddingVertical: 5,
-      borderRadius: 999,
-      borderWidth: 1,
+      width: 42,
+      height: 42,
+      borderRadius: 11,
+      alignItems: "center",
+      justifyContent: "center",
     },
-    chip: {
-      backgroundColor: "rgba(255,255,255,0.05)",
-      borderColor: "rgba(255,255,255,0.08)",
-      borderWidth: 1,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
+    cardTitleWrap: {
+      flex: 1,
+      marginLeft: 12,
+      minWidth: 0,
     },
-    chipText: {
-      color: colors.TEXT,
-      fontWeight: "700",
+    bikeName: {
+      color: C.TEXT,
+      fontWeight: "900",
+      fontSize: 15,
+    },
+    cardSubtitle: {
+      color: C.MUTED,
       fontSize: 12,
+      marginTop: 2,
+    },
+    overflowBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 8,
+      alignItems: "center",
+      justifyContent: "center",
     },
 
-    metricsRow: { flexDirection: "row", marginTop: 8, marginBottom: 4 },
-    metricLabel: {
-      color: "#4B5563",
-      fontWeight: "800",
-      marginBottom: 4,
-      fontSize: 11,
+    /* ---- Stat boxes ---- */
+    statsRow: {
+      flexDirection: "row",
+      gap: 6,
+      marginTop: 12,
     },
-    metricValue: {
-      color: colors.TEXT,
+    statBox: {
+      flex: 1,
+      backgroundColor: C.CHIP_BG ?? "rgba(255,255,255,0.05)",
+      borderRadius: 8,
+      paddingVertical: 8,
+      alignItems: "center",
+    },
+    statLabel: {
+      color: C.MUTED,
+      fontWeight: "700",
+      fontSize: 10,
+      marginBottom: 2,
+    },
+    statValue: {
+      color: C.TEXT,
       fontWeight: "900",
-      marginTop: 3,
+      fontSize: 14,
+    },
+
+    /* ---- View button ---- */
+    viewBtn: {
+      borderRadius: 10,
+      paddingVertical: 11,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 12,
+    },
+    viewBtnText: {
+      color: "#fff",
+      fontWeight: "800",
       fontSize: 13,
     },
 
-    barOuter: {
-      height: 3,
-      backgroundColor: "rgba(255,255,255,0.06)",
-      borderRadius: 999,
-      overflow: "hidden",
-    },
-    barFill: { height: "100%", backgroundColor: colors.ACCENT },
-
-    notes: { color: colors.MUTED, marginTop: 6, lineHeight: 17, fontSize: 13 },
-
-    footerRow: {
-      flexDirection: "row",
-      marginTop: 10,
-      alignItems: "center",
-    },
-
+    /* ---- Primary button (empty/trial states) ---- */
     btnPrimary: {
-      backgroundColor: colors.ACCENT,
+      backgroundColor: C.ACCENT,
       borderRadius: 12,
       paddingVertical: 13,
       paddingHorizontal: 16,
@@ -550,58 +531,7 @@ const makeStyles = (colors: ThemeTokens) =>
     },
     btnPrimaryText: { color: "#fff", fontWeight: "900" },
 
-    btnView: {
-      flex: 1,
-      borderRadius: 10,
-      borderWidth: 1,
-      paddingVertical: 9,
-      alignItems: "center",
-      justifyContent: "center",
-      flexDirection: "row",
-      gap: 6,
-    },
-    btnViewText: { fontWeight: "800", fontSize: 13 },
-
-    iconDanger: {
-      marginLeft: 10,
-      width: 38,
-      height: 38,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.07)",
-      backgroundColor: "rgba(240,82,82,0.05)",
-      alignItems: "center",
-      justifyContent: "center",
-    },
-
-    btnGhost: {
-      borderColor: colors.BORDER,
-      borderWidth: 1,
-      borderRadius: 12,
-      paddingVertical: 11,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: "transparent",
-      flex: 1,
-    },
-    btnGhostText: { color: colors.TEXT, fontWeight: "800" },
-
-    btnDangerWide: {
-      backgroundColor: colors.ERROR,
-      borderRadius: 12,
-      paddingVertical: 11,
-      paddingHorizontal: 18,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    btnDangerText: { color: "#fff", fontWeight: "900" },
-
-    rowBetween: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "flex-start",
-    },
-
+    /* ---- Confirm modal ---- */
     modalWrap: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: "center",
@@ -610,15 +540,44 @@ const makeStyles = (colors: ThemeTokens) =>
     },
     backdrop: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: "rgba(0,0,0,0.45)",
+      backgroundColor: C.OVERLAY,
     },
     modalCard: {
       width: "86%",
-      backgroundColor: colors.CARD,
-      borderColor: colors.BORDER,
+      backgroundColor: C.CARD,
+      borderColor: C.BORDER,
       borderWidth: 1,
-      borderRadius: 14,
-      padding: 16,
+      borderRadius: 16,
+      padding: 20,
     },
-    modalSub: { color: colors.MUTED, marginTop: 4 },
+    modalTitle: {
+      color: C.TEXT,
+      fontWeight: "900",
+      fontSize: 17,
+    },
+    modalSub: { color: C.MUTED, marginTop: 4, fontSize: 14 },
+    modalFooter: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    btnCancel: {
+      borderColor: C.BORDER,
+      borderWidth: 1,
+      borderRadius: 12,
+      paddingVertical: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "transparent",
+      flex: 1,
+    },
+    btnCancelText: { color: C.TEXT, fontWeight: "800" },
+    btnDanger: {
+      backgroundColor: C.ERROR,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 18,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    btnDangerText: { color: "#fff", fontWeight: "900" },
   });

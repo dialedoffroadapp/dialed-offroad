@@ -16,6 +16,8 @@ import { useToast } from "../../components/Toast";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
 
+/* --------------------------------- Types ---------------------------------- */
+
 type ProfileRow = {
   user_id: string;
   display_name: string | null;
@@ -56,12 +58,47 @@ type UserPreset = {
   tune: any;
 };
 
+type GarageBike = {
+  id: string;
+  make: string;
+  model: string;
+  year: number;
+  nickname: string | null;
+};
+
+type BikeLastSession = Record<string, { rode_on: string; surface: string | null }>;
+
+/* ----------------------------- Brand accents ------------------------------ */
+
+const BRAND_ACCENTS: Record<string, string> = {
+  KTM: "#FF7A1A",
+  Kawasaki: "#46C25B",
+  Yamaha: "#3F7FFF",
+  Honda: "#FF4D4F",
+  Husqvarna: "#294A9D",
+  GasGas: "#E53131",
+  Suzuki: "#F2D13D",
+  Beta: "#E62B2B",
+  Sherco: "#2B61FF",
+  "TM Racing": "#2B9CFF",
+  Stark: "#E6342A",
+};
+
+function hexToRgba(hex: string, alpha: number) {
+  const n = hex.replace("#", "");
+  const r = parseInt(n.substring(0, 2), 16) || 0;
+  const g = parseInt(n.substring(2, 4), 16) || 0;
+  const b = parseInt(n.substring(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/* -------------------------------- Screen ---------------------------------- */
+
 export default function HomeScreen() {
   const router = useRouter();
   const toast = useToast();
   const { colors } = useTheme();
 
-  // Adapt the old T shim to our new tokens so we don't rewrite every style line
   const t = useMemo(() => {
     return {
       BG: colors.BG,
@@ -74,8 +111,8 @@ export default function HomeScreen() {
       BORDER: colors.BORDER,
       BORDER_SUBTLE: colors.BORDER,
       SURFACE_ALT: (colors as any).SURFACE_ALT ?? (colors.INPUT_BG ?? colors.CARD),
-      CHIP_BG: "rgba(255,255,255,0.08)",
-      TRACK: "rgba(255,255,255,0.10)",
+      CHIP_BG: (colors as any).CHIP_BG ?? "rgba(255,255,255,0.05)",
+      TRACK: (colors as any).TRACK ?? "rgba(255,255,255,0.06)",
       SUCCESS: colors.SUCCESS,
       ERROR: colors.ERROR,
     };
@@ -87,9 +124,10 @@ export default function HomeScreen() {
   const [displayName, setDisplayName] = useState<string>("");
 
   const [planLabel, setPlanLabel] = useState<"Free" | "Pro">("Free");
-  const [isPro, setIsPro] = useState<boolean>(false); // 👈 track Pro for gating
+  const [isPro, setIsPro] = useState<boolean>(false);
 
-  const [bikeCount, setBikeCount] = useState<number>(0);
+  const [bikes, setBikes] = useState<GarageBike[]>([]);
+  const [bikeLastSession, setBikeLastSession] = useState<BikeLastSession>({});
   const [lastSession, setLastSession] = useState<LastSession | null>(null);
 
   // Presets row
@@ -107,7 +145,8 @@ export default function HomeScreen() {
       const user = auth?.user;
       if (!user?.id) {
         setDisplayName("");
-        setBikeCount(0);
+        setBikes([]);
+        setBikeLastSession({});
         setLastSession(null);
         setPresets([]);
         setPlanLabel("Free");
@@ -132,12 +171,40 @@ export default function HomeScreen() {
       setPlanLabel(isProNow ? "Pro" : "Free");
       setIsPro(isProNow);
 
-      // Bikes count
-      const { count: bikesCount } = await supabase
+      // Bikes (full details instead of just count)
+      const { data: bikeRows, error: bikeErr } = await supabase
         .from("bikes")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id);
-      setBikeCount(bikesCount ?? 0);
+        .select("id, make, model, year, nickname")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true });
+
+      if (bikeErr) throw bikeErr;
+      setBikes((bikeRows as GarageBike[]) ?? []);
+
+      // Batched last-session-per-bike for state lines
+      if (bikeRows && bikeRows.length > 0) {
+        try {
+          const bikeIds = bikeRows.map((b: GarageBike) => b.id);
+          const { data: sessionRows } = await supabase
+            .from("sessions")
+            .select("bike_id, rode_on, surface")
+            .eq("user_id", user.id)
+            .in("bike_id", bikeIds)
+            .order("rode_on", { ascending: false });
+
+          if (sessionRows) {
+            const map: BikeLastSession = {};
+            for (const s of sessionRows as { bike_id: string; rode_on: string | null; surface: string | null }[]) {
+              if (s.bike_id && s.rode_on && !map[s.bike_id]) {
+                map[s.bike_id] = { rode_on: s.rode_on, surface: s.surface };
+              }
+            }
+            setBikeLastSession(map);
+          }
+        } catch {
+          // Non-critical — state line just won't show
+        }
+      }
 
       // Last session
       const { data: sessions } = await supabase
@@ -181,7 +248,10 @@ export default function HomeScreen() {
 
   const firstName = displayName?.trim().split(" ")[0] || "Rider";
 
-  // Local subcomponents so they can see `t`/`styles`
+  // The first / default bike for the garage card
+  const primaryBike = bikes.length > 0 ? bikes[0] : null;
+
+  // Local subcomponents
   function SectionHeader({
     icon,
     title,
@@ -194,41 +264,11 @@ export default function HomeScreen() {
     return (
       <View style={styles.sectionHeader}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Ionicons name={icon} size={16} color={t.SUBTEXT} />
+          <Ionicons name={icon} size={15} color={t.SUBTEXT} />
           <Text style={styles.h2}>{title}</Text>
         </View>
         {right ? <View>{right}</View> : null}
       </View>
-    );
-  }
-
-  function Action({
-    title,
-    icon,
-    onPress,
-    accent,
-  }: {
-    title: string;
-    icon: any;
-    onPress: () => void;
-    accent?: boolean;
-  }) {
-    return (
-      <Pressable
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.action,
-          accent ? styles.actionAccent : null,
-          pressed && { opacity: 0.95 },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={title}
-      >
-        <Ionicons name={icon} size={20} color={accent ? "#fff" : t.ACCENT2} />
-        <Text style={[styles.actionText, accent ? { color: "#fff" } : null]} numberOfLines={1}>
-          {title}
-        </Text>
-      </Pressable>
     );
   }
 
@@ -270,10 +310,9 @@ export default function HomeScreen() {
         contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header */}
+        {/* ── Header ── */}
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
-            {/* BRAND ROW */}
             <View style={styles.brandRow} accessible accessibilityRole="header">
               <Image
                 source={require("../../assets/images/icon.png")}
@@ -296,31 +335,51 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Quick Actions */}
-        <View style={styles.card}>
-          <SectionHeader icon="flash-outline" title="Quick Actions" />
+        {/* ── Quick Actions — asymmetric layout ── */}
+        <View style={styles.actionsRow}>
+          <Pressable
+            onPress={() => router.push("/(tabs)/tune")}
+            style={({ pressed }) => [
+              styles.actionPrimary,
+              pressed && { opacity: 0.92 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Generate Tune"
+          >
+            <Ionicons name="flash" size={24} color="#fff" />
+            <Text style={styles.actionPrimaryText}>Generate{"\n"}Tune</Text>
+          </Pressable>
 
-          <View style={styles.actionsRow}>
-            <Action
-              title="Generate Tune"
-              icon="flash-outline"
-              onPress={() => router.push("/(tabs)/tune")}
-              accent
-            />
-            <Action
-              title="Add Bike"
-              icon="bicycle-outline"
+          <View style={styles.actionStack}>
+            <Pressable
               onPress={() => router.push("/(tabs)/garage")}
-            />
-            <Action
-              title="View Sessions"
-              icon="albums-outline"
+              style={({ pressed }) => [
+                styles.actionSecondary,
+                pressed && { opacity: 0.92 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Add Bike"
+            >
+              <Ionicons name="bicycle-outline" size={18} color={t.ACCENT} />
+              <Text style={styles.actionSecondaryText}>Add Bike</Text>
+            </Pressable>
+
+            <Pressable
               onPress={() => router.push("/(tabs)/sessions")}
-            />
+              style={({ pressed }) => [
+                styles.actionSecondary,
+                pressed && { opacity: 0.92 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="View Sessions"
+            >
+              <Ionicons name="albums-outline" size={18} color={t.ACCENT} />
+              <Text style={styles.actionSecondaryText}>View Sessions</Text>
+            </Pressable>
           </View>
         </View>
 
-        {/* My Presets */}
+        {/* ── My Presets ── */}
         <View style={styles.card}>
           <SectionHeader
             icon="bookmarks-outline"
@@ -335,7 +394,7 @@ export default function HomeScreen() {
                 style={styles.allBtn}
               >
                 <Text style={styles.allBtnText}>View All</Text>
-                <Ionicons name="chevron-forward" size={14} color={t.ACCENT2} />
+                <Ionicons name="chevron-forward" size={13} color={t.ACCENT} />
               </Pressable>
             }
           />
@@ -361,7 +420,8 @@ export default function HomeScreen() {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 12, paddingRight: 4 }}
+              nestedScrollEnabled
+              contentContainerStyle={{ gap: 10, paddingRight: 4 }}
             >
               {presets.map((p) => (
                 <Pressable
@@ -390,17 +450,17 @@ export default function HomeScreen() {
                   }
                 >
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="bookmark" size={14} color={t.TEXT} />
+                    <Ionicons name="bookmark" size={13} color={t.SUBTEXT} />
                     <Text style={styles.presetTitle} numberOfLines={1}>
                       {p.name || "Preset"}
                     </Text>
                   </View>
                   <Text style={styles.presetSub} numberOfLines={1}>
                     {p.track_name ? p.track_name : "Custom"}
-                    {p.terrain?.[0] ? ` • ${p.terrain[0]}` : ""}
+                    {p.terrain?.[0] ? ` · ${p.terrain[0]}` : ""}
                   </Text>
                   <View style={styles.applyPill}>
-                    <Ionicons name="flash" size={12} color="#fff" />
+                    <Ionicons name="flash" size={11} color="#fff" />
                     <Text style={styles.applyPillText}>Apply</Text>
                   </View>
                 </Pressable>
@@ -414,30 +474,62 @@ export default function HomeScreen() {
                   })
                 }
               >
-                <Ionicons name="grid" size={16} color={t.ACCENT2} />
-                <Text style={[styles.presetTitle, { color: t.ACCENT2 }]}>All Presets</Text>
+                <Ionicons name="grid" size={16} color={t.ACCENT} />
+                <Text style={[styles.presetTitle, { color: t.ACCENT }]}>All Presets</Text>
               </Pressable>
             </ScrollView>
           )}
         </View>
 
-        {/* Garage Summary */}
+        {/* ── Your Garage — alive data ── */}
         <View style={styles.card}>
           <SectionHeader icon="bicycle-outline" title="Your Garage" />
-          <Text style={styles.body}>
-            {bikeCount === 0
-              ? "Add your first bike for model-aware tuning."
-              : bikeCount === 1
-              ? "You have 1 bike saved."
-              : `You have ${bikeCount} bikes saved.`}
-          </Text>
-          <Pressable style={styles.btnGhost} onPress={() => router.push("/(tabs)/garage")}>
-            <Text style={styles.btnGhostText}>{bikeCount === 0 ? "Add a Bike" : "Manage Garage"}</Text>
-            <Ionicons name="chevron-forward" size={18} color={t.ACCENT2} />
+
+          {bikes.length === 0 ? (
+            <Text style={styles.body}>
+              Add your first bike for model-aware tuning.
+            </Text>
+          ) : (
+            <>
+              {/* Show primary (first) bike with brand chip + state line */}
+              {primaryBike && (() => {
+                const accent = BRAND_ACCENTS[primaryBike.make] ?? "#3A3F4C";
+                const session = bikeLastSession[primaryBike.id];
+                return (
+                  <View style={styles.garageBikeRow}>
+                    <View style={[styles.garageBikeChip, { backgroundColor: hexToRgba(accent, 0.14) }]}>
+                      <Ionicons name="bicycle" size={18} color={accent} />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.garageBikeName} numberOfLines={1}>
+                        {primaryBike.make} {primaryBike.model}
+                      </Text>
+                      <Text style={styles.garageBikeMeta} numberOfLines={1}>
+                        {session
+                          ? `Last tuned ${relativeDate(session.rode_on)}${session.surface ? ` · ${cap(session.surface)}` : ""}`
+                          : "No tune yet"}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })()}
+              {bikes.length > 1 && (
+                <Text style={styles.garageExtra}>
+                  +{bikes.length - 1} more bike{bikes.length > 2 ? "s" : ""} in your garage
+                </Text>
+              )}
+            </>
+          )}
+
+          <Pressable style={styles.garageBtn} onPress={() => router.push("/(tabs)/garage")}>
+            <Text style={styles.garageBtnText}>
+              {bikes.length === 0 ? "Add a Bike" : "Manage Garage"}
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={t.ACCENT} />
           </Pressable>
         </View>
 
-        {/* Last Session */}
+        {/* ── Last Session ── */}
         <View style={styles.card}>
           <SectionHeader icon="time-outline" title="Last Session" />
 
@@ -448,7 +540,7 @@ export default function HomeScreen() {
             </View>
           ) : !lastSession ? (
             <Text style={styles.body}>
-              No sessions yet. Generate a tune and hit “Save as Session” to build your history.
+              No sessions yet. Generate a tune and hit "Save as Session" to build your history.
             </Text>
           ) : (
             <>
@@ -462,7 +554,7 @@ export default function HomeScreen() {
                   </Text>
                 </View>
                 <View style={styles.sessionChip}>
-                  <Ionicons name="sparkles-outline" color="#fff" size={14} />
+                  <Ionicons name="sparkles-outline" color="#fff" size={13} />
                   <Text style={styles.sessionChipText}>Saved</Text>
                 </View>
               </View>
@@ -496,7 +588,7 @@ export default function HomeScreen() {
                 <Pressable style={[styles.btnPrimary, { flex: 1 }]} onPress={() => router.push("/(tabs)/sessions")}>
                   <Text style={styles.btnPrimaryText}>View Session</Text>
                 </Pressable>
-                <View style={{ width: 12 }} />
+                <View style={{ width: 10 }} />
                 <Pressable style={[styles.btnOutline, { flex: 1 }]} onPress={() => router.push("/(tabs)/tune")}>
                   <Text style={styles.btnOutlineText}>Generate New</Text>
                 </Pressable>
@@ -505,11 +597,12 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Tips */}
+        {/* ── Tip ── */}
         <View style={styles.tipCard}>
-          <Ionicons name="information-circle-outline" size={18} color={t.SUCCESS} />
+          <Ionicons name="bulb-outline" size={16} color={t.SUCCESS} />
           <Text style={styles.tipText}>
-            Tip: For WP AER forks, start at the suggested air pressure, then adjust ±0.2 bar after
+            <Text style={styles.tipPrefix}>Tip · </Text>
+            For WP AER forks, start at the suggested air pressure, then adjust ±0.2 bar after
             your first moto if the front feels harsh (↑) or vague (↓).
           </Text>
         </View>
@@ -518,15 +611,18 @@ export default function HomeScreen() {
   );
 }
 
-/** Helpers */
+/* -------------------------------- Helpers --------------------------------- */
+
 function cap(s: string) {
-  return s.replace(/\b\w/g, (m) => m.toUpperCase());
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
 function displayBike(b?: LastSession["bikes"] | null) {
   if (!b) return null;
   const parts = [b.year, b.make, b.model].filter(Boolean);
   return parts.join(" ");
 }
+
 function formatDate(iso?: string | null) {
   if (!iso) return "Today";
   const d = new Date(iso);
@@ -534,7 +630,20 @@ function formatDate(iso?: string | null) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Styles */
+function relativeDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+  if (diff <= 0) return "today";
+  if (diff === 1) return "yesterday";
+  if (diff < 7) return `${diff}d ago`;
+  if (diff < 30) return `${Math.floor(diff / 7)}w ago`;
+  if (diff < 365) return `${Math.floor(diff / 30)}mo ago`;
+  return `${Math.floor(diff / 365)}y ago`;
+}
+
+/* -------------------------------- Styles ---------------------------------- */
+
 const makeStyles = (T: {
   BG: string;
   CARD: string;
@@ -552,141 +661,249 @@ const makeStyles = (T: {
   ERROR: string;
 }) =>
   StyleSheet.create({
-    hero: { flexDirection: "row", alignItems: "center", marginBottom: 18 },
-    brandRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
+    // ── Header ──
+    hero: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      marginBottom: 20,
+    },
+    brandRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginBottom: 12,
+    },
     brandLogo: { width: 28, height: 28, borderRadius: 6 },
     brandWordmark: { fontSize: 16, fontWeight: "900", letterSpacing: 1 },
-    brandDialed: { color: "#FFFFFF" },
+    brandDialed: { color: T.TEXT },
     brandOff: { color: T.ACCENT, marginLeft: 6 },
-    hi: { color: T.TEXT, fontSize: 22, fontWeight: "800", letterSpacing: 0.2 },
-    subtle: { color: T.SUBTEXT, marginTop: 2, fontSize: 13 },
+    hi: {
+      color: T.TEXT,
+      fontSize: 27,
+      fontWeight: "800",
+      letterSpacing: -0.3,
+    },
+    subtle: {
+      color: T.SUBTEXT,
+      marginTop: 4,
+      fontSize: 14,
+      lineHeight: 19,
+    },
     planBadge: {
-      paddingHorizontal: 8,
+      paddingHorizontal: 10,
       paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: T.ACCENT2,
-      backgroundColor: "transparent",
-      minWidth: 48,
-      alignItems: "center",
+      borderColor: T.ACCENT,
+      backgroundColor: hexToRgba(
+        // extract hex from T.ACCENT (may already be hex)
+        T.ACCENT.startsWith("#") ? T.ACCENT : "#1D9BF0",
+        0.1
+      ),
       marginLeft: 12,
+      marginTop: 4,
     },
-    planText: { color: T.ACCENT2, fontWeight: "800", fontSize: 11 },
+    planText: { color: T.ACCENT, fontWeight: "800", fontSize: 11 },
+
+    // ── Quick Actions — asymmetric ──
+    actionsRow: {
+      flexDirection: "row",
+      gap: 10,
+      marginBottom: 12,
+    },
+    actionPrimary: {
+      flex: 1,
+      backgroundColor: T.ACCENT,
+      borderRadius: 16,
+      padding: 20,
+      justifyContent: "flex-end",
+      gap: 10,
+      minHeight: 110,
+    },
+    actionPrimaryText: {
+      color: "#fff",
+      fontWeight: "800",
+      fontSize: 17,
+      lineHeight: 22,
+    },
+    actionStack: {
+      width: 130,
+      gap: 10,
+    },
+    actionSecondary: {
+      flex: 1,
+      backgroundColor: T.CARD,
+      borderWidth: 1,
+      borderColor: T.BORDER,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    actionSecondaryText: {
+      color: T.TEXT,
+      fontWeight: "700",
+      fontSize: 13,
+      flexShrink: 1,
+    },
+
+    // ── Cards (shared) ──
     card: {
       backgroundColor: T.CARD,
       borderWidth: 1,
       borderColor: T.BORDER,
-      borderRadius: 14,
+      borderRadius: 16,
       padding: 16,
       marginBottom: 12,
     },
-    sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-    h2: { color: T.TEXT, fontWeight: "800", fontSize: 18 },
-    body: { color: T.TEXT, opacity: 0.92, lineHeight: 20 },
-    row: { flexDirection: "row", alignItems: "center" },
-    actionsRow: { flexDirection: "row", alignItems: "stretch", gap: 12 },
-    action: {
-      flex: 1,
-      borderWidth: 1,
-      borderColor: T.BORDER,
-      borderRadius: 14,
-      paddingVertical: 16,
-      paddingHorizontal: 12,
+    sectionHeader: {
+      flexDirection: "row",
       alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: T.SURFACE_ALT,
-      gap: 6,
-      minHeight: 92,
+      justifyContent: "space-between",
+      marginBottom: 10,
     },
-    actionAccent: { backgroundColor: T.ACCENT, borderColor: T.BORDER_SUBTLE },
-    actionText: { color: T.ACCENT2, fontWeight: "800" },
+    h2: { color: T.TEXT, fontWeight: "700", fontSize: 15 },
+    body: { color: T.SUBTEXT, lineHeight: 20, fontSize: 14 },
+    row: { flexDirection: "row", alignItems: "center" },
+
+    // ── Presets ──
     allBtn: { flexDirection: "row", gap: 4, alignItems: "center" },
-    allBtnText: { color: T.ACCENT2, fontWeight: "800" },
+    allBtnText: { color: T.ACCENT, fontWeight: "600", fontSize: 13 },
     presetCard: {
-      width: 180,
+      width: 170,
       backgroundColor: T.BG,
       borderRadius: 14,
       borderWidth: 1,
       borderColor: T.BORDER,
       padding: 12,
-      gap: 6,
+      gap: 5,
     },
     viewAllCard: { alignItems: "center", justifyContent: "center", gap: 8 },
-    presetTitle: { color: T.TEXT, fontWeight: "900" },
+    presetTitle: { color: T.TEXT, fontWeight: "800", fontSize: 13 },
     presetSub: { color: T.SUBTEXT, fontSize: 12 },
     applyPill: {
-      marginTop: 8,
+      marginTop: 6,
       alignSelf: "flex-start",
       flexDirection: "row",
-      gap: 6,
+      gap: 5,
       backgroundColor: T.ACCENT,
       borderRadius: 999,
       paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingVertical: 5,
     },
-    applyPillText: { color: "#fff", fontWeight: "900", fontSize: 12 },
-    sessionHeader: { flexDirection: "row", alignItems: "center", marginBottom: 10, gap: 8 },
-    sessionTitle: { color: T.TEXT, fontWeight: "900" },
+    applyPillText: { color: "#fff", fontWeight: "800", fontSize: 11 },
+
+    // ── Garage (alive) ──
+    garageBikeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginBottom: 6,
+    },
+    garageBikeChip: {
+      width: 40,
+      height: 40,
+      borderRadius: 10,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    garageBikeName: {
+      color: T.TEXT,
+      fontWeight: "800",
+      fontSize: 15,
+    },
+    garageBikeMeta: {
+      color: T.SUBTEXT,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    garageExtra: {
+      color: T.SUBTEXT,
+      fontSize: 12,
+      marginTop: 4,
+      marginBottom: 2,
+    },
+    garageBtn: {
+      marginTop: 12,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+    },
+    garageBtnText: {
+      color: T.ACCENT,
+      fontWeight: "700",
+      fontSize: 13,
+    },
+
+    // ── Last Session ──
+    sessionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 10,
+      gap: 8,
+    },
+    sessionTitle: { color: T.TEXT, fontWeight: "800", fontSize: 14 },
     sessionMeta: { color: T.SUBTEXT, marginTop: 2, fontSize: 13 },
     sessionChip: {
       flexDirection: "row",
-      gap: 6,
+      gap: 5,
       paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingVertical: 5,
       borderRadius: 999,
       backgroundColor: T.CHIP_BG,
       borderWidth: 1,
       borderColor: T.BORDER,
     },
-    sessionChipText: { color: T.TEXT, fontWeight: "800", fontSize: 12 },
+    sessionChipText: { color: T.TEXT, fontWeight: "700", fontSize: 11 },
     meterRow: { flexDirection: "row", gap: 12 },
     meterLabel: { color: T.SUBTEXT, fontSize: 12, marginBottom: 6 },
-    meterBarOuter: { height: 8, borderRadius: 999, backgroundColor: T.TRACK, overflow: "hidden" },
+    meterBarOuter: {
+      height: 6,
+      borderRadius: 999,
+      backgroundColor: T.TRACK,
+      overflow: "hidden",
+    },
     meterBarFill: { height: "100%", backgroundColor: T.ACCENT3, borderRadius: 999 },
-    meterValue: { color: T.TEXT, marginTop: 6, fontWeight: "800" },
+    meterValue: { color: T.TEXT, marginTop: 5, fontWeight: "800", fontSize: 13 },
+
+    // ── Buttons ──
     btnPrimary: {
       backgroundColor: T.ACCENT,
-      borderRadius: 14,
+      borderRadius: 12,
       paddingVertical: 12,
       alignItems: "center",
       justifyContent: "center",
     },
-    btnPrimaryText: { color: "#fff", fontWeight: "900" },
+    btnPrimaryText: { color: "#fff", fontWeight: "800" },
     btnOutline: {
-      borderRadius: 14,
+      borderRadius: 12,
       paddingVertical: 12,
       alignItems: "center",
       justifyContent: "center",
       borderWidth: 1,
-      borderColor: T.ACCENT2,
+      borderColor: T.BORDER,
     },
-    btnOutlineText: { color: T.ACCENT2, fontWeight: "900" },
-    btnGhost: {
-      marginTop: 12,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: T.ACCENT2,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      alignSelf: "flex-start",
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-    },
-    btnGhostText: { color: T.ACCENT2, fontWeight: "900" },
+    btnOutlineText: { color: T.ACCENT, fontWeight: "700" },
+
+    // ── Tip ──
     tipCard: {
       backgroundColor: T.CARD,
       borderColor: T.BORDER,
       borderWidth: 1,
-      borderRadius: 14,
-      padding: 12,
+      borderRadius: 16,
+      padding: 14,
       flexDirection: "row",
       alignItems: "flex-start",
-      gap: 8,
+      gap: 10,
     },
-    tipText: { color: T.TEXT, flex: 1, lineHeight: 20 },
-    noteLabel: { color: T.SUBTEXT, fontSize: 12, fontWeight: "800" },
-    noteText: { color: T.TEXT, lineHeight: 20 },
+    tipPrefix: { color: T.TEXT, fontWeight: "700" },
+    tipText: { color: T.SUBTEXT, flex: 1, lineHeight: 20, fontSize: 13 },
+
+    // ── Utility ──
+    noteLabel: { color: T.SUBTEXT, fontSize: 12, fontWeight: "700" },
+    noteText: { color: T.TEXT, lineHeight: 20, fontSize: 13 },
     muted: { color: T.SUBTEXT },
     centerInline: { flexDirection: "row", alignItems: "center", gap: 8 },
   });

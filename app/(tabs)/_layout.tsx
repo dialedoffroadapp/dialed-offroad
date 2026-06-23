@@ -7,17 +7,18 @@ import type { ThemeTokens } from "../../constants/theme";
 import { useOnboarding } from "../../lib/onboarding";
 import { useTheme } from "../../lib/theme";
 
+const ACTIVE_COLOR = "#1D9BF0";
+const INACTIVE_COLOR = "rgba(255,255,255,0.4)";
+
 function DefaultIcon({
   routeName,
   focused,
-  colors,
 }: {
   routeName: string;
   focused: boolean;
-  colors: ThemeTokens;
 }) {
-  const color = focused ? colors.TEXT : colors.MUTED;
-  const size = 24;
+  const color = focused ? ACTIVE_COLOR : INACTIVE_COLOR;
+  const size = 22;
 
   switch (routeName) {
     case "index":
@@ -54,10 +55,20 @@ function TuneButton({
       hitSlop={10}
       disabled={disabled}
     >
-      <View style={[styles.tuneFab, focused && styles.tuneFabActive]}>
-        <Ionicons name="flash" size={30} color="#FFFFFF" />
+      {/* Outer ring in bar-background color to separate from bar */}
+      <View style={[styles.tuneRing, { backgroundColor: colors.CARD }]}>
+        <View style={styles.tuneFab}>
+          <Ionicons name="flash" size={26} color="#FFFFFF" />
+        </View>
       </View>
-      <Text style={[styles.tuneLabel, focused && styles.tuneLabelActive]}>Tune</Text>
+      <Text
+        style={[
+          styles.tuneLabel,
+          { color: focused ? ACTIVE_COLOR : INACTIVE_COLOR },
+        ]}
+      >
+        Tune
+      </Text>
     </Pressable>
   );
 }
@@ -79,14 +90,14 @@ export default function TabsLayout() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarShowLabel: true,
-        tabBarActiveTintColor: colors.TEXT,
-        tabBarInactiveTintColor: colors.MUTED,
+        tabBarActiveTintColor: ACTIVE_COLOR,
+        tabBarInactiveTintColor: INACTIVE_COLOR,
         tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "800",
-          marginTop: 4,
-          marginBottom: 12,
-          textAlign: "center",
+          fontSize: 10,
+          fontWeight: "700" as const,
+          marginTop: 2,
+          marginBottom: 10,
+          textAlign: "center" as const,
         },
         tabBarStyle: hideTabs
           ? { display: "none" }
@@ -94,12 +105,12 @@ export default function TabsLayout() {
               backgroundColor: colors.CARD,
               borderTopColor: colors.BORDER,
               borderTopWidth: 1,
-              height: 104,
+              height: 96,
               paddingTop: 8,
-              paddingBottom: 12,
+              paddingBottom: 10,
             },
         tabBarIcon: ({ focused }) => (
-          <DefaultIcon routeName={route.name} focused={focused} colors={colors} />
+          <DefaultIcon routeName={route.name} focused={focused} />
         ),
       })}
     >
@@ -126,42 +137,37 @@ export default function TabsLayout() {
   );
 }
 
-const FAB_SIZE = 76;
+const FAB_SIZE = 52;
+const RING_SIZE = FAB_SIZE + 6; // 3px border on each side
 
-const makeStyles = (C: ThemeTokens) =>
+const makeStyles = (_C: ThemeTokens) =>
   StyleSheet.create({
     tuneWrap: {
       alignItems: "center",
       justifyContent: "flex-start",
       alignSelf: "center",
-      marginTop: -24,
+      marginTop: -20,
+    },
+    tuneRing: {
+      width: RING_SIZE,
+      height: RING_SIZE,
+      borderRadius: 19,
+      alignItems: "center",
+      justifyContent: "center",
     },
     tuneFab: {
       width: FAB_SIZE,
       height: FAB_SIZE,
-      borderRadius: FAB_SIZE / 2,
-      backgroundColor: C.ACCENT,
+      borderRadius: 16,
+      backgroundColor: "#1D9BF0",
       alignItems: "center",
       justifyContent: "center",
-      shadowColor: C.ACCENT,
-      shadowOpacity: 0.45,
-      shadowOffset: { width: 0, height: 10 },
-      shadowRadius: 16,
-      elevation: 10,
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)",
-    },
-    tuneFabActive: {
-      shadowOpacity: 0.6,
-      transform: [{ scale: 1.04 }],
     },
     tuneLabel: {
-      marginTop: 6,
-      fontSize: 12,
-      fontWeight: "800",
-      color: C.MUTED,
+      marginTop: 4,
+      fontSize: 10,
+      fontWeight: "700",
       textAlign: "center",
     },
-    tuneLabelActive: { color: C.TEXT },
     disabled: { opacity: 0.35 },
   });

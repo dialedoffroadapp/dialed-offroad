@@ -24,20 +24,24 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Keyboard,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
+import Svg, { Circle as SvgCircle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { OnboardingProgress } from "../../components/OnboardingProgress";
 import { RiskGate } from "../../components/RiskGate";
+import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
 import {
@@ -48,8 +52,10 @@ import {
 } from "../../lib/onboarding";
 // 🔻 Removed direct RevenueCat gating – Tune now trusts Supabase profile only
 // import { getCustomerInfo, isPro as isProEntitlement } from "../../lib/purchases";
+import { isProfane } from "../../lib/profanity";
 import { deriveIsPro } from "../../lib/proUtils";
 import { supabase } from "../../lib/supabase";
+import { lightTheme } from "../../constants/theme";
 import { useTheme } from "../../lib/theme";
 import type { UsageEvent } from "../../lib/usage";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
@@ -99,6 +105,11 @@ const PRESET_APPLIED: UsageEvent = "preset_applied" as UsageEvent;
 
 // Local storage keys (per-user)
 const riskKeyForUser = (uid: string) => `riskConsent:${uid}`;
+const riderProfileKey = (uid: string) => `rider_profile_v1_${uid}`;
+const bikeSpecsKey = (bikeId: string) => `bike_specifics_v1_${bikeId}`;
+const customGoalsKey = (uid: string) => `custom_goals_v1_${uid}`;
+const TEMP_MIN = 30;
+const TEMP_MAX = 115;
 
 type StoredRisk = {
   version: string;
@@ -223,6 +234,146 @@ function BikePickerSheet({
   );
 }
 
+/* ------------------------------- TempSlider ------------------------------- */
+function TempSlider({
+  value,
+  onChange,
+  C,
+}: {
+  value: number | null;
+  onChange: (v: number) => void;
+  C: ReturnType<typeof useTheme>["colors"];
+}) {
+  const [trackW, setTrackW] = useState(0);
+  const trackWidthRef = useRef(0);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const isDraggingRef = useRef(false);
+
+  const updateFromX = (x: number) => {
+    const clamped = Math.max(0, Math.min(trackWidthRef.current, x));
+    const pct = trackWidthRef.current > 0 ? clamped / trackWidthRef.current : 0;
+    onChangeRef.current(Math.round(TEMP_MIN + pct * (TEMP_MAX - TEMP_MIN)));
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gs) =>
+        Math.abs(gs.dx) > Math.abs(gs.dy) && Math.abs(gs.dx) > 4,
+      onPanResponderGrant: (e) => {
+        isDraggingRef.current = true;
+        updateFromX(e.nativeEvent.locationX);
+      },
+      onPanResponderMove: (e) => updateFromX(e.nativeEvent.locationX),
+      // Don't let ScrollView steal the gesture mid-drag
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: () => { isDraggingRef.current = false; },
+      onPanResponderTerminate: () => { isDraggingRef.current = false; },
+    })
+  ).current;
+
+  const thumbLeft =
+    trackW > 0 && value != null
+      ? Math.max(
+          0,
+          Math.min(
+            trackW - 24,
+            ((value - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * trackW - 12
+          )
+        )
+      : 0;
+  const celsius = value != null ? Math.round(((value - 32) * 5) / 9) : null;
+
+  return (
+    <View>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 8,
+        }}
+      >
+        <Text style={{ color: C.MUTED, fontSize: 12, fontWeight: "700" }}>
+          Temperature (optional)
+        </Text>
+        {value != null ? (
+          <Text style={{ color: C.TEXT, fontSize: 14, fontWeight: "800" }}>
+            {value}°F · {celsius}°C
+          </Text>
+        ) : (
+          <Text style={{ color: C.MUTED, fontSize: 12 }}>Drag to set</Text>
+        )}
+      </View>
+      <View
+        style={{ height: 44, justifyContent: "center" }}
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          trackWidthRef.current = w;
+          setTrackW(w);
+        }}
+        onTouchEnd={(e) => {
+          // Tap-to-set only — skip if we just finished a drag so the thumb
+          // doesn't jump on release.
+          if (isDraggingRef.current) return;
+          updateFromX(e.nativeEvent.locationX);
+        }}
+        {...panResponder.panHandlers}
+      >
+        {/* Track background */}
+        <View
+          style={{
+            height: 6,
+            borderRadius: 3,
+            backgroundColor: "rgba(255,255,255,0.08)",
+          }}
+        >
+          {/* Fill */}
+          {value != null && trackW > 0 && (
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: ((value - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * trackW,
+                backgroundColor: C.ACCENT,
+                borderRadius: 3,
+              }}
+            />
+          )}
+        </View>
+        {/* Thumb */}
+        {value != null && trackW > 0 && (
+          <View
+            style={{
+              position: "absolute",
+              left: thumbLeft,
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              backgroundColor: C.ACCENT,
+              top: 10,
+              shadowColor: "#000",
+              shadowOpacity: 0.3,
+              shadowRadius: 4,
+              shadowOffset: { width: 0, height: 2 },
+              elevation: 4,
+            }}
+          />
+        )}
+      </View>
+      <View
+        style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}
+      >
+        <Text style={{ color: C.MUTED, fontSize: 11 }}>{TEMP_MIN}°F</Text>
+        <Text style={{ color: C.MUTED, fontSize: 11 }}>{TEMP_MAX}°F</Text>
+      </View>
+    </View>
+  );
+}
+
 /* -------------------------------- Component -------------------------------- */
 export default function TuneScreen() {
   const insets = useSafeAreaInsets();
@@ -239,6 +390,7 @@ export default function TuneScreen() {
     model: modelParam,
     year: yearParam,
     nickname: nicknameParam,
+    prefill,
   } = useLocalSearchParams<{
     preset?: string;
     t?: string;
@@ -248,6 +400,7 @@ export default function TuneScreen() {
     model?: string;
     year?: string;
     nickname?: string;
+    prefill?: string;
   }>();
   const { onboardingActive, state, setStep } = useOnboarding();
 
@@ -309,15 +462,18 @@ export default function TuneScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnboarding]);
 
+  // ——— Persistence state ———
+  const [userId, setUserId] = useState<string | null>(null);
+  const [riderProfileLoaded, setRiderProfileLoaded] = useState(false);
+  const [riderExpanded, setRiderExpanded] = useState(true);
+  const [bikeSpecsExpanded, setBikeSpecsExpanded] = useState(true);
+
   // ——— Conditions / rider ———
   const [terrainTags, setTerrainTags] = useState<string[]>(["hardpack"]);
   const [terrainOther, setTerrainOther] = useState("");
   const [track, setTrack] = useState("");
-  const [temp, setTemp] = useState("");
-  const [elev, setElev] = useState("");
-
-  const [tempUnit, setTempUnit] = useState<"f" | "c">("f");
-  const [elevUnit, setElevUnit] = useState<"ft" | "m">("ft");
+  const [tempFahr, setTempFahr] = useState<number | null>(null);
+  const [elevBucket, setElevBucket] = useState<"sea_level" | "moderate" | "high" | null>(null);
 
   const [weight, setWeight] = useState("185");
   const [skill, setSkill] = useState<"beginner" | "intermediate" | "pro">("intermediate");
@@ -325,17 +481,25 @@ export default function TuneScreen() {
 
   const [goals, setGoals] = useState<string[]>(["stability", "comfort"]);
   const [goalInput, setGoalInput] = useState("");
+
+  const updateGoals = (newGoals: string[]) => {
+    setGoals(newGoals);
+    if (userId) {
+      AsyncStorage.setItem(customGoalsKey(userId), JSON.stringify(newGoals)).catch(() => {});
+    }
+  };
+
   const addGoal = () => {
     const raw = goalInput;
     const g = normalizeGoal(raw);
     if (!g) return;
     const exists = goals.some((x) => normalizeGoal(x) === g);
-    if (!exists) setGoals((x) => [...x, g]);
+    if (!exists) updateGoals([...goals, g]);
     setGoalInput("");
     Haptics.selectionAsync();
   };
   const removeCustomGoal = (g: string) => {
-    setGoals((cur) => cur.filter((x) => x !== g));
+    updateGoals(goals.filter((x) => x !== g));
     Haptics.selectionAsync();
   };
   const [issues, setIssues] = useState("");
@@ -387,6 +551,34 @@ export default function TuneScreen() {
 
   // ✅ track whether we already applied the onboarding bikeId so we don’t bounce
   const onboardingAppliedRef = useRef(false);
+
+  // Ref-based guard: prevents double-tap from firing onGenerate twice
+  const generatingRef = useRef(false);
+
+  // Cancel handle for the generating overlay — lets timeout or manual cancel abort the flow
+  const cancelGenerateRef = useRef<(() => void) | null>(null);
+
+  // ——— Prefill rider context from retention loop (tune-results "Try again") ———
+  // Uses useFocusEffect so it fires even when the Tune tab is already mounted.
+  // lastPrefillRef prevents re-applying the same payload on subsequent focuses.
+  const lastPrefillRef = useRef<string | undefined>(undefined);
+  useFocusEffect(
+    useCallback(() => {
+      if (!prefill || prefill === lastPrefillRef.current || isOnboarding) return;
+      lastPrefillRef.current = prefill;
+      try {
+        const p = JSON.parse(decodeURIComponent(prefill));
+        if (typeof p.rider_weight_lbs === "number") setWeight(String(p.rider_weight_lbs));
+        // "terrain" mode: skip goals so the user picks their intent fresh
+        if (p.mode !== "terrain" && Array.isArray(p.goals) && p.goals.length > 0) {
+          setGoals(p.goals);
+        }
+        if (typeof p.issues === "string" && p.issues.length > 0) setIssues(p.issues);
+      } catch {
+        // ignore bad payload
+      }
+    }, [prefill, isOnboarding])
+  );
 
   // risk + monetization:
   //  - Risk: stored locally in AsyncStorage (per user)
@@ -457,14 +649,87 @@ export default function TuneScreen() {
     }, [refreshProAndTrial])
   );
 
+  // ——— Load persisted rider profile + custom goals on mount ———
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth?.user?.id ?? null;
+        setUserId(uid);
+
+        if (!uid) {
+          setRiderExpanded(true);
+          setRiderProfileLoaded(true);
+          return;
+        }
+
+        const hasPrefill = typeof prefill === "string" && prefill.length > 0;
+
+        if (!hasPrefill && !isOnboarding) {
+          // Load rider profile
+          try {
+            const rawProfile = await AsyncStorage.getItem(riderProfileKey(uid));
+            if (rawProfile) {
+              const p = JSON.parse(rawProfile);
+              if (typeof p.weight === "string" && p.weight) setWeight(p.weight);
+              if (p.skill === "beginner" || p.skill === "intermediate" || p.skill === "pro")
+                setSkill(p.skill);
+              if (p.rideStyle === "short_motos" || p.rideStyle === "long_enduro")
+                setRideStyle(p.rideStyle);
+              setRiderExpanded(false);
+            } else {
+              setRiderExpanded(true);
+            }
+          } catch {
+            setRiderExpanded(true);
+          }
+
+          // Load custom goals
+          try {
+            const rawGoals = await AsyncStorage.getItem(customGoalsKey(uid));
+            if (rawGoals) {
+              const saved: string[] = JSON.parse(rawGoals);
+              if (Array.isArray(saved) && saved.length > 0) setGoals(saved);
+            }
+          } catch {}
+        } else {
+          // prefill param present or onboarding — don't collapse (prefill handles values)
+          setRiderExpanded(false);
+        }
+      } catch {
+        setRiderExpanded(true);
+      } finally {
+        setRiderProfileLoaded(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---------- bikes helper + live updates ----------
-  const applySelected = (b: Bike) => {
+  const applySelected = async (b: Bike) => {
     setSelectedBikeId(b.id);
     setMake(b.make ?? "");
     setModel(b.model ?? "");
     setYear(b.year ? String(b.year) : "");
+    // Load persisted bike specifics (wantsAirFork / zeroed)
+    try {
+      const raw = await AsyncStorage.getItem(bikeSpecsKey(b.id));
+      if (raw) {
+        const specs = JSON.parse(raw);
+        if (typeof specs.wantsAirFork === "boolean") setWantsAirFork(specs.wantsAirFork);
+        if (typeof specs.zeroed === "boolean") setZeroed(specs.zeroed);
+        setBikeSpecsExpanded(false);
+      } else {
+        setBikeSpecsExpanded(true);
+      }
+    } catch {
+      setBikeSpecsExpanded(true);
+    }
   };
-  const clearSelected = () => setSelectedBikeId(null);
+  const clearSelected = () => {
+    setSelectedBikeId(null);
+    setBikeSpecsExpanded(true);
+  };
 
   // ✅ In onboarding, never allow clearing/changing the selected bike from Tune UI
   const canEditBikeInTune = !isOnboarding;
@@ -620,8 +885,15 @@ export default function TuneScreen() {
 
   // ——— Generate with AI (gated by Supabase RPC when signed-in) ———
   const onGenerate = async () => {
+    // Ref-based re-entry guard — blocks double-tap before async state updates
+    if (generatingRef.current) return;
+    generatingRef.current = true;
+
     const ok = await ensureRiskAccepted();
-    if (!ok) return;
+    if (!ok) {
+      generatingRef.current = false;
+      return;
+    }
 
     try {
       const { data: auth } = await supabase.auth.getUser();
@@ -631,7 +903,9 @@ export default function TuneScreen() {
       const isGuest = !user?.id;
 
       if (isGuest && !isOnboarding) {
-        throw new Error("Please sign in");
+        toast.show("Sign in to generate a tune", { kind: "info" });
+        router.push("/signup");
+        return;
       }
 
       // 🔐 Only run claim_free_tune when we actually have a signed-in user
@@ -653,6 +927,13 @@ export default function TuneScreen() {
           return;
         }
 
+        if (!claim?.ok) {
+          // Catch-all: any other non-ok reason (rate_limited, error, unknown shape)
+          console.warn("Tune: claim_free_tune denied", claim);
+          toast.show("Couldn't claim your tune right now. Try again.", { kind: "error" });
+          return;
+        }
+
         // claim.reason is 'trial' or 'pro'
         const trialCountFromServer = (claim as any)?.trial_tunes_used;
 
@@ -665,8 +946,23 @@ export default function TuneScreen() {
         }
       }
 
+      if (track.trim() && isProfane(track)) {
+        toast.show("Please choose a different track name.", { kind: "error" });
+        generatingRef.current = false;
+        return;
+      }
+
       setGenerating(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      const elevFt =
+        elevBucket == null
+          ? undefined
+          : elevBucket === "sea_level"
+          ? 0
+          : elevBucket === "moderate"
+          ? 3000
+          : 8000;
 
       const input: ZeroTuneInput = {
         make: make.trim() || undefined,
@@ -674,18 +970,8 @@ export default function TuneScreen() {
         year: year ? Number(year) : undefined,
         terrain: terrainLabel,
         track: track.trim() || undefined,
-        temp_f:
-          temp.trim().length === 0
-            ? undefined
-            : tempUnit === "f"
-            ? Number(temp)
-            : Math.round((Number(temp) * 9) / 5 + 32),
-        elev_ft:
-          elev.trim().length === 0
-            ? undefined
-            : elevUnit === "ft"
-            ? Number(elev)
-            : Math.round(Number(elev) * 3.28084),
+        temp_f: tempFahr ?? undefined,
+        elev_ft: elevFt,
         rider: {
           weight_lbs: weight ? Number(weight) : undefined,
           skill,
@@ -699,7 +985,37 @@ export default function TuneScreen() {
         wants_air_fork: wantsAirFork,
       };
 
-      const s: ZeroTuneResult = await generateTune(input);
+      const GENERATE_TIMEOUT_MS = 30_000;
+      const s: ZeroTuneResult = await Promise.race([
+        generateTune(input),
+        new Promise<never>((_resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("This is taking longer than expected — try again")),
+            GENERATE_TIMEOUT_MS
+          );
+          cancelGenerateRef.current = () => {
+            clearTimeout(timer);
+            reject(new Error("Generation cancelled"));
+          };
+        }),
+      ]);
+      cancelGenerateRef.current = null;
+
+      // Persist rider profile after successful generation
+      if (user?.id) {
+        AsyncStorage.setItem(
+          riderProfileKey(user.id),
+          JSON.stringify({ weight, skill, rideStyle })
+        ).catch(() => {});
+      }
+
+      // Persist bike specifics (only for garage bikes with a stable ID)
+      if (selectedBikeId && user?.id) {
+        AsyncStorage.setItem(
+          bikeSpecsKey(selectedBikeId),
+          JSON.stringify({ wantsAirFork, zeroed })
+        ).catch(() => {});
+      }
 
       await logEvent(AI_TUNE_GENERATED_ZERO, {
         terrain: terrainLabel,
@@ -787,6 +1103,7 @@ export default function TuneScreen() {
     } catch (e: any) {
       toast.show(e?.message ?? "AI tune failed", { kind: "error" });
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
     }
   };
@@ -969,6 +1286,7 @@ export default function TuneScreen() {
 
         {/* Sticky CTA */}
         <View
+          pointerEvents="box-none"
           style={{
             position: "absolute",
             bottom: 0,
@@ -985,8 +1303,15 @@ export default function TuneScreen() {
           <Pressable
             onPress={async () => {
               if (!trialPending) {
-                // Expired — re-enter onboarding tune flow
+                // Expired — reset to tune step in both stores
                 await setStep("tune");
+                const { data: auth } = await supabase.auth.getUser();
+                if (auth?.user?.id) {
+                  void supabase.from("profiles").upsert(
+                    { user_id: auth.user.id, onboarding_step: "tune" },
+                    { onConflict: "user_id" }
+                  );
+                }
                 return;
               }
               router.push("/premium");
@@ -1009,7 +1334,7 @@ export default function TuneScreen() {
 
   /* --------------------------------- Render -------------------------------- */
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+    <View style={{ flex: 1, backgroundColor: C.BG }}>
       <KeyboardAvoidingView
         behavior={Platform.select({ ios: "padding", android: undefined })}
         style={{ flex: 1, backgroundColor: C.BG }}
@@ -1118,6 +1443,7 @@ export default function TuneScreen() {
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
+                nestedScrollEnabled
                 contentContainerStyle={{ paddingRight: 6 }}
               >
                 {bikes.slice(0, 6).map((b) => {
@@ -1242,240 +1568,241 @@ export default function TuneScreen() {
             onSubmitEditing={Keyboard.dismiss}
           />
 
-          <View style={S.row}>
-            <View style={{ flex: 1 }}>
-              <View style={S.labelWithToggles}>
-                <Text style={S.caption}>Temp</Text>
-                <View style={S.toggles}>
-                  <Pressable
-                    onPress={() => setTempUnit("f")}
-                    style={[S.toggle, tempUnit === "f" && S.toggleOn]}
-                  >
-                    <Text style={[S.toggleText, tempUnit === "f" && S.toggleTextOn]}>°F</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setTempUnit("c")}
-                    style={[S.toggle, tempUnit === "c" && S.toggleOn]}
-                  >
-                    <Text style={[S.toggleText, tempUnit === "c" && S.toggleTextOn]}>°C</Text>
-                  </Pressable>
-                </View>
-              </View>
-              <TextInput
-                style={S.input}
-                placeholder="e.g., 75"
-                placeholderTextColor={C.MUTED}
-                value={temp}
-                onChangeText={setTemp}
-                keyboardType="number-pad"
-                returnKeyType="done"
-                onSubmitEditing={Keyboard.dismiss}
-              />
-            </View>
+          <TempSlider value={tempFahr} onChange={setTempFahr} C={C} />
 
-            <View style={{ flex: 1 }}>
-              <View style={S.labelWithToggles}>
-                <Text style={S.caption}>Elevation</Text>
-                <View style={S.toggles}>
-                  <Pressable
-                    onPress={() => setElevUnit("ft")}
-                    style={[S.toggle, elevUnit === "ft" && S.toggleOn]}
-                  >
-                    <Text style={[S.toggleText, elevUnit === "ft" && S.toggleTextOn]}>ft</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => setElevUnit("m")}
-                    style={[S.toggle, elevUnit === "m" && S.toggleOn]}
-                  >
-                    <Text style={[S.toggleText, elevUnit === "m" && S.toggleTextOn]}>m</Text>
-                  </Pressable>
-                </View>
-              </View>
-              <TextInput
-                style={S.input}
-                placeholder="e.g., 1200"
-                placeholderTextColor={C.MUTED}
-                value={elev}
-                onChangeText={setElev}
-                keyboardType="number-pad"
-                returnKeyType="done"
-                onSubmitEditing={Keyboard.dismiss}
-              />
-            </View>
+          <Text style={[S.label, { marginTop: 12 }]}>Elevation (optional)</Text>
+          <View style={S.rowWrap}>
+            {(
+              [
+                { label: "Sea level", value: "sea_level" as const },
+                { label: "Moderate", value: "moderate" as const },
+                { label: "High altitude", value: "high" as const },
+              ] as const
+            ).map((opt) => (
+              <Pressable
+                key={opt.value}
+                onPress={() => {
+                  setElevBucket(elevBucket === opt.value ? null : opt.value);
+                  Haptics.selectionAsync();
+                }}
+                style={[S.pill, elevBucket === opt.value && S.pillActive]}
+              >
+                <Text style={[S.pillText, elevBucket === opt.value && S.pillTextActive]}>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
+          <Text style={[S.caption, { marginTop: 4 }]}>
+            Sea level ~0 ft · Moderate ~3,000 ft · High altitude ~8,000 ft
+          </Text>
         </View>
 
         {/* Rider */}
         <View style={S.card}>
-          <Text style={S.h1}>Rider</Text>
-
-          <Text style={S.label}>Weight with gear (lbs)</Text>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <TextInput
-              style={S.inputSm}
-              placeholder="e.g., 185"
-              placeholderTextColor={C.MUTED}
-              value={weight}
-              onChangeText={setWeight}
-              keyboardType="number-pad"
-              returnKeyType="done"
-              onSubmitEditing={Keyboard.dismiss}
+          {riderProfileLoaded && !riderExpanded ? (
+            /* Confirmed summary row */
+            <SettingRow
+              icon="person-outline"
+              label="Rider"
+              hint={
+                `${weight} lb · ${cap(skill)} · ${rideStyle === "short_motos" ? "Short Motos" : "Long Enduro"}` +
+                (goals.length > 0 ? `\n${goals.map(cap).join(", ")}` : "")
+              }
+              trailingAction={{ label: "Edit", onPress: () => setRiderExpanded(true) }}
             />
-            <View style={S.unitPill}>
-              <Text style={S.unitPillText}>lb</Text>
-            </View>
-          </View>
-          <Text style={S.metricHint}>We scale the tune roughly with rider weight.</Text>
-
-          <Text style={S.label}>Skill level</Text>
-          <View style={S.rowWrap}>
-            <Pill
-              label="Beginner"
-              active={skill === "beginner"}
-              onPress={() => setSkill("beginner")}
-            />
-            <Pill
-              label="Intermediate"
-              active={skill === "intermediate"}
-              onPress={() => setSkill("intermediate")}
-            />
-            <Pill label="Pro" active={skill === "pro"} onPress={() => setSkill("pro")} />
-          </View>
-
-          <Text style={S.label}>Ride style</Text>
-          <View style={S.rowWrap}>
-            <Pill
-              label="Short Motos"
-              active={rideStyle === "short_motos"}
-              onPress={() => setRideStyle("short_motos")}
-            />
-            <Pill
-              label="Long Enduro"
-              active={rideStyle === "long_enduro"}
-              onPress={() => setRideStyle("long_enduro")}
-            />
-          </View>
-
-          <Text style={S.label}>Goals (pick a few)</Text>
-          <View style={S.rowWrap}>
-            {DEFAULT_GOALS.map((g) => (
-              <Pill
-                key={g}
-                label={cap(g)}
-                active={goals.includes(g)}
-                onPress={() =>
-                  setGoals((cur) =>
-                    cur.includes(g) ? cur.filter((x) => x !== g) : [...cur, g]
-                  )
-                }
-              />
-            ))}
-          </View>
-
-          <View style={S.row2}>
-            <View style={{ flex: 1 }}>
-              <Text style={S.caption}>Add your own goal</Text>
-              <TextInput
-                style={S.input}
-                placeholder="e.g., less dive on braking"
-                placeholderTextColor={C.MUTED}
-                value={goalInput}
-                onChangeText={setGoalInput}
-                returnKeyType="done"
-                onSubmitEditing={() => {
-                  addGoal();
-                  Keyboard.dismiss();
-                }}
-              />
-            </View>
-            <View style={{ width: 8 }} />
-            <Pressable onPress={addGoal} hitSlop={8} style={S.btnSmall}>
-              <Text style={S.btnSmallText}>Add</Text>
-            </Pressable>
-          </View>
-
-          {goals.some((g) => !DEFAULT_GOALS.includes(g as any)) && (
+          ) : (
+            /* Full form */
             <>
-              <Text style={[S.caption, { marginTop: 10 }]}>Your custom goals</Text>
+              <Text style={S.h1}>Rider</Text>
+
+              <Text style={S.label}>Weight with gear (lbs)</Text>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <TextInput
+                  style={S.inputSm}
+                  placeholder="e.g., 185"
+                  placeholderTextColor={C.MUTED}
+                  value={weight}
+                  onChangeText={setWeight}
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={Keyboard.dismiss}
+                />
+                <View style={S.unitPill}>
+                  <Text style={S.unitPillText}>lb</Text>
+                </View>
+              </View>
+              <Text style={S.metricHint}>We scale the tune roughly with rider weight.</Text>
+
+              <Text style={S.label}>Skill level</Text>
               <View style={S.rowWrap}>
-                {goals
-                  .filter((g) => !DEFAULT_GOALS.includes(g as any))
-                  .map((g) => (
-                    <View key={g} style={S.customChip}>
-                      <Text style={S.customChipText}>{cap(g)}</Text>
-                      <Pressable
-                        onPress={() => removeCustomGoal(g)}
-                        hitSlop={8}
-                        style={S.customChipClose}
-                      >
-                        <Text style={S.customChipCloseText}>×</Text>
-                      </Pressable>
-                    </View>
-                  ))}
+                <Pill
+                  label="Beginner"
+                  active={skill === "beginner"}
+                  onPress={() => setSkill("beginner")}
+                />
+                <Pill
+                  label="Intermediate"
+                  active={skill === "intermediate"}
+                  onPress={() => setSkill("intermediate")}
+                />
+                <Pill label="Pro" active={skill === "pro"} onPress={() => setSkill("pro")} />
+              </View>
+
+              <Text style={S.label}>Ride style</Text>
+              <View style={S.rowWrap}>
+                <Pill
+                  label="Short Motos"
+                  active={rideStyle === "short_motos"}
+                  onPress={() => setRideStyle("short_motos")}
+                />
+                <Pill
+                  label="Long Enduro"
+                  active={rideStyle === "long_enduro"}
+                  onPress={() => setRideStyle("long_enduro")}
+                />
+              </View>
+
+              <Text style={S.label}>Goals (pick a few)</Text>
+              <View style={S.rowWrap}>
+                {DEFAULT_GOALS.map((g) => (
+                  <Pill
+                    key={g}
+                    label={cap(g)}
+                    active={goals.includes(g)}
+                    onPress={() => {
+                      const newGoals = goals.includes(g)
+                        ? goals.filter((x) => x !== g)
+                        : [...goals, g];
+                      updateGoals(newGoals);
+                    }}
+                  />
+                ))}
+              </View>
+
+              <View style={S.row2}>
+                <View style={{ flex: 1 }}>
+                  <Text style={S.caption}>Add your own goal</Text>
+                  <TextInput
+                    style={S.input}
+                    placeholder="e.g., less dive on braking"
+                    placeholderTextColor={C.MUTED}
+                    value={goalInput}
+                    onChangeText={setGoalInput}
+                    returnKeyType="done"
+                    onSubmitEditing={() => {
+                      addGoal();
+                      Keyboard.dismiss();
+                    }}
+                  />
+                </View>
+                <View style={{ width: 8 }} />
+                <Pressable onPress={addGoal} hitSlop={8} style={S.btnSmall}>
+                  <Text style={S.btnSmallText}>Add</Text>
+                </Pressable>
+              </View>
+
+              {goals.some((g) => !DEFAULT_GOALS.includes(g as any)) && (
+                <>
+                  <Text style={[S.caption, { marginTop: 10 }]}>Your custom goals</Text>
+                  <View style={S.rowWrap}>
+                    {goals
+                      .filter((g) => !DEFAULT_GOALS.includes(g as any))
+                      .map((g) => (
+                        <View key={g} style={S.customChip}>
+                          <Text style={S.customChipText}>{cap(g)}</Text>
+                          <Pressable
+                            onPress={() => removeCustomGoal(g)}
+                            hitSlop={8}
+                            style={S.customChipClose}
+                          >
+                            <Text style={S.customChipCloseText}>×</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                  </View>
+                </>
+              )}
+
+              <Text style={S.label}>Current issues (optional)</Text>
+              <TextInput
+                style={[S.input, { minHeight: 80 }]}
+                placeholder="e.g., harsh on braking bumps; packs on whoops; kicks on square-edge..."
+                placeholderTextColor={C.MUTED}
+                value={issues}
+                onChangeText={setIssues}
+                multiline
+              />
+
+            </>
+          )}
+        </View>
+
+        {/* Bike Specifics (Air fork + Zero-based) */}
+        <View style={S.card}>
+          {!bikeSpecsExpanded ? (
+            /* Confirmed summary row */
+            <SettingRow
+              icon="build-outline"
+              label="Bike Specifics"
+              hint={
+                (wantsAirFork ? "Air fork (AER)" : "Coil fork") +
+                (!zeroed ? " · Not zeroed" : "")
+              }
+              trailingAction={{ label: "Edit", onPress: () => setBikeSpecsExpanded(true) }}
+            />
+          ) : (
+            <>
+              {/* Air fork toggle */}
+              <Pressable
+                onPress={() => {
+                  setWantsAirFork((z) => !z);
+                  Haptics.selectionAsync();
+                }}
+                style={[S.rowBetween, { alignItems: "center" }]}
+              >
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={S.h1}>Air fork (AER)?</Text>
+                  <Text style={S.muted}>
+                    If yes, we’ll include a fork air-pressure target (and scale it to rider weight).
+                  </Text>
+                </View>
+                <View style={[S.check, wantsAirFork && S.checkOn]} />
+              </Pressable>
+
+              <View style={{ height: 16 }} />
+
+              {/* Zero-based */}
+              <View style={S.requiredHeader}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={S.h1}>Zero-based</Text>
+                  <Pressable
+                    onPress={() => {
+                      setZeroInfoOpen(true);
+                      Haptics.selectionAsync();
+                    }}
+                    hitSlop={10}
+                  >
+                    <Ionicons name="help-circle" size={20} color={C.TEXT} />
+                  </Pressable>
+                </View>
+              </View>
+              <View style={[S.rowBetween, { alignItems: "center", marginTop: 6 }]}>
+                <Text style={[S.muted, { flex: 1, paddingRight: 12 }]}>
+                  All clickers turned fully in first. We’ll guide you if needed.
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setZeroed((z) => !z);
+                    Haptics.selectionAsync();
+                  }}
+                  hitSlop={8}
+                >
+                  <View style={[S.check, zeroed && S.checkOn]} />
+                </Pressable>
               </View>
             </>
           )}
-
-          <Text style={S.label}>Current issues (optional)</Text>
-          <TextInput
-            style={[S.input, { minHeight: 80 }]}
-            placeholder="e.g., harsh on braking bumps; packs on whoops; kicks on square-edge..."
-            placeholderTextColor={C.MUTED}
-            value={issues}
-            onChangeText={setIssues}
-            multiline
-          />
-        </View>
-
-        {/* Air fork toggle */}
-        <View style={S.card}>
-          <Pressable
-            onPress={() => {
-              setWantsAirFork((z) => !z);
-              Haptics.selectionAsync();
-            }}
-            style={[S.rowBetween, { alignItems: "center" }]}
-          >
-            <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={S.h1}>Air fork (AER)?</Text>
-              <Text style={S.muted}>
-                If yes, we’ll include a fork air-pressure target (and scale it to rider weight).
-              </Text>
-            </View>
-            <View style={[S.check, wantsAirFork && S.checkOn]} />
-          </Pressable>
-        </View>
-
-        {/* Zero-based (Required) */}
-        <View style={[S.card, S.requiredCard]}>
-          <View style={S.requiredHeader}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={S.h1}>Zero-based</Text>
-              <Pressable
-                onPress={() => {
-                  setZeroInfoOpen(true);
-                  Haptics.selectionAsync();
-                }}
-                hitSlop={10}
-              >
-                <Ionicons name="help-circle" size={20} color={C.TEXT} />
-              </Pressable>
-            </View>
-          </View>
-          <View style={[S.rowBetween, { alignItems: "center", marginTop: 6 }]}>
-            <Text style={[S.muted, { flex: 1, paddingRight: 12 }]}>
-              All clickers turned fully in first. We'll guide you if needed.
-            </Text>
-            <Pressable
-              onPress={() => {
-                setZeroed((z) => !z);
-                Haptics.selectionAsync();
-              }}
-              hitSlop={8}
-            >
-              <View style={[S.check, zeroed && S.checkOn]} />
-            </Pressable>
-          </View>
         </View>
 
         {/* Preset loaded banner */}
@@ -1501,7 +1828,7 @@ export default function TuneScreen() {
           {Platform.OS === "ios" ? (
             <BlurView
               intensity={30}
-              tint={C.BG === "#FFFFFF" ? "light" : "dark"}
+              tint={C.BG === lightTheme.BG ? "light" : "dark"}
               style={StyleSheet.absoluteFill}
             />
           ) : (
@@ -1530,11 +1857,7 @@ export default function TuneScreen() {
                 pressed && { opacity: 0.95 },
               ]}
             >
-              {generating ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={S.stickyBtnText}>{primaryCtaLabel}</Text>
-              )}
+              <Text style={S.stickyBtnText}>{primaryCtaLabel}</Text>
             </Pressable>
 
           </View>
@@ -1627,7 +1950,241 @@ export default function TuneScreen() {
         }}
       />
       </KeyboardAvoidingView>
-    </TouchableWithoutFeedback>
+
+    {/* Full-screen generating overlay — appears when setGenerating(true) fires, tears down in finally */}
+    {generating && (
+      <GeneratingOverlay
+        accent={C.ACCENT}
+        onCancel={() => cancelGenerateRef.current?.()}
+      />
+    )}
+    </View>
+  );
+}
+
+/* ---------------------- Generating overlay component --------------------- */
+
+const GEN_STAGES = [
+  "Read bike + conditions",
+  "Matched rider profile",
+  "Calculating clicker settings\u2026",
+] as const;
+
+const RING_SIZE = 96;
+const RING_STROKE = 3;
+const RING_R = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRC = 2 * Math.PI * RING_R;
+
+function GeneratingOverlay({
+  accent,
+  onCancel,
+}: {
+  accent: string;
+  onCancel: () => void;
+}) {
+  // Spinning ring animation
+  const spin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 1400,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [spin]);
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  // Timed stage progression
+  const [completedStages, setCompletedStages] = useState(0);
+  useEffect(() => {
+    const t1 = setTimeout(() => setCompletedStages(1), 3000);
+    const t2 = setTimeout(() => setCompletedStages(2), 8000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
+
+  return (
+    <View
+      style={[StyleSheet.absoluteFill, { zIndex: 2000 }]}
+      pointerEvents="auto"
+    >
+      <BlurView
+        intensity={Platform.OS === "ios" ? 40 : 80}
+        tint="dark"
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          paddingHorizontal: 32,
+        }}
+      >
+        {/* Icon badge with progress ring */}
+        <View
+          style={{
+            width: RING_SIZE,
+            height: RING_SIZE,
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 24,
+          }}
+        >
+          {/* Spinning ring */}
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              { transform: [{ rotate }] },
+            ]}
+          >
+            <Svg width={RING_SIZE} height={RING_SIZE}>
+              {/* Track */}
+              <SvgCircle
+                cx={RING_SIZE / 2}
+                cy={RING_SIZE / 2}
+                r={RING_R}
+                stroke="rgba(29,155,240,0.15)"
+                strokeWidth={RING_STROKE}
+                fill="none"
+              />
+              {/* Arc */}
+              <SvgCircle
+                cx={RING_SIZE / 2}
+                cy={RING_SIZE / 2}
+                r={RING_R}
+                stroke={accent}
+                strokeWidth={RING_STROKE}
+                fill="none"
+                strokeDasharray={`${RING_CIRC * 0.3} ${RING_CIRC * 0.7}`}
+                strokeLinecap="round"
+              />
+            </Svg>
+          </Animated.View>
+
+          {/* Center icon chip */}
+          <View
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 20,
+              backgroundColor: "rgba(29,155,240,0.18)",
+              borderWidth: 1,
+              borderColor: "rgba(29,155,240,0.35)",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="sparkles" size={30} color={accent} />
+          </View>
+        </View>
+
+        {/* Headline */}
+        <Text
+          style={{
+            color: "#fff",
+            fontSize: 22,
+            fontWeight: "900",
+            textAlign: "center",
+            letterSpacing: -0.3,
+            marginBottom: 10,
+          }}
+        >
+          Dialing in your setup...
+        </Text>
+
+        {/* Status lines */}
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.65)",
+            fontSize: 14,
+            textAlign: "center",
+            lineHeight: 21,
+          }}
+        >
+          Analyzing your terrain, rider profile, and bike data.
+        </Text>
+        <Text
+          style={{
+            color: "rgba(255,255,255,0.4)",
+            fontSize: 13,
+            textAlign: "center",
+            marginTop: 4,
+          }}
+        >
+          This usually takes 10–20 seconds.
+        </Text>
+
+        {/* Progress checklist */}
+        <View style={{ marginTop: 28, alignSelf: "stretch", paddingHorizontal: 16 }}>
+          {GEN_STAGES.map((label, i) => {
+            const done = i < completedStages;
+            const active = i === completedStages;
+            return (
+              <View
+                key={label}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  paddingVertical: 6,
+                }}
+              >
+                {done ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#34C759" />
+                ) : active ? (
+                  <ActivityIndicator size={16} color={accent} />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={18} color="rgba(255,255,255,0.2)" />
+                )}
+                <Text
+                  style={{
+                    fontSize: 14,
+                    color: done
+                      ? "rgba(255,255,255,0.7)"
+                      : active
+                        ? "rgba(255,255,255,0.85)"
+                        : "rgba(255,255,255,0.3)",
+                    fontWeight: active ? "600" : "400",
+                  }}
+                >
+                  {label}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+
+        <Pressable
+          onPress={onCancel}
+          style={({ pressed }) => ({
+            marginTop: 28,
+            paddingVertical: 10,
+            paddingHorizontal: 24,
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <Text
+            style={{
+              color: "rgba(255,255,255,0.5)",
+              fontSize: 14,
+              fontWeight: "600",
+            }}
+          >
+            Cancel
+          </Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -1649,20 +2206,18 @@ const makeStyles = (C: {
   OVERLAY?: string;
   INPUT_BG?: string;
 }) => {
-  const isLight = C.BG === "#FFFFFF";
-
   return StyleSheet.create({
     topSafeSpacer: { backgroundColor: C.BG },
 
     headerSolid: {
-      backgroundColor: "#111318",
+      backgroundColor: C.CARD,
       paddingTop: 18,
       paddingBottom: 14,
       paddingHorizontal: 16,
       borderBottomLeftRadius: 18,
       borderBottomRightRadius: 18,
       borderBottomWidth: 1,
-      borderBottomColor: "rgba(255,255,255,0.06)",
+      borderBottomColor: C.BORDER,
     },
 
     heroTitle: {
@@ -1959,9 +2514,9 @@ const makeStyles = (C: {
       right: 0,
       bottom: 0,
       zIndex: 1000,
-      backgroundColor: "#0D0E13",
+      backgroundColor: C.BG,
       borderTopWidth: 1,
-      borderTopColor: "rgba(255,255,255,0.06)",
+      borderTopColor: C.BORDER,
       ...Platform.select({ android: { elevation: 40 } }),
     },
     stickyInner: {
