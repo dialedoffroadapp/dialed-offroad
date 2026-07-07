@@ -9,6 +9,9 @@ const MAX_QUEUED_EVENTS = 25;
 export type UsageEvent =
   | "ai_tune_generated"
   | "ai_tune_generated_zero"
+  | "version_created"
+  | "feedback_submitted"
+  | "outcome_recorded"
   | "session_saved"
   | "session_deleted"
   | "bike_created"

@@ -24,6 +24,11 @@ import {
     Tune2SymptomId,
     ZeroTuneResult,
 } from "../lib/ai";
+import {
+    createBaselineVersion,
+    createFeedback,
+    createRefinementVersion,
+} from "../lib/setupVersions";
 import { useTheme } from "../lib/theme";
 
 const SCALE_MAX = 5;
@@ -57,6 +62,7 @@ type RouteParams = {
   previous?: string; // encoded ZeroTuneResult from Tune One
   context?: string; // encoded Tune2Context (bike + rider info)
   bikeId?: string; // optional – carried through but not required here
+  versionId?: string; // setup_versions id of the tune being critiqued (if saved)
 };
 
 /**
@@ -112,7 +118,7 @@ const ISSUE_TAGS: { id: Tune2SymptomId; label: string }[] = [
 /* ------------------------------------------------------------------ */
 
 export default function TuneFeedbackScreen() {
-  const { meta, previous, context } = useLocalSearchParams<RouteParams>();
+  const { meta, previous, context, versionId } = useLocalSearchParams<RouteParams>();
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
@@ -265,18 +271,8 @@ export default function TuneFeedbackScreen() {
         symptoms,
       };
 
-      console.log("Tune Two feedback payload", {
-        feedback,
-        notes, // not yet used by backend
-      });
-
-      const result = await generateTuneTwo({
-        previous: previousTune,
-        feedback,
-        context: ctxObj ?? undefined,
-      });
-
       // 🔵 Make sure bike id gets forwarded into Tune Two results via meta/context
+      // (derived above the engine call so the lineage shadow writes can use it)
       const anyMeta: any = metaObj || {};
       const anyCtx: any = ctxObj || {};
 
@@ -287,6 +283,58 @@ export default function TuneFeedbackScreen() {
         anyMeta?.bike?.id ??
         anyMeta?.bike_id ??
         null;
+
+      // Lineage shadow writes: persist the feedback against the critiqued
+      // version BEFORE the engine runs, so rider feedback survives even if the
+      // refinement call fails. Never let shadow failures break the flow.
+      let critiquedVersionId: string | null =
+        typeof versionId === "string" && versionId.length > 0 ? versionId : null;
+      let feedbackId: string | null = null;
+      try {
+        if (!critiquedVersionId) {
+          // Rider is refining a tune they never saved — create the baseline
+          // version on the fly so the feedback has something to point at.
+          const baseline = await createBaselineVersion({
+            bikeId,
+            tune: previousTune,
+            terrain: surface ?? null,
+            context: ctxObj ?? null,
+          });
+          critiquedVersionId = baseline.id;
+        }
+        const fb = await createFeedback({
+          setupVersionId: critiquedVersionId,
+          overallRating: overallSeverity ?? null,
+          symptoms,
+          freeText: notes,
+        });
+        feedbackId = fb.id;
+      } catch (shadowErr) {
+        console.warn("ride_feedback shadow write failed", shadowErr);
+      }
+
+      const result = await generateTuneTwo({
+        previous: previousTune,
+        feedback,
+        context: ctxObj ?? undefined,
+      });
+
+      // Lineage shadow write: record the refinement as a child version and
+      // link it back to the feedback row that produced it.
+      if (critiquedVersionId) {
+        try {
+          await createRefinementVersion({
+            bikeId,
+            parentVersionId: critiquedVersionId,
+            tune: result,
+            terrain: surface ?? null,
+            context: ctxObj ?? null,
+            feedbackId,
+          });
+        } catch (shadowErr) {
+          console.warn("setup_versions refinement shadow write failed", shadowErr);
+        }
+      }
 
       const mergedContext = {
         ...anyCtx,

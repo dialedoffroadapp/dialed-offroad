@@ -77,11 +77,11 @@ export type Tune2SymptomId =
 
 export type Tune2Symptom = {
   id: Tune2SymptomId;
-  severity: number; // UI: 1–5, backend: we normalize to 1–10
+  severity: number; // ALWAYS 1–10; callers convert from their UI scale first
 };
 
 export type Tune2Feedback = {
-  overall_rating?: number;      // UI: 1–5, backend: we normalize to 1–10
+  overall_rating?: number;      // ALWAYS 1–10; callers convert from their UI scale first
   ride_duration_min?: number;   // how long they rode this tune
   terrain_tags?: string[];      // e.g. ["hardpack","whoops"]
   symptoms: Tune2Symptom[];
@@ -167,9 +167,10 @@ export async function generateTuneTwo(params: {
 }): Promise<ZeroTuneResult> {
   const { previous, feedback, context } = params;
 
-  // Normalize feedback so the Edge Function always sees 1–10 scale
+  // Clamp feedback into the 1–10 scale. Callers (tune-feedback) have already
+  // converted their 1–5 UI inputs to 1–10 — do NOT rescale here.
   const normalizedFeedback: Tune2Feedback = {
-    overall_rating: toTenScale(feedback.overall_rating),
+    overall_rating: clampTenScale(feedback.overall_rating),
     ride_duration_min: isFiniteNumber(feedback.ride_duration_min)
       ? feedback.ride_duration_min
       : undefined,
@@ -179,7 +180,7 @@ export async function generateTuneTwo(params: {
           .filter((s) => !!s && !!s.id)
           .map((s) => ({
             id: s.id,
-            severity: toTenScale(s.severity) ?? 6, // default mid if somehow missing
+            severity: clampTenScale(s.severity) ?? 6, // default mid if somehow missing
           }))
       : [],
   };
@@ -268,22 +269,20 @@ function safeBar(n: any): number | undefined {
 }
 
 /**
- * Map a UI rating (1–5 or 1–10) into a clean 1–10 scale.
- * - If value <= 5  → treat as 1–5 and map to 2,4,6,8,10.
- * - If value > 5   → just clamp into 1–10.
+ * Clamp a severity/overall rating into the 1–10 scale.
+ *
+ * Values arriving here are ALREADY ten-scale — the screens convert their 1–5
+ * UI inputs before calling generateTuneTwo. A previous version guessed the
+ * scale by magnitude and doubled anything <= 5, which double-scaled screen
+ * input: overall 2/5 arrived as 8/10 ("nearly perfect") and inverted the
+ * refinement's aggressiveness for unhappy riders. Do not reintroduce scaling.
  */
-function toTenScale(v: any): number | undefined {
+function clampTenScale(v: any): number | undefined {
   if (!isFiniteNumber(v)) return undefined;
   const n = Number(v);
 
   if (n <= 0) return undefined;
 
-  // 1–5 slider → 2,4,6,8,10
-  if (n >= 1 && n <= 5) {
-    return clamp(n * 2, 1, 10);
-  }
-
-  // Already roughly 1–10
   return clamp(n, 1, 10);
 }
 

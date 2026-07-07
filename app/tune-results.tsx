@@ -22,6 +22,7 @@ import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
 import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
 import { ZeroTuneResult } from "../lib/ai";
+import { createBaselineVersion } from "../lib/setupVersions";
 import {
   clearPendingTune,
   readPendingTune,
@@ -154,18 +155,6 @@ export default function TuneResultScreen() {
     }
   }, [effectiveMeta]);
 
-  // ✅ Guest/onboarding flags — derive from LIVE state, not stale meta snapshot.
-  // metaObj.guest was set at tune-generation time (before signup); a signed-in
-  // user is never a guest regardless of what the pending tune's meta says.
-  // Gate on proResolved so the first render (before auth check) doesn't flash
-  // guest/locked UI for a frame then flip — this prevents the "free credit" flash.
-  const isGuest = proResolved ? (!!metaObj?.guest && !isSignedIn) : false;
-  const isOnboarding = !!metaObj?.onboarding && onboardingActive;
-  const isResultsLockedStep = state.onboardingStep === "results_locked";
-  const isOnboardingUnlockStep =
-    state.onboardingStep === "results_locked" ||
-    state.onboardingStep === "trial";
-
   // If we're coming from Tune Two we expect a "previous" tune tucked into meta.
   const previousTune: ZeroTuneResult | null = useMemo(() => {
     const cand =
@@ -206,6 +195,18 @@ export default function TuneResultScreen() {
   const [isPro, setIsPro] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [proResolved, setProResolved] = useState(false);
+
+  // ✅ Guest/onboarding flags — derive from LIVE state, not stale meta snapshot.
+  // metaObj.guest was set at tune-generation time (before signup); a signed-in
+  // user is never a guest regardless of what the pending tune's meta says.
+  // Gate on proResolved so the first render (before auth check) doesn't flash
+  // guest/locked UI for a frame then flip — this prevents the "free credit" flash.
+  const isGuest = proResolved ? (!!metaObj?.guest && !isSignedIn) : false;
+  const isOnboarding = !!metaObj?.onboarding && onboardingActive;
+  const isResultsLockedStep = state.onboardingStep === "results_locked";
+  const isOnboardingUnlockStep =
+    state.onboardingStep === "results_locked" ||
+    state.onboardingStep === "trial";
 
   // Load Pro status from Supabase profiles — re-checks on every focus
   // so returning from the paywall reflects a new purchase immediately.
@@ -300,6 +301,9 @@ export default function TuneResultScreen() {
   }, [base, mode]);
 
   const [savingBaseline, setSavingBaseline] = useState(false);
+  // Lineage shadow table: id of the setup_versions row created on save, so the
+  // refine flow can critique it instead of lazily re-creating a baseline.
+  const baselineVersionIdRef = useRef<string | null>(null);
 
   // Preset save (with rename modal)
   const [showNameModal, setShowNameModal] = useState(false);
@@ -658,16 +662,30 @@ export default function TuneResultScreen() {
         return;
       }
 
-      const { data: authCheck } = await supabase.auth.getUser();
-      if (state.accountCreated || !!authCheck?.user?.id) {
+      // Local session check — a ROUTING signal only. getSession() reads from
+      // storage and cannot fail from network, unlike getUser(), whose round
+      // trip misrouted real account holders to /signup when offline or during
+      // a slow token refresh. The session may be expired; supabase-js refreshes
+      // it on the next API call, so it is not treated as a valid token here.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const sessionUserId = sessionData?.session?.user?.id ?? null;
+
+      if (sessionUserId) {
         await setStep("trial");
-        if (authCheck?.user?.id) {
-          void supabase.from("profiles").upsert(
-            { user_id: authCheck.user.id, onboarding_step: "trial" },
-            { onConflict: "user_id" }
-          );
-        }
+        // Best-effort profile sync; fires the client's refresh if needed.
+        void supabase.from("profiles").upsert(
+          { user_id: sessionUserId, onboarding_step: "trial" },
+          { onConflict: "user_id" }
+        );
         router.replace("/premium");
+        return;
+      }
+
+      if (state.accountCreated) {
+        // Has an account but no local session — sign in first. Never /signup
+        // (their email is already registered → dead end) and never straight
+        // to /premium (a purchase there could not attach to their profile).
+        router.replace("/login");
         return;
       }
 
@@ -720,6 +738,7 @@ export default function TuneResultScreen() {
         previous: encodeURIComponent(JSON.stringify(result)),
         context: encodeURIComponent(JSON.stringify(ctxForFeedback)),
         bikeId: bikeId ?? "",
+        versionId: baselineVersionIdRef.current ?? "",
       },
     });
   };
@@ -814,6 +833,22 @@ export default function TuneResultScreen() {
 
       const { error } = await supabase.from("sessions").insert(insert);
       if (error) throw error;
+
+      // Shadow write to the lineage table. Runs in parallel with the sessions
+      // insert above and must never break the existing save flow.
+      try {
+        const version = await createBaselineVersion({
+          bikeId,
+          tune: result,
+          terrain: Array.isArray(metaObj?.context?.terrain)
+            ? metaObj.context.terrain[0] ?? null
+            : metaObj?.context?.terrain ?? null,
+          context: metaObj?.context ?? null,
+        });
+        baselineVersionIdRef.current = version.id;
+      } catch (shadowErr) {
+        console.warn("setup_versions shadow write failed", shadowErr);
+      }
 
       // Only clear the pending tune once onboarding is fully complete.
       // During results_locked the pending tune must stay in storage so the
