@@ -86,9 +86,19 @@ export type Tune2Feedback = {
   ride_duration_min?: number;   // how long they rode this tune
   terrain_tags?: string[];      // e.g. ["hardpack","whoops"]
   symptoms: Tune2Symptom[];
-  // "Don't touch" areas the rider says are already working. Pass-through for
-  // now — the engine consumes it in the next step.
+  // "Don't touch" areas the rider says are already working (engine v2).
   protected?: { area: string }[];
+  // Raw rider note — parsed server-side into structured feedback (engine v2).
+  free_text?: string;
+};
+
+// Engine v2 adaptive step: what the last refinement did and how it went.
+export type Tune2LastOutcome = {
+  outcome: "improved" | "same" | "worse";
+  symptoms: Tune2SymptomId[];
+  deltas: Partial<
+    Record<"fork_comp" | "fork_reb" | "shock_lsc" | "shock_reb" | "shock_hsc", number>
+  >;
 };
 
 export type Tune2Context = {
@@ -168,8 +178,13 @@ export async function generateTuneTwo(params: {
   previous: ZeroTuneResult;
   feedback: Tune2Feedback;
   context?: Tune2Context;
+  // When provided, the most recent outcome-rated refinement for this bike is
+  // sent so the engine can adapt its step size (engine v2). Fail-open.
+  bikeId?: string | null;
 }): Promise<ZeroTuneResult> {
-  const { previous, feedback, context } = params;
+  const { previous, feedback, context, bikeId } = params;
+
+  const lastOutcome = bikeId ? await fetchLastOutcome(bikeId) : undefined;
 
   // Clamp feedback into the 1–10 scale. Callers (tune-feedback) have already
   // converted their 1–5 UI inputs to 1–10 — do NOT rescale here.
@@ -191,6 +206,10 @@ export async function generateTuneTwo(params: {
     protected: feedback.protected?.length
       ? feedback.protected.slice(0, 8)
       : undefined,
+    free_text:
+      typeof feedback.free_text === "string" && feedback.free_text.trim().length
+        ? feedback.free_text.trim().slice(0, 800)
+        : undefined,
   };
 
   const payload = {
@@ -224,6 +243,7 @@ export async function generateTuneTwo(params: {
       // Tune Two specific
       previous,
       feedback: normalizedFeedback,
+      last_outcome: lastOutcome,
     },
   };
 
@@ -231,6 +251,76 @@ export async function generateTuneTwo(params: {
   if (error) throw new Error(error.message || "AI Tune Two failed");
 
   return normalizeResult(data as Partial<ZeroTuneResult>);
+}
+
+/**
+ * fetchLastOutcome
+ * Most recent outcome-rated ride_feedback for this bike, with the per-circuit
+ * deltas its refinement applied (computed from the linked version rows).
+ * Fail-open: any error or missing data returns undefined and the refinement
+ * proceeds without the adaptive step.
+ */
+async function fetchLastOutcome(
+  bikeId: string
+): Promise<Tune2LastOutcome | undefined> {
+  try {
+    const { data: versions, error: vErr } = await supabase
+      .from("setup_versions")
+      .select("id")
+      .eq("bike_id", bikeId)
+      .limit(200);
+    if (vErr || !versions?.length) return undefined;
+
+    const ids = versions.map((v: any) => v.id);
+    const { data: fb, error: fbErr } = await supabase
+      .from("ride_feedback")
+      .select("outcome, symptoms, setup_version_id, resulting_version_id")
+      .in("setup_version_id", ids)
+      .not("outcome", "is", null)
+      .not("resulting_version_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (fbErr || !fb?.outcome || !fb.resulting_version_id) return undefined;
+
+    const { data: rows, error: rErr } = await supabase
+      .from("setup_versions")
+      .select(
+        "id, fork_comp_clicks, fork_reb_clicks, shock_lsc_clicks, shock_reb_clicks, shock_hsc_turns"
+      )
+      .in("id", [fb.setup_version_id, fb.resulting_version_id]);
+    if (rErr) return undefined;
+
+    const parent = rows?.find((r: any) => r.id === fb.setup_version_id);
+    const child = rows?.find((r: any) => r.id === fb.resulting_version_id);
+    if (!parent || !child) return undefined;
+
+    const diff = (a: unknown, b: unknown) =>
+      typeof a === "number" && typeof b === "number" ? b - a : 0;
+
+    const deltas: Tune2LastOutcome["deltas"] = {};
+    const pairs: [keyof Tune2LastOutcome["deltas"], number][] = [
+      ["fork_comp", diff(parent.fork_comp_clicks, child.fork_comp_clicks)],
+      ["fork_reb", diff(parent.fork_reb_clicks, child.fork_reb_clicks)],
+      ["shock_lsc", diff(parent.shock_lsc_clicks, child.shock_lsc_clicks)],
+      ["shock_reb", diff(parent.shock_reb_clicks, child.shock_reb_clicks)],
+      ["shock_hsc", diff(parent.shock_hsc_turns, child.shock_hsc_turns)],
+    ];
+    for (const [key, value] of pairs) {
+      if (value !== 0) deltas[key] = value;
+    }
+    if (!Object.keys(deltas).length) return undefined;
+
+    const symptoms = (Array.isArray(fb.symptoms) ? fb.symptoms : [])
+      .filter((s: any) => s && typeof s.id === "string" && !s.protect)
+      .map((s: any) => s.id as Tune2SymptomId);
+    if (!symptoms.length) return undefined;
+
+    return { outcome: fb.outcome, symptoms, deltas };
+  } catch (e) {
+    console.warn("fetchLastOutcome skipped", e);
+    return undefined;
+  }
 }
 
 /* ------------------------------------------------------------------ */

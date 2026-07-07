@@ -1,3 +1,9 @@
+[functions.ai-tune]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ai-tune/deno.json"
+entrypoint = "./functions/ai-tune/index.ts"
+
 [functions.revenuecat-webhook]
 enabled = true
 verify_jwt = false

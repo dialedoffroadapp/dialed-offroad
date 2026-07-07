@@ -308,6 +308,7 @@ export default function TuneFeedbackScreen() {
         terrain_tags: [surface, condition].filter(Boolean) as string[],
         symptoms,
         protected: protectedList.length ? protectedList : undefined,
+        free_text: notes.trim() || undefined, // engine v2 parses this server-side
       };
 
       // 🔵 Make sure bike id gets forwarded into Tune Two results via meta/context
@@ -362,6 +363,7 @@ export default function TuneFeedbackScreen() {
         previous: previousTune,
         feedback,
         context: ctxObj ?? undefined,
+        bikeId, // enables the engine's adaptive step from the last rated outcome
       });
 
       // Lineage shadow write: record the refinement as a child version and

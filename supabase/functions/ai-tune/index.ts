@@ -1,11 +1,19 @@
 // supabase/functions/ai-tune/index.ts
-// Zero-based MX/Enduro tuning Edge Function
+// Zero-based MX/Enduro tuning Edge Function — engine v2
 // - Mode "zero_baseline_v1": build initial tune (baseline + optional AI refinement)
 // - Mode "tune2_v1": refine an existing tune based on rider feedback
+//   v2 pipeline: auth+ratelimit → free-text parse → merge → symptom switch with
+//   where-context modifiers → per-circuit conflict resolution → protect pass →
+//   adaptive step from last outcome → total clamps → safeShape
 // - Enforces guardrails and returns deterministic JSON for the app UI
 
 // deno-lint-ignore-file no-explicit-any
+import { createClient } from "npm:@supabase/supabase-js@2";
+
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
 /* ----------------------------- Shared types ----------------------------- */
 
@@ -47,6 +55,7 @@ type ZeroInput = {
     // When mode === "tune2_v1", the client should also send:
     previous?: ZeroResult; // previous full tune result
     feedback?: Tune2Feedback;
+    last_outcome?: Tune2LastOutcome; // adaptive step input (optional)
   };
 };
 
@@ -79,9 +88,14 @@ type SymptomId =
   | "headshake"
   | "general_harsh";
 
+type WhereTag = "braking" | "corners" | "whoops" | "landings";
+type ProtectArea = "rear_traction" | "front_planted" | "landings" | "cornering";
+
 type Tune2Symptom = {
   id: SymptomId;
   severity: number; // 1–10
+  where?: WhereTag; // optional location context (v2)
+  source?: "explicit" | "parsed"; // provenance (v2, set by merge stage)
 };
 
 type Tune2Feedback = {
@@ -89,7 +103,26 @@ type Tune2Feedback = {
   ride_duration_min?: number;
   terrain_tags?: string[];
   symptoms: Tune2Symptom[];
+  free_text?: string; // raw rider note (v2, parsed server-side)
+  protected?: { area: string }[]; // "don't touch" areas (v2)
 };
+
+type Tune2LastOutcome = {
+  outcome: "improved" | "same" | "worse";
+  symptoms: SymptomId[]; // symptom ids the previous refinement addressed
+  deltas: Partial<Record<ClickCircuit, number>>; // per-circuit deltas it applied
+};
+
+type Circuit =
+  | "fork_comp"
+  | "fork_reb"
+  | "shock_lsc"
+  | "shock_reb"
+  | "shock_hsc"
+  | "fork_air";
+type ClickCircuit = Exclude<Circuit, "fork_air">;
+
+type Contribution = { symptomId: SymptomId; delta: number; severity: number };
 
 type Tune2Input = {
   make?: string;
@@ -106,6 +139,10 @@ type Tune2Input = {
   previous: ZeroResult;
   feedback: Tune2Feedback;
   guardrails?: ZeroInput["input"]["guardrails"];
+  // v2 additions (populated by the handler after parse+merge):
+  protectedAreas?: ProtectArea[];
+  lastOutcome?: Tune2LastOutcome;
+  parsedAddedIds?: SymptomId[];
 };
 
 const CORS_HEADERS = {
@@ -385,7 +422,7 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline) {
 
 /* ------------------------- Guardrail shaping ------------------------- */
 
-function safeShape(
+export function safeShape(
   partial: Partial<ZeroResult>,
   g: ZeroInput["input"]["guardrails"] | undefined
 ): ZeroResult {
@@ -776,9 +813,265 @@ const SYMPTOM_LABELS: Record<SymptomId, string> = {
   general_harsh: "general harsh feel",
 };
 
+/* ------------------- v2 vocabularies + validation helpers ------------------- */
+
+const KNOWN_SYMPTOM_IDS = new Set<SymptomId>([
+  "harsh_braking_bumps",
+  "deflects_in_chop",
+  "rear_kicks_accel",
+  "bottoms_landings",
+  "front_knifes",
+  "dead_feel",
+  "unstable_whoops",
+  "packs_whoops",
+  "harsh_square_edge",
+  "headshake",
+  "general_harsh",
+]);
+
+const KNOWN_WHERES = new Set<WhereTag>([
+  "braking",
+  "corners",
+  "whoops",
+  "landings",
+]);
+
+const KNOWN_AREAS = new Set<ProtectArea>([
+  "rear_traction",
+  "front_planted",
+  "landings",
+  "cornering",
+]);
+
+const AREA_LABELS: Record<ProtectArea, string> = {
+  rear_traction: "rear traction",
+  front_planted: "front-end feel",
+  landings: "landings",
+  cornering: "cornering",
+};
+
+// Which circuits each protected area covers (Change 6)
+const PROTECT_MAP: Record<ProtectArea, ClickCircuit[]> = {
+  rear_traction: ["shock_lsc", "shock_reb"],
+  front_planted: ["fork_comp", "fork_reb"],
+  landings: ["shock_hsc", "shock_lsc"],
+  cornering: ["fork_comp", "fork_reb"],
+};
+
+const CIRCUIT_META: Record<Circuit, { label: string; unit: number }> = {
+  fork_comp: { label: "fork compression", unit: 1 },
+  fork_reb: { label: "fork rebound", unit: 1 },
+  shock_lsc: { label: "shock low-speed compression", unit: 1 },
+  shock_reb: { label: "shock rebound", unit: 1 },
+  shock_hsc: { label: "shock high-speed compression", unit: 0.15 },
+  fork_air: { label: "fork air pressure", unit: 0.05 },
+};
+
+function normalizeWhere(v: unknown): WhereTag | undefined {
+  if (typeof v !== "string") return undefined;
+  const w = v.trim().toLowerCase();
+  return KNOWN_WHERES.has(w as WhereTag) ? (w as WhereTag) : undefined;
+}
+
+function normalizeArea(v: unknown): ProtectArea | undefined {
+  if (typeof v !== "string") return undefined;
+  const a = v.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return KNOWN_AREAS.has(a as ProtectArea) ? (a as ProtectArea) : undefined;
+}
+
+function fmtDelta(n: number): string {
+  const body = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  return n > 0 ? `+${body}` : body;
+}
+
+/* --------------------- v2 free-text parsing (Change 2) --------------------- */
+
+const PARSE_SYSTEM_PROMPT = [
+  "You extract structured dirt-bike suspension feedback from a rider's free-text ride note.",
+  'Return ONLY strict JSON with this exact shape: {"symptoms":[{"id":"...","severity":5,"where":"..."}],"protected":[{"area":"..."}]}',
+  "Rules:",
+  `- "id" MUST be one of: ${[...KNOWN_SYMPTOM_IDS].join(", ")}.`,
+  '- "severity" is an integer 1-10 for how bad it sounds; use 5 when unclear.',
+  '- "where" is optional and MUST be one of: braking, corners, whoops, landings. Omit it when the note does not say where.',
+  '- "protected" entries are ONLY for things the rider says are working well and should not change; "area" MUST be one of: rear_traction, front_planted, landings, cornering.',
+  "- If a statement does not map cleanly onto these vocabularies, OMIT it. Never invent symptoms, severities, wheres, or areas.",
+  "- Empty arrays are valid. Return no other keys and no prose.",
+].join("\n");
+
+/**
+ * callParseFeedback — extract structured feedback from a rider's free-text note.
+ * Fail-open by design: any timeout, HTTP error, or unparseable response returns
+ * null and the pipeline continues on explicit input only.
+ */
+export async function callParseFeedback(
+  freeText: string,
+  fetcher: typeof fetch = fetch
+): Promise<unknown | null> {
+  if (!OPENAI_API_KEY) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const resp = await fetcher("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: PARSE_SYSTEM_PROMPT },
+          { role: "user", content: freeText.slice(0, 1000) },
+        ],
+        temperature: 0,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`OpenAI HTTP ${resp.status}: ${text.slice(0, 120)}`);
+    }
+
+    const json = await resp.json();
+    const content: string = json?.choices?.[0]?.message?.content ?? "{}";
+    return JSON.parse(String(content));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("free-text parse skipped (fail-open):", msg.slice(0, 160));
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * sanitizeParsedFeedback — server-side validation of whatever the parse model
+ * returned. Everything is whitelisted/clamped regardless of what came back.
+ */
+export function sanitizeParsedFeedback(raw: unknown): {
+  symptoms: Tune2Symptom[];
+  protectedAreas: ProtectArea[];
+} {
+  const out: { symptoms: Tune2Symptom[]; protectedAreas: ProtectArea[] } = {
+    symptoms: [],
+    protectedAreas: [],
+  };
+  if (!raw || typeof raw !== "object") return out;
+  const r = raw as any;
+
+  if (Array.isArray(r.symptoms)) {
+    for (const s of r.symptoms) {
+      if (!s || typeof s !== "object") continue;
+      const id = typeof s.id === "string" ? s.id.trim() : "";
+      if (!KNOWN_SYMPTOM_IDS.has(id as SymptomId)) continue; // unknown ids dropped
+      const severity = clampInt(Number(s.severity) || 5, 1, 10);
+      const where = normalizeWhere(s.where);
+      out.symptoms.push({
+        id: id as SymptomId,
+        severity,
+        ...(where ? { where } : {}),
+        source: "parsed",
+      });
+    }
+  }
+
+  if (Array.isArray(r.protected)) {
+    for (const p of r.protected) {
+      const area = normalizeArea(p?.area);
+      if (area && !out.protectedAreas.includes(area)) {
+        out.protectedAreas.push(area);
+      }
+    }
+  }
+
+  return out;
+}
+
+/* --------------------------- v2 merge stage (Change 3) --------------------------- */
+
+/**
+ * mergeFeedback — combine explicit chip feedback with parsed free-text feedback.
+ * Per symptom id, explicit chips win on conflict (severity AND where); parsed
+ * symptoms only add ids the rider didn't chip. Same rule for protected areas
+ * (union — same vocabulary, no per-area payload to conflict on).
+ */
+export function mergeFeedback(
+  explicit: Tune2Feedback | undefined,
+  parsed: { symptoms: Tune2Symptom[]; protectedAreas: ProtectArea[] } | null
+): {
+  symptoms: Tune2Symptom[];
+  protectedAreas: ProtectArea[];
+  parsedAddedIds: SymptomId[];
+} {
+  const symptoms: Tune2Symptom[] = [];
+  const seen = new Set<SymptomId>();
+
+  for (const s of explicit?.symptoms ?? []) {
+    if (!s || !KNOWN_SYMPTOM_IDS.has(s.id as SymptomId)) continue;
+    if (seen.has(s.id)) continue;
+    seen.add(s.id);
+    const where = normalizeWhere(s.where);
+    symptoms.push({
+      id: s.id,
+      severity: s.severity,
+      ...(where ? { where } : {}),
+      source: "explicit",
+    });
+  }
+
+  const parsedAddedIds: SymptomId[] = [];
+  for (const s of parsed?.symptoms ?? []) {
+    if (seen.has(s.id)) continue; // explicit chip wins
+    seen.add(s.id);
+    symptoms.push(s);
+    parsedAddedIds.push(s.id);
+  }
+
+  const protectedAreas: ProtectArea[] = [];
+  for (const p of explicit?.protected ?? []) {
+    const area = normalizeArea(p?.area);
+    if (area && !protectedAreas.includes(area)) protectedAreas.push(area);
+  }
+  for (const area of parsed?.protectedAreas ?? []) {
+    if (!protectedAreas.includes(area)) protectedAreas.push(area);
+  }
+
+  return { symptoms, protectedAreas, parsedAddedIds };
+}
+
+/** sanitizeLastOutcome — whitelist/clamp the optional adaptive-step input. */
+export function sanitizeLastOutcome(raw: unknown): Tune2LastOutcome | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as any;
+  if (!["improved", "same", "worse"].includes(r.outcome)) return undefined;
+
+  const symptoms: SymptomId[] = Array.isArray(r.symptoms)
+    ? r.symptoms.filter((id: unknown) =>
+        KNOWN_SYMPTOM_IDS.has(id as SymptomId)
+      )
+    : [];
+
+  const deltas: Tune2LastOutcome["deltas"] = {};
+  if (r.deltas && typeof r.deltas === "object") {
+    for (const key of ["fork_comp", "fork_reb", "shock_lsc", "shock_reb", "shock_hsc"] as ClickCircuit[]) {
+      const v = Number(r.deltas[key]);
+      if (Number.isFinite(v) && v !== 0) {
+        deltas[key] = clampFloat(v, -10, 10);
+      }
+    }
+  }
+
+  if (!symptoms.length || !Object.keys(deltas).length) return undefined;
+  return { outcome: r.outcome, symptoms, deltas };
+}
+
 /* --------------------------- Tune Two engine (mode: tune2_v1) --------------------------- */
 
-function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
+export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   const prev = input.previous;
 
   // Start from previous tune
@@ -790,7 +1083,6 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   let shockHSC = prev.shock.hsc_turns;
   const sag = prev.shock.sag_mm; // keep sag constant in Tune Two (for now)
 
-  const notes: string[] = [];
   const fb = input.feedback;
   const symptoms = fb?.symptoms ?? [];
 
@@ -822,13 +1114,39 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     };
   }
 
-  // Accumulate deltas per circuit
-  let dForkComp = 0;
-  let dForkReb = 0;
-  let dShockLSC = 0;
-  let dShockReb = 0;
-  let dShockHSC = 0;
-  let dAir = 0;
+  // v2: accumulate per-circuit CONTRIBUTIONS instead of running sums, so
+  // opposing symptoms can be resolved explicitly (Change 5).
+  const contribs: Record<Circuit, Contribution[]> = {
+    fork_comp: [],
+    fork_reb: [],
+    shock_lsc: [],
+    shock_reb: [],
+    shock_hsc: [],
+    fork_air: [],
+  };
+  const symptomNotes: string[] = [];
+
+  const add = (
+    circuit: Circuit,
+    symptomId: SymptomId,
+    delta: number,
+    severity: number
+  ) => {
+    if (delta === 0) return;
+    contribs[circuit].push({
+      symptomId,
+      delta,
+      severity: clampInt(severity || 5, 1, 10),
+    });
+  };
+
+  if (input.parsedAddedIds?.length) {
+    const labels = input.parsedAddedIds
+      .map((id) => SYMPTOM_LABELS[id])
+      .filter(Boolean)
+      .join(", ");
+    symptomNotes.push(`From your written note, I also picked up: ${labels}.`);
+  }
 
   const clickDeltaForSeverity = (sev: number) => {
     const s = clampInt(sev || 5, 1, 10);
@@ -854,94 +1172,163 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     return clampFloat(scaled, 0.03, 0.3);
   };
 
+  // Where-suffix helper for symptom+where combos that have NO special modifier
+  // (Change 4: "the where still appears in that symptom's note").
+  const whereSuffix = (s: Tune2Symptom) =>
+    s.where ? ` (reported in ${s.where})` : "";
+
+  // Reusable case bodies so where-modifiers can route between them (Change 4).
+  const applyBottomsLandings = (s: Tune2Symptom, routedFrom?: SymptomId) => {
+    const scale = clickDeltaForSeverity(s.severity);
+    const airScale = airDeltaForSeverity(s.severity);
+    const dLSC = Math.max(1, scale - 1);
+    const dHSC = 0.15 * (scale >= 3 ? 2 : 1);
+    add("shock_lsc", s.id, -dLSC, s.severity);
+    add("shock_hsc", s.id, -dHSC, s.severity);
+    if (air !== undefined) add("fork_air", s.id, airScale * 0.7, s.severity);
+    if (routedFrom) {
+      symptomNotes.push(
+        `Harshness on landings is a bottoming problem → -${dLSC} shock LSC clicks (firmer) and -${dHSC.toFixed(
+          2
+        )} HSC turns.`
+      );
+    } else {
+      symptomNotes.push(
+        `Bottoming on landings / G-outs → -${dLSC} shock LSC clicks (firmer) and -${dHSC.toFixed(
+          2
+        )} HSC turns.${routedFrom ? "" : whereSuffix(s) && s.where !== "whoops" ? whereSuffix(s) : ""}`
+      );
+    }
+    if (air !== undefined) {
+      symptomNotes.push(
+        `Also +${(airScale * 0.7).toFixed(
+          2
+        )} bar fork AER for more mid-stroke support.`
+      );
+    }
+    // bottoms_landings + whoops → also slow the shock for whoop faces (Change 4)
+    if (!routedFrom && s.where === "whoops") {
+      add("shock_reb", s.id, -1, s.severity);
+      symptomNotes.push(
+        "Since the bottoming is in whoops → also -1 shock rebound click (slower on whoop faces)."
+      );
+    }
+  };
+
+  const applyFrontKnifes = (s: Tune2Symptom, routedFrom?: SymptomId) => {
+    const scale = clickDeltaForSeverity(s.severity);
+    const dComp = Math.max(1, scale - 1);
+    add("fork_comp", s.id, -dComp, s.severity);
+    add("fork_reb", s.id, 1, s.severity);
+    if (routedFrom === "unstable_whoops") {
+      symptomNotes.push(
+        `Instability in corners points at the front end → -${dComp} fork compression clicks (firmer) and +1 fork rebound click for support.`
+      );
+    } else {
+      symptomNotes.push(
+        `Front knifing in corners → -${dComp} fork compression clicks (firmer) and +1 fork rebound click for a touch more pop.`
+      );
+    }
+  };
+
   for (const s of symptoms) {
     const scale = clickDeltaForSeverity(s.severity);
     const airScale = airDeltaForSeverity(s.severity);
 
     switch (s.id) {
       case "harsh_braking_bumps": {
+        if (s.where === "landings") {
+          // Change 4: it's a bottoming complaint — route to bottoms logic.
+          applyBottomsLandings(s, "harsh_braking_bumps");
+          break;
+        }
         // Front is too stiff / spiky on small chop → soften comp, tiny air tweak
-        dForkComp += scale; // more clicks out = softer
-        if (air !== undefined) dAir -= airScale * 0.5;
-        notes.push(
+        add("fork_comp", s.id, scale, s.severity); // more clicks out = softer
+        if (s.where === "corners") {
+          // Change 4: weight softening toward fork comp only, skip the air tweak.
+          symptomNotes.push(
+            `Harsh into corners → +${scale} fork compression clicks (softer), leaving air pressure alone.`
+          );
+          break;
+        }
+        if (air !== undefined) add("fork_air", s.id, -(airScale * 0.5), s.severity);
+        symptomNotes.push(
           `Harsh on braking bumps → +${scale} fork compression clicks (softer).${
             air !== undefined
               ? ` Optionally -${airScale.toFixed(2)} bar AER.`
               : ""
-          }`
+          }${s.where === "whoops" ? "" : whereSuffix(s)}`
         );
+        if (s.where === "whoops") {
+          // Change 4: harshness in whoops → also soften the shock a touch.
+          add("shock_lsc", s.id, 1, s.severity);
+          symptomNotes.push(
+            "Since it's harsh in the whoops → also +1 shock LSC click (softer)."
+          );
+        }
         break;
       }
       case "deflects_in_chop": {
         // Front hunts side to side → rebound too fast → slower rebound
-        dForkReb -= scale; // fewer clicks = slower
-        notes.push(
-          `Front deflects in chop → -${scale} fork rebound clicks (slower to keep the tire planted).`
+        add("fork_reb", s.id, -scale, s.severity); // fewer clicks = slower
+        symptomNotes.push(
+          `Front deflects in chop → -${scale} fork rebound clicks (slower to keep the tire planted).${whereSuffix(s)}`
         );
         break;
       }
       case "rear_kicks_accel": {
         // Rear kicking on throttle → rebound too fast
-        dShockReb -= scale;
-        notes.push(
-          `Rear kicks on acceleration chop → -${scale} shock rebound clicks (slower to stop kicking).`
+        add("shock_reb", s.id, -scale, s.severity);
+        symptomNotes.push(
+          `Rear kicks on acceleration chop → -${scale} shock rebound clicks (slower to stop kicking).${whereSuffix(s)}`
         );
         break;
       }
       case "bottoms_landings": {
-        // Big hits / landings → need more bottoming resistance
-        const dLSC = Math.max(1, scale - 1);
-        const dHSC = 0.15 * (scale >= 3 ? 2 : 1);
-        dShockLSC -= dLSC;
-        dShockHSC -= dHSC;
-        if (air !== undefined) dAir += airScale * 0.7;
-        notes.push(
-          `Bottoming on landings / G-outs → -${dLSC} shock LSC clicks (firmer) and -${dHSC.toFixed(
-            2
-          )} HSC turns.`
-        );
-        if (air !== undefined) {
-          notes.push(
-            `Also +${(airScale * 0.7).toFixed(
-              2
-            )} bar fork AER for more mid-stroke support.`
-          );
-        }
+        applyBottomsLandings(s);
         break;
       }
       case "front_knifes": {
-        // Front diving / knifing mid-corner → more support + slightly faster rebound
-        const dComp = Math.max(1, scale - 1);
-        dForkComp -= dComp; // firmer
-        dForkReb += 1; // tiny bit more pop
-        notes.push(
-          `Front knifing in corners → -${dComp} fork compression clicks (firmer) and +1 fork rebound click for a touch more pop.`
-        );
+        applyFrontKnifes(s);
         break;
       }
       case "dead_feel": {
+        if (s.where === "corners") {
+          // Change 4: fork-only version — skip the shock rebound change.
+          add("fork_reb", s.id, scale, s.severity);
+          add("fork_comp", s.id, -1, s.severity);
+          symptomNotes.push(
+            `Dead feel in corners → +${scale} fork rebound clicks (livelier front) with -1 fork comp click for support, leaving the shock alone.`
+          );
+          break;
+        }
         // Bike feels glued / no pop → more rebound speed, a bit more support
-        dForkReb += scale;
-        dShockReb += Math.max(1, scale - 1);
-        dForkComp -= 1;
-        notes.push(
+        add("fork_reb", s.id, scale, s.severity);
+        add("shock_reb", s.id, Math.max(1, scale - 1), s.severity);
+        add("fork_comp", s.id, -1, s.severity);
+        symptomNotes.push(
           `Bike feels dead / no pop → +${scale} fork rebound clicks and +${Math.max(
             1,
             scale - 1
-          )} shock rebound clicks (faster), with -1 fork comp click for a bit more support.`
+          )} shock rebound clicks (faster), with -1 fork comp click for a bit more support.${whereSuffix(s)}`
         );
         break;
       }
       case "unstable_whoops": {
+        if (s.where === "corners") {
+          // Change 4: instability in corners → treat as front_knifes instead.
+          applyFrontKnifes(s, "unstable_whoops");
+          break;
+        }
         // Unstable in whoops → more control (slower rebound)
-        dForkReb -= scale;
-        dShockReb -= scale;
-        if (air !== undefined) dAir += airScale * 0.4;
-        notes.push(
-          `Unstable in whoops → -${scale} fork rebound clicks and -${scale} shock rebound clicks (slower for stability).`
+        add("fork_reb", s.id, -scale, s.severity);
+        add("shock_reb", s.id, -scale, s.severity);
+        if (air !== undefined) add("fork_air", s.id, airScale * 0.4, s.severity);
+        symptomNotes.push(
+          `Unstable in whoops → -${scale} fork rebound clicks and -${scale} shock rebound clicks (slower for stability).${whereSuffix(s)}`
         );
         if (air !== undefined) {
-          notes.push(
+          symptomNotes.push(
             `Slight +${(airScale * 0.4).toFixed(
               2
             )} bar AER to hold up in whoops.`
@@ -951,28 +1338,37 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
       }
       case "packs_whoops": {
         // Packing in whoops → rebound too slow → speed it up
-        dForkReb += scale;
-        dShockReb += scale;
-        notes.push(
-          `Packing in whoops → +${scale} fork rebound clicks and +${scale} shock rebound clicks (faster to avoid packing).`
+        add("fork_reb", s.id, scale, s.severity);
+        add("shock_reb", s.id, scale, s.severity);
+        symptomNotes.push(
+          `Packing in whoops → +${scale} fork rebound clicks and +${scale} shock rebound clicks (faster to avoid packing).${whereSuffix(s)}`
         );
         break;
       }
       case "harsh_square_edge": {
         // Sharp square-edge → comp too stiff
         const dLSC = Math.max(1, scale - 1);
-        dForkComp += scale;
-        dShockLSC += dLSC;
-        notes.push(
-          `Harsh on square-edge → +${scale} fork compression clicks (softer) and +${dLSC} shock LSC clicks for traction.`
+        add("fork_comp", s.id, scale, s.severity);
+        add("shock_lsc", s.id, dLSC, s.severity);
+        symptomNotes.push(
+          `Harsh on square-edge → +${scale} fork compression clicks (softer) and +${dLSC} shock LSC clicks for traction.${
+            s.where === "corners" ? "" : whereSuffix(s)
+          }`
         );
+        if (s.where === "corners") {
+          // Change 4: square-edge harshness in corners → add the front_knifes pop move.
+          add("fork_reb", s.id, 1, s.severity);
+          symptomNotes.push(
+            "Since it's in corners → also +1 fork rebound click for a touch more front-end pop."
+          );
+        }
         break;
       }
       case "headshake": {
         // High-speed headshake → calm chassis (small clicks only)
-        dShockReb -= 1;
-        dForkReb -= 1;
-        notes.push(
+        add("shock_reb", s.id, -1, s.severity);
+        add("fork_reb", s.id, -1, s.severity);
+        symptomNotes.push(
           "High-speed headshake → -1 fork rebound click and -1 shock rebound click (slightly slower) for stability."
         );
         break;
@@ -980,14 +1376,14 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
       case "general_harsh": {
         // General harshness → small global softening
         const dComp = Math.max(1, scale - 1);
-        dForkComp += dComp;
-        dShockLSC += 1;
-        if (air !== undefined) dAir -= airScale * 0.5;
-        notes.push(
-          `General harshness → +${dComp} fork compression clicks (softer) and +1 shock LSC click.`
+        add("fork_comp", s.id, dComp, s.severity);
+        add("shock_lsc", s.id, 1, s.severity);
+        if (air !== undefined) add("fork_air", s.id, -(airScale * 0.5), s.severity);
+        symptomNotes.push(
+          `General harshness → +${dComp} fork compression clicks (softer) and +1 shock LSC click.${whereSuffix(s)}`
         );
         if (air !== undefined) {
-          notes.push(
+          symptomNotes.push(
             `Also -${(airScale * 0.5).toFixed(
               2
             )} bar AER for a touch more comfort.`
@@ -998,13 +1394,140 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     }
   }
 
-  // Clamp total deltas so we never go wild in one step
-  dForkComp = clampInt(dForkComp, -4, 4);
-  dForkReb = clampInt(dForkReb, -4, 4);
-  dShockLSC = clampInt(dShockLSC, -4, 4);
-  dShockReb = clampInt(dShockReb, -4, 4);
-  dShockHSC = clampFloat(dShockHSC, -0.5, 0.5);
-  dAir = clampFloat(dAir, -0.3, 0.3);
+  // ---- Change 5: per-circuit conflict resolution (replaces silent summing) ----
+  const conflictNotes: string[] = [];
+  const resolved: Record<Circuit, number> = {
+    fork_comp: 0,
+    fork_reb: 0,
+    shock_lsc: 0,
+    shock_reb: 0,
+    shock_hsc: 0,
+    fork_air: 0,
+  };
+
+  for (const circuit of Object.keys(contribs) as Circuit[]) {
+    const list = contribs[circuit];
+    if (!list.length) continue;
+
+    const pos = list.filter((c) => c.delta > 0);
+    const neg = list.filter((c) => c.delta < 0);
+
+    if (!pos.length || !neg.length) {
+      // All contributions agree in sign → sum as before.
+      resolved[circuit] = list.reduce((acc, c) => acc + c.delta, 0);
+      continue;
+    }
+
+    // Opposing signs: highest severity wins direction; magnitude shrinks by
+    // the largest opposing pull, never below one adjustment unit.
+    const winner = [...list].sort(
+      (a, b) =>
+        b.severity - a.severity || Math.abs(b.delta) - Math.abs(a.delta)
+    )[0];
+    const opposers = winner.delta > 0 ? neg : pos;
+    const largestOpposer = [...opposers].sort(
+      (a, b) => Math.abs(b.delta) - Math.abs(a.delta)
+    )[0];
+
+    const unit = CIRCUIT_META[circuit].unit;
+    const magnitude = Math.max(
+      unit,
+      Math.abs(winner.delta) - Math.abs(largestOpposer.delta)
+    );
+    resolved[circuit] = Math.sign(winner.delta) * magnitude;
+
+    conflictNotes.push(
+      `You reported both ${SYMPTOM_LABELS[largestOpposer.symptomId]} and ${
+        SYMPTOM_LABELS[winner.symptomId]
+      }, which pull ${CIRCUIT_META[circuit].label} opposite ways — ${
+        SYMPTOM_LABELS[winner.symptomId]
+      } was worse, so I prioritized it with a smaller step.`
+    );
+  }
+
+  // ---- Change 6a: protect pass ----
+  const protectNotes: string[] = [];
+  const protectedCircuits = new Set<Circuit>(); // fully zeroed OR capped — adaptive skips both
+  const handledCircuits = new Set<Circuit>();
+
+  for (const area of input.protectedAreas ?? []) {
+    for (const circuit of PROTECT_MAP[area] ?? []) {
+      if (handledCircuits.has(circuit)) continue;
+      handledCircuits.add(circuit);
+      protectedCircuits.add(circuit);
+
+      const current = resolved[circuit];
+      if (current === 0) continue; // nothing to zero → no note
+
+      const circuitContribs = contribs[circuit];
+      const topSeverity = Math.max(
+        0,
+        ...circuitContribs.map((c) => c.severity)
+      );
+
+      if (topSeverity >= 8) {
+        // A severe symptom demands this circuit → cap at ±1 unit instead of zero.
+        const unit = CIRCUIT_META[circuit].unit;
+        const capped = Math.sign(current) * Math.min(Math.abs(current), unit);
+        resolved[circuit] = capped;
+        const demanding = circuitContribs
+          .filter((c) => c.severity >= 8)
+          .map((c) => SYMPTOM_LABELS[c.symptomId])[0];
+        protectNotes.push(
+          `You asked me to keep ${AREA_LABELS[area]} as-is, but ${demanding} really needs ${CIRCUIT_META[circuit].label} — capping that change at ${fmtDelta(capped)} instead of skipping it.`
+        );
+      } else {
+        resolved[circuit] = 0;
+        protectNotes.push(
+          `Left ${CIRCUIT_META[circuit].label} alone — you said it was working.`
+        );
+      }
+    }
+  }
+
+  // ---- Change 6b: adaptive step from last outcome ----
+  const adaptiveNotes: string[] = [];
+  const lo = input.lastOutcome;
+  if (lo && lo.outcome !== "improved") {
+    for (const key of Object.keys(lo.deltas) as ClickCircuit[]) {
+      const lastDelta = lo.deltas[key];
+      if (!lastDelta || !CIRCUIT_META[key]) continue;
+      // Protection outranks history — never re-touch a protected circuit here.
+      if (protectedCircuits.has(key)) continue;
+      // Only when this feedback re-reports a symptom the last refinement addressed,
+      // and that symptom pulls on this circuit this round.
+      const reReported = contribs[key].some((c) =>
+        lo.symptoms.includes(c.symptomId)
+      );
+      if (!reReported) continue;
+
+      const label = CIRCUIT_META[key].label;
+      if (lo.outcome === "worse") {
+        resolved[key] = -lastDelta;
+        adaptiveNotes.push(
+          `Heads up: last time we moved ${label} by ${fmtDelta(
+            lastDelta
+          )} and it felt WORSE — reversing that this round (${fmtDelta(
+            -lastDelta
+          )}).`
+        );
+      } else if (lo.outcome === "same" && resolved[key] !== 0) {
+        const unit = CIRCUIT_META[key].unit;
+        resolved[key] += Math.sign(resolved[key]) * unit;
+        adaptiveNotes.push(
+          `${label[0].toUpperCase()}${label.slice(1)} didn't change the feel last time, so I'm taking a slightly bigger step this round.`
+        );
+      }
+    }
+  }
+
+  // ---- Existing total clamps so we never go wild in one step ----
+  const dForkComp = clampInt(resolved.fork_comp, -4, 4);
+  const dForkReb = clampInt(resolved.fork_reb, -4, 4);
+  const dShockLSC = clampInt(resolved.shock_lsc, -4, 4);
+  const dShockReb = clampInt(resolved.shock_reb, -4, 4);
+  const dShockHSC = clampFloat(resolved.shock_hsc, -0.5, 0.5);
+  const dAir = clampFloat(resolved.fork_air, -0.3, 0.3);
 
   // Apply deltas
   forkComp += dForkComp;
@@ -1044,6 +1567,16 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   ];
   if (goalsStr) summary.push(goalsStr);
 
+  // Notes priority when trimming to 12 (safeShape slices): summary first, then
+  // adaptive/protect/conflict decisions, then routine per-symptom notes.
+  const notes = [
+    ...summary,
+    ...adaptiveNotes,
+    ...protectNotes,
+    ...conflictNotes,
+    ...symptomNotes,
+  ];
+
   const out: Partial<ZeroResult> = {
     fork: {
       comp_clicks: forkComp,
@@ -1057,109 +1590,264 @@ function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
       sag_mm: sag,
     },
     detected: prev.detected,
-    notes: [...summary, ...notes],
+    notes,
   };
 
   return out;
 }
 
+/* ------------------- Auth + rate limiting (Change 1) ------------------- */
+
+const RATE_LIMIT_USER_PER_HOUR = 20; // authenticated users, all modes
+const RATE_LIMIT_ANON_PER_HOUR = 10; // anon-key callers, baseline only
+const RATE_WINDOW_MS = 60 * 60 * 1000;
+
+export type HandlerDeps = {
+  /** Resolve the calling user's id from the request, or null for anon-key/invalid. */
+  getUserId: (req: Request) => Promise<string | null>;
+  /** Count this caller's ai-tune calls in the last hour. null = infra failure (fail-open). */
+  countRecentCalls: (key: { userId?: string; ip?: string }) => Promise<number | null>;
+  /** Record this call for future rate-limit windows. Must never throw. */
+  recordCall: (row: { userId: string | null; ip: string | null; mode: string }) => Promise<void>;
+  /** Parse free-text feedback (Change 2). null = skip (fail-open). */
+  parseFreeText: (text: string) => Promise<unknown | null>;
+};
+
+// deno-lint-ignore no-explicit-any
+let _anonClient: any = null;
+function getAnonClient() {
+  if (!_anonClient) {
+    _anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false },
+    });
+  }
+  return _anonClient;
+}
+
+// deno-lint-ignore no-explicit-any
+let _serviceClient: any = null;
+function getServiceClient() {
+  if (!_serviceClient) {
+    _serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+    });
+  }
+  return _serviceClient;
+}
+
+export const defaultDeps: HandlerDeps = {
+  getUserId: async (req) => {
+    try {
+      const token = (req.headers.get("Authorization") ?? "")
+        .replace(/^Bearer\s+/i, "")
+        .trim();
+      if (!token) return null;
+      // The anon key is itself a valid JWT but carries no user — getUser()
+      // rejects it, which is exactly the "anon key alone doesn't count" rule.
+      const { data, error } = await getAnonClient().auth.getUser(token);
+      if (error || !data?.user?.id) return null;
+      return data.user.id;
+    } catch {
+      return null;
+    }
+  },
+
+  countRecentCalls: async ({ userId, ip }) => {
+    try {
+      const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
+      let q = getServiceClient()
+        .from("tune_calls")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", since);
+      q = userId ? q.eq("user_id", userId) : q.eq("ip", ip ?? "unknown");
+      const { count, error } = await q;
+      if (error) throw error;
+      return count ?? 0;
+    } catch (e) {
+      // Fail-open: a rate-limit infra hiccup must not take tuning down.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("rate-limit count failed (fail-open):", msg.slice(0, 160));
+      return null;
+    }
+  },
+
+  recordCall: async ({ userId, ip, mode }) => {
+    try {
+      const { error } = await getServiceClient().from("tune_calls").insert({
+        user_id: userId,
+        ip,
+        mode,
+      });
+      if (error) throw error;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("tune_calls insert failed:", msg.slice(0, 160));
+    }
+  },
+
+  parseFreeText: (text) => callParseFeedback(text),
+};
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), { status, headers: CORS_HEADERS });
+}
+
+function callerIp(req: Request): string {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("cf-connecting-ip") ||
+    "unknown"
+  );
+}
+
 /* ------------------------------ Handler ------------------------------ */
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: CORS_HEADERS });
-  }
-
-  try {
-    const body = (await req.json().catch(() => null)) as ZeroInput | null;
-    if (!body || !body.input) {
-      return new Response(JSON.stringify({ error: "Bad request" }), {
-        status: 400,
-        headers: CORS_HEADERS,
-      });
+export function makeHandler(deps: HandlerDeps = defaultDeps) {
+  return async (req: Request): Promise<Response> => {
+    if (req.method === "OPTIONS") {
+      return new Response("ok", { headers: CORS_HEADERS });
     }
 
-    const mode = body.mode ?? "zero_baseline_v1";
+    try {
+      const body = (await req.json().catch(() => null)) as ZeroInput | null;
+      if (!body || !body.input) {
+        return jsonResponse({ error: "Bad request" }, 400);
+      }
 
-    // ------------------------ MODE: Tune Two (feedback refinement) ------------------------
-    if (mode === "tune2_v1") {
-      const raw = body.input as any;
+      const mode = body.mode ?? "zero_baseline_v1";
 
-      if (!raw.previous || !raw.feedback) {
-        return new Response(
-          JSON.stringify({
-            error: "Tune Two requires 'previous' tune and 'feedback'.",
-          }),
-          { status: 400, headers: CORS_HEADERS }
+      // ---------------- Change 1: server-side auth ----------------
+      // tune2_v1 requires a real authenticated user; zero_baseline_v1 permits
+      // anon-key callers (guest onboarding depends on it).
+      const userId = await deps.getUserId(req);
+      if (mode === "tune2_v1" && !userId) {
+        return jsonResponse({ error: "Sign in to refine your tune." }, 401);
+      }
+
+      // ---------------- Change 1: abuse rate limit ----------------
+      const ip = callerIp(req);
+      const limit = userId ? RATE_LIMIT_USER_PER_HOUR : RATE_LIMIT_ANON_PER_HOUR;
+      const recent = await deps.countRecentCalls(
+        userId ? { userId } : { ip }
+      );
+      if (recent !== null && recent >= limit) {
+        return jsonResponse(
+          {
+            error:
+              "You've hit the hourly tune limit — take a breather and try again in a bit.",
+          },
+          429
         );
       }
-
-      const tune2Input: Tune2Input = {
-        make: raw.make,
-        model: raw.model,
-        year: raw.year,
-        terrain: raw.terrain,
-        track: raw.track,
-        rider: raw.rider,
-        previous: raw.previous as ZeroResult,
-        feedback: raw.feedback as Tune2Feedback,
-        guardrails: raw.guardrails,
-      };
-
-      const partial = buildTuneTwo(tune2Input);
-      const result = safeShape(partial, tune2Input.guardrails);
-
-      return new Response(JSON.stringify(result), {
-        status: 200,
-        headers: CORS_HEADERS,
+      await deps.recordCall({
+        userId: userId ?? null,
+        ip: userId ? null : ip,
+        mode,
       });
-    }
 
-    // ------------------------ MODE: Baseline (zero_baseline_v1) ------------------------
-    const z = body.input;
+      // ------------------------ MODE: Tune Two (feedback refinement) ------------------------
+      if (mode === "tune2_v1") {
+        const raw = body.input as any;
 
-    // Build initial baseline (fallback). If OpenAI is available, refine.
-    let partial: Partial<ZeroResult> = buildFallback(z);
+        if (!raw.previous || !raw.feedback) {
+          return jsonResponse(
+            { error: "Tune Two requires 'previous' tune and 'feedback'." },
+            400
+          );
+        }
 
-    if (OPENAI_API_KEY) {
-      try {
-        const ai = await callOpenAI(z);
-        // merge AI fields over baseline
-        partial = {
-          ...partial,
-          ...ai,
-          fork: { ...partial.fork, ...ai?.fork },
-          shock: { ...partial.shock, ...ai?.shock },
-          detected: { ...partial.detected, ...ai?.detected },
-          notes: ai?.notes ?? partial.notes,
+        // ---- Change 2: free-text parse stage (fail-open) ----
+        const freeText =
+          typeof raw.feedback?.free_text === "string"
+            ? raw.feedback.free_text.trim()
+            : "";
+        let parsed: { symptoms: Tune2Symptom[]; protectedAreas: ProtectArea[] } | null =
+          null;
+        if (freeText.length > 0) {
+          // Fail-open even if the parse dep itself throws.
+          const rawParsed = await deps.parseFreeText(freeText).catch((e) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn("free-text parse dep failed (fail-open):", msg.slice(0, 160));
+            return null;
+          });
+          parsed = rawParsed ? sanitizeParsedFeedback(rawParsed) : null;
+        }
+
+        // ---- Change 3: merge (explicit chips win) ----
+        const merged = mergeFeedback(raw.feedback as Tune2Feedback, parsed);
+
+        const tune2Input: Tune2Input = {
+          make: raw.make,
+          model: raw.model,
+          year: raw.year,
+          terrain: raw.terrain,
+          track: raw.track,
+          rider: raw.rider,
+          previous: raw.previous as ZeroResult,
+          feedback: {
+            ...(raw.feedback as Tune2Feedback),
+            symptoms: merged.symptoms,
+          },
+          guardrails: raw.guardrails,
+          protectedAreas: merged.protectedAreas,
+          lastOutcome: sanitizeLastOutcome(raw.last_outcome),
+          parsedAddedIds: merged.parsedAddedIds,
         };
-      } catch (e) {
-        // keep baseline but include note
-        const msg = (e as Error).message ?? String(e);
+
+        const partial = buildTuneTwo(tune2Input);
+        const result = safeShape(partial, tune2Input.guardrails);
+
+        return jsonResponse(result, 200);
+      }
+
+      // ------------------------ MODE: Baseline (zero_baseline_v1) ------------------------
+      const z = body.input;
+
+      // Build initial baseline (fallback). If OpenAI is available, refine.
+      let partial: Partial<ZeroResult> = buildFallback(z);
+
+      if (OPENAI_API_KEY) {
+        try {
+          const ai = await callOpenAI(z);
+          // merge AI fields over baseline
+          partial = {
+            ...partial,
+            ...ai,
+            fork: { ...partial.fork, ...ai?.fork } as ZeroResult["fork"],
+            shock: { ...partial.shock, ...ai?.shock } as ZeroResult["shock"],
+            detected: { ...partial.detected, ...ai?.detected },
+            notes: ai?.notes ?? partial.notes,
+          };
+        } catch (e) {
+          // keep baseline but include note
+          const msg = (e as Error).message ?? String(e);
+          partial.notes = [
+            ...(partial.notes ?? []),
+            `AI fallback used: ${msg.slice(0, 160)}`,
+          ];
+        }
+      } else {
         partial.notes = [
           ...(partial.notes ?? []),
-          `AI fallback used: ${msg.slice(0, 160)}`,
+          "OPENAI_API_KEY not set — using safe baseline.",
         ];
       }
-    } else {
-      partial.notes = [
-        ...(partial.notes ?? []),
-        "OPENAI_API_KEY not set — using safe baseline.",
-      ];
+
+      // Enforce guardrails & shape
+      const result = safeShape(partial, z.guardrails);
+
+      return jsonResponse(result, 200);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return jsonResponse({ error: msg }, 400);
     }
+  };
+}
 
-    // Enforce guardrails & shape
-    const result = safeShape(partial, z.guardrails);
+export const handler = makeHandler();
 
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: CORS_HEADERS,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 400,
-      headers: CORS_HEADERS,
-    });
-  }
-});
+// Guarded so `deno test` can import this module without starting a server.
+// The edge runtime never sets AI_TUNE_TEST, so production always serves.
+if (Deno.env.get("AI_TUNE_TEST") !== "1") {
+  Deno.serve(handler);
+}
