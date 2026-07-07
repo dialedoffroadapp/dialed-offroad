@@ -19,7 +19,7 @@ import type { ThemeTokens } from "../constants/theme";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 
-/** How long to wait for a valid URL before showing an error (ms). */
+/** How long to wait before showing an error (ms). */
 const URL_TIMEOUT_MS = 10_000;
 
 function AuthCallbackInner() {
@@ -27,49 +27,74 @@ function AuthCallbackInner() {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
 
-  // Expo Router may have parsed query-string params (useful for PKCE ?code=)
+  // Grab route params once — stash in a ref so the effect doesn't re-fire
   const routeParams = useLocalSearchParams<{
     code?: string;
     access_token?: string;
     refresh_token?: string;
     type?: string;
   }>();
+  const routeParamsRef = useRef(routeParams);
+  routeParamsRef.current = routeParams;
 
-  const processedRef = useRef(false);
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
+  const ranRef = useRef(false);
   const [message, setMessage] = useState("Opening reset link\u2026");
   const [error, setError] = useState<string | null>(null);
 
+  // ── Single-run effect (empty deps — never re-fires) ───────────────────
   useEffect(() => {
-    if (processedRef.current) return;
+    if (ranRef.current) return;
+    ranRef.current = true;
+
     let mounted = true;
+    console.log("[auth-callback] effect mounted");
 
     const fail = (msg: string) => {
       if (!mounted) return;
+      console.log("[auth-callback] fail:", msg);
       setError(msg);
     };
 
-    // ── Resolve the URL from all available sources ──────────────────────
+    // ── Timeout: arms IMMEDIATELY, fires if nothing completes in 10s ──
+    const timeout = setTimeout(() => {
+      console.log("[auth-callback] timeout fired");
+      fail(
+        "This reset link has expired or is invalid. Please request a new one."
+      );
+    }, URL_TIMEOUT_MS);
+
+    // ── Resolve the URL from all available sources ────────────────────
 
     const resolveUrl = async (): Promise<string | null> => {
-      // 1. Module-level capture (registered before Expo Router consumed it)
-      const captured = consumeCapturedDeepLink();
+      // 1. Module-level capture (stashed before Expo Router consumed it)
+      const captured = await consumeCapturedDeepLink();
       if (captured) {
         console.log("[auth-callback] source: captured deep link =", captured);
         return captured;
       }
 
-      // 2. Linking.useURL() equivalent — try getInitialURL
-      const initial = await Linking.getInitialURL();
-      if (initial && initial.includes("auth-callback")) {
-        console.log("[auth-callback] source: getInitialURL =", initial);
-        return initial;
+      // 2. Linking.getInitialURL (may still work on some Expo versions)
+      try {
+        const initial = await Linking.getInitialURL();
+        if (initial && initial.includes("auth-callback")) {
+          console.log("[auth-callback] source: getInitialURL =", initial);
+          return initial;
+        }
+      } catch {
+        // ignore
       }
 
       // 3. Wait briefly for a warm-start URL event
       return new Promise<string | null>((resolve) => {
         const sub = Linking.addEventListener("url", ({ url }) => {
           if (url && url.includes("auth-callback")) {
-            console.log("[auth-callback] source: addEventListener =", url);
+            console.log(
+              "[auth-callback] source: addEventListener =",
+              url
+            );
             sub.remove();
             resolve(url);
           }
@@ -82,22 +107,25 @@ function AuthCallbackInner() {
       });
     };
 
-    // ── Token exchange (implicit #fragment OR PKCE ?code) ───────────────
+    // ── Token exchange (implicit #fragment OR PKCE ?code) ────────────
 
     const exchangeTokens = async () => {
-      processedRef.current = true;
+      if (!mounted) return;
       setMessage("Starting password reset\u2026");
 
       const url = await resolveUrl();
       console.log("[auth-callback] resolved URL:", url);
 
+      const params = routeParamsRef.current;
+
       // ── Try PKCE path first (from route params or URL query) ──────
       const pkceCode =
-        routeParams.code ??
+        params.code ??
         (url ? Linking.parse(url).queryParams?.code : undefined);
 
       if (typeof pkceCode === "string" && pkceCode.length > 0) {
         console.log("[auth-callback] PKCE code found, exchanging\u2026");
+        if (!mounted) return;
         setMessage("Verifying reset code\u2026");
 
         const { error: codeErr } =
@@ -106,46 +134,63 @@ function AuthCallbackInner() {
 
         const { data, error: userErr } = await supabase.auth.getUser();
         if (userErr || !data.user) {
-          throw userErr ?? new Error("Could not verify the recovery session.");
+          throw (
+            userErr ?? new Error("Could not verify the recovery session.")
+          );
         }
 
-        console.log("[auth-callback] PKCE exchange success, routing to /reset-password");
-        if (mounted) router.replace("/reset-password");
+        console.log(
+          "[auth-callback] PKCE exchange success, routing to /reset-password"
+        );
+        if (mounted) routerRef.current.replace("/reset-password");
         return;
       }
 
       // ── Implicit / fragment path ──────────────────────────────────
-      // Tokens may be in the URL fragment, route params, or query string.
       let accessToken: string | undefined;
       let refreshToken: string | undefined;
       let type: string | undefined;
 
+      // Try URL fragment first
       if (url && url.includes("#")) {
-        // Normalize fragment → query so Linking.parse can read them
         const normalized = url.replace("#", "?");
         const parsed = Linking.parse(normalized);
         accessToken = parsed.queryParams?.access_token as string | undefined;
         refreshToken = parsed.queryParams?.refresh_token as string | undefined;
         type = parsed.queryParams?.type as string | undefined;
-        console.log("[auth-callback] fragment tokens:", { accessToken: !!accessToken, refreshToken: !!refreshToken, type });
+        console.log("[auth-callback] fragment tokens:", {
+          accessToken: !!accessToken,
+          refreshToken: !!refreshToken,
+          type,
+        });
       }
 
-      // Fallback: check route params (Expo Router might have parsed them)
-      if (!accessToken && typeof routeParams.access_token === "string") {
-        accessToken = routeParams.access_token;
-        refreshToken = routeParams.refresh_token;
-        type = routeParams.type;
-        console.log("[auth-callback] route-param tokens:", { accessToken: !!accessToken, refreshToken: !!refreshToken, type });
+      // Fallback: route params (Expo Router may have parsed query params)
+      if (!accessToken && typeof params.access_token === "string") {
+        accessToken = params.access_token;
+        refreshToken = params.refresh_token;
+        type = params.type;
+        console.log("[auth-callback] route-param tokens:", {
+          accessToken: !!accessToken,
+          refreshToken: !!refreshToken,
+          type,
+        });
       }
 
-      // Also try plain query-string parse of the URL (no fragment)
+      // Fallback: plain query-string parse of URL
       if (!accessToken && url) {
         const parsed = Linking.parse(url);
         if (typeof parsed.queryParams?.access_token === "string") {
           accessToken = parsed.queryParams.access_token;
-          refreshToken = parsed.queryParams.refresh_token as string | undefined;
+          refreshToken = parsed.queryParams.refresh_token as
+            | string
+            | undefined;
           type = parsed.queryParams.type as string | undefined;
-          console.log("[auth-callback] query-string tokens:", { accessToken: !!accessToken, refreshToken: !!refreshToken, type });
+          console.log("[auth-callback] query-string tokens:", {
+            accessToken: !!accessToken,
+            refreshToken: !!refreshToken,
+            type,
+          });
         }
       }
 
@@ -161,6 +206,7 @@ function AuthCallbackInner() {
         );
       }
 
+      if (!mounted) return;
       setMessage("Verifying your identity\u2026");
       console.log("[auth-callback] calling setSession\u2026");
 
@@ -180,32 +226,28 @@ function AuthCallbackInner() {
       }
 
       console.log("[auth-callback] verified, routing to /reset-password");
-      if (mounted) router.replace("/reset-password");
+      if (mounted) routerRef.current.replace("/reset-password");
     };
 
-    // ── Run with timeout ────────────────────────────────────────────────
+    // ── Fire and handle errors ──────────────────────────────────────────
 
-    const timeout = setTimeout(() => {
-      if (!mounted || processedRef.current) return;
-      // If exchangeTokens is still running (awaiting setSession / getUser),
-      // we don't cancel it — we just ensure the UI doesn't spin forever.
-      fail(
-        "This reset link has expired or is invalid. Please request a new one."
-      );
-    }, URL_TIMEOUT_MS);
-
-    exchangeTokens().catch((e: any) => {
-      console.log("[auth-callback] error:", e?.message ?? e);
-      fail(e?.message ?? "Something went wrong opening the reset link.");
-    }).finally(() => {
-      clearTimeout(timeout);
-    });
+    exchangeTokens()
+      .catch((e: any) => {
+        console.log("[auth-callback] error:", e?.message ?? e);
+        fail(e?.message ?? "Something went wrong opening the reset link.");
+      })
+      .finally(() => {
+        // Only clear if the exchange finished (success or error).
+        // The timeout is the safety net — don't clear it if we somehow
+        // reach finally without having shown a result.
+        if (mounted) clearTimeout(timeout);
+      });
 
     return () => {
       mounted = false;
       clearTimeout(timeout);
     };
-  }, [routeParams, router]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={styles.page}>

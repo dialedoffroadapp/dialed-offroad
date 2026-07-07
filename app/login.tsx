@@ -20,7 +20,11 @@ import {
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
 import type { OnboardingStep } from "../lib/onboarding";
-import { readLocalOnboardingState, readPendingTune } from "../lib/onboarding";
+import {
+  readLocalOnboardingState,
+  readPendingTune,
+  useOnboarding,
+} from "../lib/onboarding";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
@@ -43,6 +47,7 @@ function LoginInner() {
   const toast = useToast();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { markAccountCreated, setStep } = useOnboarding();
   const params = useLocalSearchParams<{ email?: string }>();
 
   const [email, setEmail] = useState(
@@ -84,6 +89,10 @@ function LoginInner() {
 
       toast.show("Signed in ✅", { kind: "success" });
       await logEvent("sign_in");
+
+      // Record locally that this device's user has an account — downstream
+      // auth routing (results CTA) uses this to route to /login, not /signup.
+      await markAccountCreated();
 
       // Route based on onboarding state (mirrors IndexGate logic)
       // Supabase-first, local-AsyncStorage-fallback resolution
@@ -152,12 +161,15 @@ function LoginInner() {
                 target = pendingTune ? "/tune-results" : "/(tabs)/tune";
                 break;
               case "signup":
-                // Already signed in — advance past signup to trial
+                // Already signed in — advance past signup to trial in BOTH
+                // stores, then send to the paywall. Garage stranded the user:
+                // tabs hidden mid-onboarding and no funnel CTA there (S4).
+                await setStep("trial");
                 void supabase.from("profiles").upsert(
                   { user_id: uid, onboarding_step: "trial" },
                   { onConflict: "user_id" }
                 );
-                target = "/(tabs)/garage";
+                target = "/premium";
                 break;
               case "trial":
                 target = "/premium";

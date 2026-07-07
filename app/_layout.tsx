@@ -24,26 +24,51 @@ import { ThemeProvider, useTheme } from "../lib/theme";
 // getInitialURL() can return it to a screen component. We capture the raw URL
 // (including the #fragment) at module load time — before any component mounts —
 // so auth-callback.tsx can reliably read the recovery tokens.
-let _capturedDeepLinkUrl: string | null = null;
+//
+// The cold-start getInitialURL() is async, so we expose a Promise-based
+// consumer that auth-callback can `await` — no race between the resolve
+// timing and the component mount.
+console.log("[deep-link] module loaded, registering early capture");
 
-// Cold start: grab the URL synchronously (or as early as possible)
-Linking.getInitialURL().then((url) => {
-  if (url && url.includes("auth-callback")) {
-    console.log("[deep-link] captured initial URL:", url);
-    _capturedDeepLinkUrl = url;
+let _capturedDeepLinkUrl: string | null = null;
+let _initialUrlResolved = false;
+
+// Cold start: grab the URL as early as possible.
+// We store the Promise so consumers can `await` it if the value isn't ready yet.
+const _initialUrlPromise: Promise<string | null> = Linking.getInitialURL().then(
+  (url) => {
+    _initialUrlResolved = true;
+    if (url && url.includes("auth-callback")) {
+      console.log("[deep-link] captured initial URL:", url);
+      _capturedDeepLinkUrl = url;
+      return url;
+    }
+    return null;
   }
-});
+);
 
 // Warm start: listen for URL events fired while the app is backgrounded
-const _deepLinkSub = Linking.addEventListener("url", ({ url }) => {
+Linking.addEventListener("url", ({ url }) => {
   if (url && url.includes("auth-callback")) {
     console.log("[deep-link] captured warm-start URL:", url);
     _capturedDeepLinkUrl = url;
   }
 });
 
-/** Read (and consume) the captured deep-link URL. */
-export function consumeCapturedDeepLink(): string | null {
+/**
+ * Await the captured deep-link URL. Returns the URL (or null) once the
+ * initial-URL check has resolved. Safe to call multiple times — only the
+ * first call consumes the value.
+ */
+export async function consumeCapturedDeepLink(): Promise<string | null> {
+  // If the initial check already resolved, return immediately
+  if (_initialUrlResolved) {
+    const url = _capturedDeepLinkUrl;
+    _capturedDeepLinkUrl = null;
+    return url;
+  }
+  // Otherwise wait for it (typically <50ms)
+  await _initialUrlPromise;
   const url = _capturedDeepLinkUrl;
   _capturedDeepLinkUrl = null;
   return url;
@@ -95,11 +120,20 @@ function RootInner() {
   const pathname = usePathname();
   const router = useRouter();
   const [showOnboardingOverlay, setShowOnboardingOverlay] = useState(true);
-  const { setOnboardingActive, state, hydrated, markIntroSeen, setStep } = useOnboarding();
+  const { state, hydrated, markIntroSeen, setStep } = useOnboarding();
   const isRecoveryRoute =
     pathname === "/auth-callback" || pathname === "/reset-password";
+  // Only show the intro overlay for genuinely new users. The overlay must
+  // NOT appear after onboarding has been completed (or the intro has been
+  // seen) — otherwise it re-shows on every cold start because pathname "/"
+  // matches both the boot resolver AND the (tabs)/index Home tab.
   const shouldShowOnboardingOverlay =
-    showOnboardingOverlay && pathname === "/" && !isRecoveryRoute;
+    hydrated &&
+    !state.onboardingComplete &&
+    !state.hasSeenIntro &&
+    showOnboardingOverlay &&
+    pathname === "/" &&
+    !isRecoveryRoute;
 
   // ——— Trial prompt modal for existing signed-in non-pro users ———
   const [showTrialModal, setShowTrialModal] = useState(false);
@@ -196,12 +230,10 @@ function RootInner() {
           <Onboarding
             onFinish={async () => {
               // Persist state before navigating so cold-start resume lands correctly.
+              // (onboardingActive derives from this committed step, so Garage sees
+              // it as true on its first render — no explicit activation needed.)
               await markIntroSeen();
               await setStep("garage_locked");
-              // Activate onboarding explicitly before navigation so Garage sees
-              // onboardingActive=true on its first render, avoiding a race with
-              // the OnboardingProvider auto-activation effect.
-              setOnboardingActive(true);
               // Navigate first, then remove the overlay — both are synchronous
               // calls after the awaits so React 18 batches them in one render.
               // This means the overlay never disappears before the new screen
@@ -213,9 +245,10 @@ function RootInner() {
         </View>
       )}
 
-      {/* Trial prompt for existing signed-in non-pro users */}
+      {/* Trial prompt for existing signed-in non-pro users
+           — never show during password-reset flow */}
       <TrialPromptModal
-        visible={showTrialModal}
+        visible={showTrialModal && !isRecoveryRoute}
         bikeTitle={trialBikeTitle}
         onRequestClose={() => setShowTrialModal(false)}
       />
@@ -228,7 +261,7 @@ export default function RootLayout() {
     <ThemeProvider>
       <ToastProvider>
         {/* Provider controls whether tabs are locked */}
-        <OnboardingProvider initialActive={false}>
+        <OnboardingProvider>
           <RootInner />
         </OnboardingProvider>
       </ToastProvider>

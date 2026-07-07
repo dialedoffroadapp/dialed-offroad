@@ -180,7 +180,10 @@ function SignupInner() {
         password: password.trim(),
       });
       if (signInErr) {
-        // Account was created but auto-login failed — send them to login with email pre-filled.
+        // Account was created but auto-login failed — send them to login with
+        // email pre-filled. Record accountCreated first so the results CTA
+        // routes this user to /login (not /signup) from here on.
+        await markAccountCreated();
         toast.show("Account created! Please sign in to continue.", { kind: "success" });
         setLoadingUp(false);
         router.replace({ pathname: "/login", params: { email: email.trim() } } as never);

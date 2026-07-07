@@ -9,6 +9,7 @@ import {
   PENDING_GUEST_BIKE_SYNC_KEY,
   readLocalOnboardingState,
   readPendingTune,
+  useOnboarding,
 } from "../lib/onboarding";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
@@ -40,8 +41,15 @@ export default function IndexGate() {
   const [readyToHide, setReadyToHide] = useState(false);
   const hidOnce = useRef(false);
   const didNavigateRef = useRef(false);
+  const { hydrated, replaceState, setStep } = useOnboarding();
 
   useEffect(() => {
+    // Wait for the OnboardingProvider to finish its hydration READ before any
+    // boot resolution. The reconciliation write below goes through the
+    // provider's replaceState, so ordering the whole effect after hydration
+    // guarantees read-then-write — the write can never race the hydration read.
+    if (!hydrated) return;
+
     let mounted = true;
 
     (async () => {
@@ -97,16 +105,27 @@ export default function IndexGate() {
           }
 
           // Only run the legacy-usage heuristic for genuine pre-onboarding-system
-          // users (onboarding_step is null/absent). If onboarding_step is a known
-          // mid-flow value, the user is mid-onboarding — not a legacy user — and
-          // must NOT be auto-completed just because they have a bike from the flow.
+          // users. Two signals disqualify a user from "legacy":
+          //  1. The profile says mid-onboarding (a known non-complete step).
+          //  2. THIS DEVICE has funnel state in AsyncStorage — a mid-flow local
+          //     step, or intro seen without completing. The funnel itself
+          //     migrates the guest bike at signup, so a bike count alone must
+          //     never auto-complete a funnel user whose profile step-write
+          //     failed (null step) — that would skip the trial/paywall.
           const isMidOnboarding =
             profile?.onboarding_step != null &&
             isOnboardingStep(profile.onboarding_step) &&
             profile.onboarding_step !== "complete";
 
+          const hasLocalFunnelState =
+            !localState.onboardingComplete &&
+            ((localState.onboardingStep !== "intro" &&
+              localState.onboardingStep !== "complete") ||
+              localState.hasSeenIntro);
+
           if (
             !isMidOnboarding &&
+            !hasLocalFunnelState &&
             !profile?.onboarding_complete &&
             !profile?.is_pro &&
             !(
@@ -161,6 +180,36 @@ export default function IndexGate() {
             ? profile.onboarding_step
             : localState.onboardingStep;
 
+        // Reconcile the resolved step back into local state (S2). Screens like
+        // /premium read LOCAL state for their onboarding gating — without this
+        // write, a fresh install with a mid-onboarding profile (e.g. "trial")
+        // sees local step "intro", never runs the onboarding paywall handling,
+        // and loops back to /premium on every cold start. replaceState updates
+        // AsyncStorage AND the provider's in-memory state together, so screens
+        // mounted after navigation see the reconciled value immediately.
+        if (userId) {
+          const resolvedStep: OnboardingStep = onboardingComplete
+            ? "complete"
+            : onboardingStep;
+          if (
+            localState.onboardingStep !== resolvedStep ||
+            localState.onboardingComplete !== (resolvedStep === "complete") ||
+            !localState.accountCreated
+          ) {
+            await replaceState((current) => ({
+              ...current,
+              onboardingStep: resolvedStep,
+              onboardingComplete: resolvedStep === "complete",
+              // Signed in ⇒ an account exists; record it so downstream auth
+              // routing (results CTA) can distinguish "has account" from guest.
+              accountCreated: true,
+              // Any step past intro implies the intro was seen on some device.
+              hasSeenIntro: current.hasSeenIntro || resolvedStep !== "intro",
+            }));
+          }
+          if (!mounted || didNavigateRef.current) return;
+        }
+
         let target = "/(tabs)/garage";
 
         if (userId) {
@@ -181,12 +230,15 @@ export default function IndexGate() {
                 target = pendingTune ? "/tune-results" : "/(tabs)/tune";
                 break;
               case "signup":
-                // Already signed in — advance past signup to trial
+                // Already signed in — advance past signup to trial in BOTH
+                // stores, then send to the paywall. Garage stranded the user:
+                // tabs hidden mid-onboarding and no funnel CTA there (S4).
+                await setStep("trial");
                 void supabase.from("profiles").upsert(
                   { user_id: userId, onboarding_step: "trial" },
                   { onConflict: "user_id" }
                 );
-                target = "/(tabs)/garage";
+                target = "/premium";
                 break;
               case "trial":
                 target = "/premium";
@@ -247,7 +299,7 @@ export default function IndexGate() {
     return () => {
       mounted = false;
     };
-  }, [router]);
+  }, [router, hydrated, replaceState, setStep]);
 
   // Hide splash after first layout of the routed screen
   const onLayout = useCallback(() => {

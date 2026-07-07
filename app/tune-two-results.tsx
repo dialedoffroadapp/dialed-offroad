@@ -414,7 +414,7 @@ export default function TuneTwoResultScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={S.diffLabel}>{d.label}</Text>
                     <Text style={S.diffSub}>
-                      {num(d.from)} -> {num(d.to)} {d.unit} ({sign}
+                      {num(d.from)} {"->"} {num(d.to)} {d.unit} ({sign}
                       {delta.toFixed(d.unit === "clicks" ? 0 : 2)} {d.unit})
                     </Text>
                   </View>

@@ -69,7 +69,6 @@ export type PendingTunePayload = {
 
 type OnboardingContextValue = {
   onboardingActive: boolean;
-  setOnboardingActive: (v: boolean) => void;
   completeOnboarding: () => Promise<LocalOnboardingState>;
   hydrated: boolean;
   state: LocalOnboardingState;
@@ -232,7 +231,6 @@ export async function clearPendingTune(): Promise<void> {
 
 const Ctx = createContext<OnboardingContextValue>({
   onboardingActive: false,
-  setOnboardingActive: () => {},
   completeOnboarding: async () => buildState({ onboardingStep: "complete" }),
   hydrated: false,
   state: buildState(),
@@ -250,12 +248,9 @@ const Ctx = createContext<OnboardingContextValue>({
 
 export function OnboardingProvider({
   children,
-  initialActive = false,
 }: {
   children: React.ReactNode;
-  initialActive?: boolean;
 }) {
-  const [onboardingActive, setOnboardingActiveState] = useState(initialActive);
   const [hydrated, setHydrated] = useState(false);
   const [state, setState] = useState<LocalOnboardingState>(() => buildState());
   const stateRef = useRef(state);
@@ -305,23 +300,15 @@ export function OnboardingProvider({
     });
   }, [refreshFromStorage]);
 
-  // Restore onboardingActive when the app resumes mid-onboarding.
-  // Without this, onboardingActive stays false after a cold start and all
-  // tab-locking / onboarding-mode UI silently breaks for resuming users.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (
-      !state.onboardingComplete &&
-      state.onboardingStep !== "intro" &&
-      state.onboardingStep !== "complete"
-    ) {
-      setOnboardingActiveState(true);
-    }
-  }, [hydrated, state.onboardingComplete, state.onboardingStep]);
-
-  const setOnboardingActive = useCallback((value: boolean) => {
-    setOnboardingActiveState(value);
-  }, []);
+  // Onboarding is "active" purely as a function of committed, persisted state —
+  // never stored separately — so the onboarding UI treatment can never disagree
+  // with the state machine, survives remounts/cold starts, and is correct on
+  // the very first hydrated render (no async restore race).
+  const onboardingActive =
+    hydrated &&
+    !state.onboardingComplete &&
+    state.onboardingStep !== "intro" &&
+    state.onboardingStep !== "complete";
 
   const setStep = useCallback(
     async (step: OnboardingStep) =>
@@ -399,18 +386,16 @@ export function OnboardingProvider({
     await clearLocalOnboardingState();
     await AsyncStorage.removeItem(INTRO_SEEN_STORAGE_KEY);
     setState(next);
-    setOnboardingActiveState(false);
     return next;
   }, []);
 
   const completeOnboarding = useCallback(async () => {
-    setOnboardingActiveState(false);
     // Dual-write: also persist to Supabase for signed-in users so both
     // stores agree (survives reinstall / second device).
     try {
       const { data: auth } = await supabase.auth.getUser();
       if (auth?.user?.id) {
-        void supabase.from("profiles").upsert(
+        await supabase.from("profiles").upsert(
           {
             user_id: auth.user.id,
             onboarding_complete: true,
@@ -444,7 +429,6 @@ export function OnboardingProvider({
   const value = useMemo(
     () => ({
       onboardingActive,
-      setOnboardingActive,
       completeOnboarding,
       hydrated,
       state,
@@ -460,7 +444,6 @@ export function OnboardingProvider({
     }),
     [
       onboardingActive,
-      setOnboardingActive,
       completeOnboarding,
       hydrated,
       state,
