@@ -78,6 +78,7 @@ export type Tune2SymptomId =
 export type Tune2Symptom = {
   id: Tune2SymptomId;
   severity: number; // ALWAYS 1–10; callers convert from their UI scale first
+  where?: string;   // optional location tag ("Braking", "Corners", ...); engine ignores for now
 };
 
 export type Tune2Feedback = {
@@ -85,6 +86,9 @@ export type Tune2Feedback = {
   ride_duration_min?: number;   // how long they rode this tune
   terrain_tags?: string[];      // e.g. ["hardpack","whoops"]
   symptoms: Tune2Symptom[];
+  // "Don't touch" areas the rider says are already working. Pass-through for
+  // now — the engine consumes it in the next step.
+  protected?: { area: string }[];
 };
 
 export type Tune2Context = {
@@ -181,8 +185,12 @@ export async function generateTuneTwo(params: {
           .map((s) => ({
             id: s.id,
             severity: clampTenScale(s.severity) ?? 6, // default mid if somehow missing
+            where: s.where || undefined,
           }))
       : [],
+    protected: feedback.protected?.length
+      ? feedback.protected.slice(0, 8)
+      : undefined,
   };
 
   const payload = {

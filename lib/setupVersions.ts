@@ -16,6 +16,19 @@ export type FeedbackSymptom = {
   where?: string;
 };
 
+// "Don't touch" areas the rider marked as already working.
+export type FeedbackProtection = {
+  area: string;
+  protect: true;
+};
+
+// ride_feedback.symptoms jsonb shape: a FLAT ARRAY mixing issue entries
+// ({id, severity, where?}) and protection entries ({area, protect: true}).
+// Chosen over an {issues, protected} object root so rows written before the
+// protect feature existed (plain symptom arrays) keep the exact same shape —
+// consumers distinguish entries by the presence of the `protect` flag.
+export type FeedbackEntry = FeedbackSymptom | FeedbackProtection;
+
 export type SetupVersionRow = {
   id: string;
   user_id: string;
@@ -43,7 +56,7 @@ export type RideFeedbackRow = {
   setup_version_id: string;
   resulting_version_id: string | null;
   overall_rating: number | null;
-  symptoms: FeedbackSymptom[];
+  symptoms: FeedbackEntry[];
   free_text: string | null;
   outcome: FeedbackOutcome | null;
   created_at: string;
@@ -175,7 +188,7 @@ export async function createRefinementVersion(params: {
 export async function createFeedback(params: {
   setupVersionId: string;
   overallRating?: number | null; // 1–10, post-conversion
-  symptoms: FeedbackSymptom[];
+  symptoms: FeedbackEntry[]; // issue + protection entries, see FeedbackEntry
   freeText?: string | null;
 }): Promise<RideFeedbackRow> {
   const userId = await requireUserId();
@@ -199,7 +212,7 @@ export async function createFeedback(params: {
   if (error) throw error;
 
   void logEvent("feedback_submitted", {
-    symptom_count: params.symptoms.length,
+    symptom_count: params.symptoms.filter((s) => !("protect" in s)).length,
     has_free_text: !!freeText,
   });
   return data;
