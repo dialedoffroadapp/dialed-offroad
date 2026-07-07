@@ -78,7 +78,24 @@ export type Tune2SymptomId =
 export type Tune2Symptom = {
   id: Tune2SymptomId;
   severity: number; // ALWAYS 1–10; callers convert from their UI scale first
-  where?: string;   // optional location tag ("Braking", "Corners", ...); engine ignores for now
+  where?: string;   // optional location tag ("Braking", "Corners", ...)
+};
+
+// Plain-language phrases for symptom ids, phrased to follow "Last time you
+// said …". Kept location-free so an optional `where` can be appended without
+// reading twice (e.g. "the front was tucking in corners").
+export const SYMPTOM_PHRASES: Record<Tune2SymptomId, string> = {
+  harsh_braking_bumps: "it was harsh",
+  deflects_in_chop: "the front was deflecting",
+  rear_kicks_accel: "the rear was kicking",
+  bottoms_landings: "it was bottoming out",
+  front_knifes: "the front was tucking",
+  dead_feel: "it felt dead",
+  unstable_whoops: "it was unstable",
+  packs_whoops: "it was packing down",
+  harsh_square_edge: "it was harsh on square edges",
+  headshake: "you had headshake",
+  general_harsh: "it was generally harsh",
 };
 
 export type Tune2Feedback = {

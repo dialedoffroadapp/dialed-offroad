@@ -40,6 +40,7 @@ import {
 import Svg, { Circle as SvgCircle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { OnboardingProgress } from "../../components/OnboardingProgress";
+import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
 import { RiskGate } from "../../components/RiskGate";
 import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
@@ -1396,6 +1397,10 @@ export default function TuneScreen() {
               </Pressable>
             )}
           </View>
+
+          {/* Outcome check-in: did the last refinement help? Feeds the engine's
+              adaptive step. Renders only when an unanswered refinement exists. */}
+          {!isOnboarding && <OutcomeCheckinCard />}
 
           {/* Garage Selector */}
           <View style={S.selectorCard}>
