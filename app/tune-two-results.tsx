@@ -24,6 +24,7 @@ import {
   NOTE_HINTS,
   reasonFromNotes,
 } from "../lib/tuneNotes";
+import { asUuidOrNull } from "../lib/uuid";
 
 /* ---------------- Free / Pro limits ---------------- */
 const FREE_BASELINE_LIMIT = 10;
@@ -112,10 +113,14 @@ export default function TuneTwoResultScreen() {
     }
   }, [meta]);
 
-  // Try to pull bikeId (same shapes as tune-results)
+  // Try to pull bikeId (same shapes as tune-results). Legacy/guest local ids
+  // are not uuids — sanitize to null so the sessions insert can't crash and
+  // the UI honestly says "pick a bike" instead.
   const bikeId: string | null = useMemo(() => {
     const m: any = metaObj;
-    return m?.bike?.selectedBikeId ?? m?.bike?.id ?? m?.bike_id ?? null;
+    return asUuidOrNull(
+      m?.bike?.selectedBikeId ?? m?.bike?.id ?? m?.bike_id ?? null
+    );
   }, [metaObj]);
 
   // Monetization: Pro flag (Supabase-only)
@@ -494,26 +499,40 @@ export default function TuneTwoResultScreen() {
           ) : (
             diffs.map((d) => {
               const delta = (d.to ?? 0) - (d.from ?? 0);
-              const sign = delta > 0 ? "+" : "";
               const isUp = delta > 0;
+              const deltaStr = `${isUp ? "+" : ""}${
+                d.unit === "clicks" || d.unit === "mm"
+                  ? Math.round(delta)
+                  : delta.toFixed(d.unit === "turns" ? 1 : 2)
+              }`;
               return (
                 <View key={d.id} style={S.diffRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={S.diffLabel}>{d.label}</Text>
-                    <Text style={S.diffSub}>
-                      {num(d.from)} {"->"} {num(d.to)} {d.unit} ({sign}
-                      {delta.toFixed(d.unit === "clicks" ? 0 : 2)} {d.unit})
-                      {diffReasons[d.id] ? ` — ${diffReasons[d.id]}` : ""}
+                  <View style={S.diffTopRow}>
+                    <Text style={S.diffLabel} numberOfLines={1}>
+                      {d.label}
                     </Text>
+                    <Text style={S.diffValues}>
+                      {fmtDiff(d.from, d.unit)} {"→"} {fmtDiff(d.to, d.unit)}
+                    </Text>
+                    <View
+                      style={[
+                        S.deltaBadge,
+                        isUp ? S.deltaBadgeUp : S.deltaBadgeDown,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          S.deltaBadgeText,
+                          isUp ? S.deltaBadgeTextUp : S.deltaBadgeTextDown,
+                        ]}
+                      >
+                        {deltaStr}
+                      </Text>
+                    </View>
                   </View>
-                  <Text
-                    style={[
-                      S.diffDeltaBadge,
-                      isUp ? S.diffDeltaUp : S.diffDeltaDown,
-                    ]}
-                  >
-                    {isUp ? "+" : "-"}
-                  </Text>
+                  {diffReasons[d.id] ? (
+                    <Text style={S.diffReason}>{diffReasons[d.id]}</Text>
+                  ) : null}
                 </View>
               );
             })
@@ -599,7 +618,7 @@ export default function TuneTwoResultScreen() {
               </View>
             </View>
           ) : (
-            <View style={S.card}>
+            <View style={[S.card, S.notesCard]}>
               <Text style={S.h1}>Why these changes</Text>
 
               {classified.summaryLead ? (
@@ -720,6 +739,14 @@ function RoutineNote({ text, S }: { text: string; S: any }) {
 }
 
 /* utils */
+function fmtDiff(v: unknown, unit: string): string {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "—";
+  if (unit === "bar") return n.toFixed(2);
+  if (unit === "turns") return n.toFixed(1);
+  return String(Math.round(n));
+}
+
 function num(v: unknown, fallback = 0) {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -831,48 +858,61 @@ const makeStyles = (C: any) =>
       marginTop: 2,
     },
 
-    // ── Diff card ───────────────────────────────────────────────────
+    // ── Diff card (glanceable: values dominant, reason muted below) ──
     diffRow: {
+      paddingVertical: 9,
+    },
+    diffTopRow: {
       flexDirection: "row",
       alignItems: "center",
-      paddingVertical: 6,
-      borderBottomWidth: 1,
-      borderBottomColor: C.BORDER,
+      gap: 8,
     },
     diffLabel: {
+      flex: 1,
       color: C.TEXT,
-      fontWeight: "800",
+      fontWeight: "700",
       fontSize: 13,
     },
-    diffSub: {
+    diffValues: {
+      color: C.TEXT,
+      fontWeight: "900",
+      fontSize: 18,
+      fontVariant: ["tabular-nums"],
+    },
+    deltaBadge: {
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 999,
+      minWidth: 34,
+      alignItems: "center",
+    },
+    deltaBadgeUp: { backgroundColor: "rgba(29,155,240,0.16)" },
+    deltaBadgeDown: { backgroundColor: "rgba(16,185,129,0.16)" },
+    deltaBadgeText: {
+      fontSize: 11,
+      fontWeight: "800",
+      fontVariant: ["tabular-nums"],
+    },
+    deltaBadgeTextUp: { color: C.ACCENT },
+    deltaBadgeTextDown: { color: "#34D399" },
+    diffReason: {
       color: C.MUTED,
       fontSize: 12,
-      marginTop: 2,
-    },
-    diffDeltaBadge: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      textAlign: "center",
-      textAlignVertical: "center",
-      fontWeight: "900",
-      fontSize: 14,
-    },
-    diffDeltaUp: {
-      backgroundColor: (C.ACCENT2 ?? C.ACCENT) + "33",
-      color: "#fff",
-    },
-    diffDeltaDown: {
-      backgroundColor: (C.SUCCESS ?? "#22c55e") + "33",
-      color: "#fff",
+      lineHeight: 17,
+      marginTop: 3,
     },
 
     // ── "Why these changes" (classified engine notes) ───────────────
+    // Read trackside, often in gloves — sized for glanceability.
+    notesCard: {
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+    },
     noteLead: {
       color: C.TEXT,
-      fontSize: 13,
-      lineHeight: 19,
-      marginTop: 2,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 4,
     },
     noteGoals: {
       color: C.MUTED,
@@ -884,57 +924,57 @@ const makeStyles = (C: any) =>
       borderLeftWidth: 3,
       borderLeftColor: C.ACCENT,
       borderRadius: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      marginTop: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginTop: 12,
     },
     adaptiveText: {
       color: C.ACCENT,
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: "700",
-      lineHeight: 17,
+      lineHeight: 19,
     },
     protectRow: {
       flexDirection: "row",
       alignItems: "flex-start",
-      gap: 7,
+      gap: 8,
       backgroundColor: "#122A1E",
       borderRadius: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      marginTop: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginTop: 12,
     },
     protectText: {
       color: "#34D399",
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: "600",
-      lineHeight: 17,
+      lineHeight: 19,
       flex: 1,
     },
     labeledRow: {
       backgroundColor: C.INK,
       borderRadius: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      marginTop: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginTop: 12,
     },
     microLabel: {
       color: C.MUTED,
-      fontSize: 9,
+      fontSize: 10,
       fontWeight: "800",
-      letterSpacing: 1.3,
-      marginBottom: 3,
+      letterSpacing: 1.4,
+      marginBottom: 4,
     },
     labeledText: {
       color: C.TEXT,
-      fontSize: 12,
-      lineHeight: 17,
+      fontSize: 14,
+      lineHeight: 20,
     },
     routineText: {
       color: C.MUTED,
-      fontSize: 12,
-      lineHeight: 18,
-      marginTop: 5,
+      fontSize: 13,
+      lineHeight: 20,
+      marginTop: 8,
     },
     routineAction: {
       color: C.TEXT,
@@ -943,9 +983,9 @@ const makeStyles = (C: any) =>
     },
     noteFooter: {
       color: C.MUTED,
-      fontSize: 11,
-      lineHeight: 16,
-      marginTop: 12,
+      fontSize: 12,
+      lineHeight: 17,
+      marginTop: 14,
       fontStyle: "italic",
     },
 

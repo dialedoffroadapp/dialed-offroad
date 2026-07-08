@@ -3,6 +3,7 @@
 // Returns absolute click counts "from zero" (fully closed) + safety clamps.
 
 import { supabase } from "./supabase";
+import { isUuid } from "./uuid";
 
 /* ------------------------------------------------------------------ */
 /* Base Tune (Tune One)                                               */
@@ -280,6 +281,7 @@ export async function generateTuneTwo(params: {
 async function fetchLastOutcome(
   bikeId: string
 ): Promise<Tune2LastOutcome | undefined> {
+  if (!isUuid(bikeId)) return undefined; // legacy/guest bike ids: no history
   try {
     const { data: versions, error: vErr } = await supabase
       .from("setup_versions")

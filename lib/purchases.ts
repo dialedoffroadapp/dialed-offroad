@@ -131,6 +131,20 @@ export async function getCustomerInfo(): Promise<CustomerInfo | null> {
   }
 }
 
+/**
+ * Drop the SDK's cached customer info so the next getCustomerInfo() hits the
+ * network. The cache can lag a just-completed purchase, which is how a fresh
+ * subscriber can be told they aren't Pro.
+ */
+export async function invalidateCustomerInfoCache(): Promise<void> {
+  if (isWeb) return;
+  try {
+    await Purchases.invalidateCustomerInfoCache();
+  } catch (e) {
+    if (__DEV__) console.warn("[RC] invalidateCustomerInfoCache error:", e);
+  }
+}
+
 export async function getOfferings(): Promise<Offerings | null> {
   if (isWeb) return null;
   try {
@@ -192,17 +206,33 @@ export function activeProMeta(
  * - No-op if the user isn't signed in.
  * - Upserts `profiles.is_pro` and `profiles.pro_until`.
  */
-export async function syncProFromRevenueCat(): Promise<boolean> {
+export async function syncProFromRevenueCat(opts?: {
+  /**
+   * By default this sync only UPGRADES the profile. Downgrades (expiry,
+   * cancellation) are the RevenueCat webhook's job — a stale or anonymous
+   * customer-info read on the client must never wipe a real Pro entitlement
+   * (which re-shows the paywall to a paying user).
+   */
+  allowDowngrade?: boolean;
+}): Promise<boolean> {
   if (isWeb) return false;
   try {
     const { data: auth } = await supabase.auth.getUser();
     const user = auth?.user;
     if (!user?.id) return false;
 
+    // The SDK cache can lag a just-completed purchase — always read fresh
+    // before writing anything to the profile.
+    await invalidateCustomerInfoCache();
     const info = await getCustomerInfo();
     if (!info) return false;
 
     const { isPro: hasPro, expiration } = activeProMeta(info);
+
+    if (!hasPro && !opts?.allowDowngrade) {
+      if (__DEV__) console.log("[RC] sync: no entitlement, downgrade skipped");
+      return false;
+    }
 
     const payload: any = {
       user_id: user.id,

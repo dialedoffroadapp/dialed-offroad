@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
-    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -12,7 +11,6 @@ import {
     StyleSheet,
     Text,
     TextInput,
-    TouchableWithoutFeedback,
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -32,6 +30,7 @@ import {
 } from "../lib/setupVersions";
 import { useTheme } from "../lib/theme";
 import { logEvent } from "../lib/usage";
+import { asUuidOrNull } from "../lib/uuid";
 
 const SCALE_MAX = 5;
 
@@ -316,13 +315,16 @@ export default function TuneFeedbackScreen() {
       const anyMeta: any = metaObj || {};
       const anyCtx: any = ctxObj || {};
 
-      const bikeId =
+      // Guest bikes carry local non-uuid ids ("1783553470201_…") in old meta
+      // snapshots — sanitize so DB writes downstream go bikeless, never crash.
+      const bikeId = asUuidOrNull(
         anyCtx.selectedBikeId ??
-        anyCtx.bike_id ??
-        anyMeta?.bike?.selectedBikeId ??
-        anyMeta?.bike?.id ??
-        anyMeta?.bike_id ??
-        null;
+          anyCtx.bike_id ??
+          anyMeta?.bike?.selectedBikeId ??
+          anyMeta?.bike?.id ??
+          anyMeta?.bike_id ??
+          null
+      );
 
       // Lineage shadow writes: persist the feedback against the critiqued
       // version BEFORE the engine runs, so rider feedback survives even if the
@@ -433,9 +435,12 @@ export default function TuneFeedbackScreen() {
       ? `Fix ${issueCount} issue${issueCount === 1 ? "" : "s"}`
       : "Refine my setup";
 
+  // NOTE: no full-screen TouchableWithoutFeedback wrapper here. It was used
+  // for tap-to-dismiss-keyboard but could win the responder race against the
+  // ScrollView and intermittently eat scroll gestures. Keyboard dismissal is
+  // handled by the ScrollView's keyboardDismissMode instead.
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <View style={{ flex: 1, backgroundColor: C.BG }}>
+    <View style={{ flex: 1, backgroundColor: C.BG }}>
         <View style={{ height: insets.top, backgroundColor: C.ACCENT }} />
 
         {/* Header */}
@@ -635,8 +640,7 @@ export default function TuneFeedbackScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-      </View>
-    </TouchableWithoutFeedback>
+    </View>
   );
 }
 

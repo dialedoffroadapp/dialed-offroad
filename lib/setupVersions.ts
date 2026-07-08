@@ -6,6 +6,7 @@
 import { Tune2Context, Tune2SymptomId, ZeroTuneResult } from "./ai";
 import { supabase } from "./supabase";
 import { logEvent } from "./usage";
+import { asUuidOrNull, isUuid } from "./uuid";
 
 export type SetupSource = "baseline" | "refinement" | "restore" | "manual";
 export type FeedbackOutcome = "improved" | "same" | "worse";
@@ -105,11 +106,15 @@ export async function createBaselineVersion(params: {
 }): Promise<SetupVersionRow> {
   const userId = await requireUserId();
 
+  // Legacy/guest bike ids ("1783553470201_…") are not uuids — treat as
+  // bikeless rather than letting Postgres reject the row.
+  const bikeId = asUuidOrNull(params.bikeId);
+
   const { data, error } = await supabase
     .from("setup_versions")
     .insert({
       user_id: userId,
-      bike_id: params.bikeId ?? null,
+      bike_id: bikeId,
       source: "baseline",
       parent_version_id: null,
       terrain: params.terrain ?? null,
@@ -123,7 +128,7 @@ export async function createBaselineVersion(params: {
 
   void logEvent("version_created", {
     source: "baseline",
-    bike_id: params.bikeId ?? null,
+    bike_id: bikeId,
     version_number: data.version_number,
   });
   return data;
@@ -143,12 +148,13 @@ export async function createRefinementVersion(params: {
   feedbackId?: string | null;
 }): Promise<SetupVersionRow> {
   const userId = await requireUserId();
+  const bikeId = asUuidOrNull(params.bikeId);
 
   const { data, error } = await supabase
     .from("setup_versions")
     .insert({
       user_id: userId,
-      bike_id: params.bikeId ?? null,
+      bike_id: bikeId,
       source: "refinement",
       parent_version_id: params.parentVersionId,
       terrain: params.terrain ?? null,
@@ -173,7 +179,7 @@ export async function createRefinementVersion(params: {
 
   void logEvent("version_created", {
     source: "refinement",
-    bike_id: params.bikeId ?? null,
+    bike_id: bikeId,
     version_number: data.version_number,
     parent_version_id: params.parentVersionId,
   });
@@ -236,6 +242,8 @@ export async function updateFeedbackOutcome(
 export async function getVersionHistory(
   bikeId: string
 ): Promise<SetupVersionRow[]> {
+  if (!isUuid(bikeId)) return []; // legacy/guest ids never reach the DB
+
   const { data, error } = await supabase
     .from("setup_versions")
     .select(VERSION_COLUMNS)
@@ -290,12 +298,13 @@ export async function createRestoreVersion(params: {
 }): Promise<SetupVersionRow> {
   const userId = await requireUserId();
   const { fromVersion } = params;
+  const bikeId = asUuidOrNull(params.bikeId);
 
   const { data, error } = await supabase
     .from("setup_versions")
     .insert({
       user_id: userId,
-      bike_id: params.bikeId ?? null,
+      bike_id: bikeId,
       source: "restore",
       parent_version_id: params.currentVersionId,
       restored_from_version_id: fromVersion.id,
@@ -317,7 +326,7 @@ export async function createRestoreVersion(params: {
 
   void logEvent("version_created", {
     source: "restore",
-    bike_id: params.bikeId ?? null,
+    bike_id: bikeId,
     version_number: data.version_number,
     restored_from_version_id: fromVersion.id,
   });

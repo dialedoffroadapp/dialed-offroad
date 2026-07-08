@@ -35,6 +35,7 @@ import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
+import { asUuidOrNull } from "../lib/uuid";
 
 /* ---------------- Free / Pro limits ---------------- */
 const FREE_BASELINE_LIMIT = 10;
@@ -173,21 +174,23 @@ export default function TuneResultScreen() {
 
   const isTuneTwo = !!previousTune;
 
-  // Try to pull a concrete bike id from param/meta shapes
+  // Try to pull a concrete bike id from param/meta shapes. Guest bikes carry
+  // local non-uuid ids ("1783553470201_…") — sanitize to null so the sessions
+  // insert and lineage shadow writes can't hit a uuid column with garbage.
   const bikeId: string | null = useMemo(() => {
     if (
       typeof effectiveBikeIdParam === "string" &&
       effectiveBikeIdParam.length > 0
     ) {
-      return effectiveBikeIdParam;
+      return asUuidOrNull(effectiveBikeIdParam);
     }
-    return (
+    return asUuidOrNull(
       metaObj?.bike?.selectedBikeId ??
-      metaObj?.bike?.id ??
-      metaObj?.bike_id ??
-      metaObj?.bike_hint?.id ??
-      metaObj?.bike_hint?.selectedBikeId ??
-      null
+        metaObj?.bike?.id ??
+        metaObj?.bike_id ??
+        metaObj?.bike_hint?.id ??
+        metaObj?.bike_hint?.selectedBikeId ??
+        null
     );
   }, [effectiveBikeIdParam, metaObj]);
 

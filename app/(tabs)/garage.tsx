@@ -1326,17 +1326,38 @@ export default function GarageScreen() {
         isDefault={overflowBikeId === defaultBikeId}
         versionCount={overflowBikeId ? versionCounts[overflowBikeId] ?? 0 : 0}
         isPro={isPro}
-        onOpenHistory={() => {
+        onOpenHistory={async () => {
           if (!overflowBikeId) return;
-          if (isPro) {
+          const bikeIdForHistory = overflowBikeId;
+          // The in-memory flag can lag a just-completed purchase (focus
+          // refresh hasn't landed yet) — confirm live before gating.
+          let pro = isPro;
+          if (!pro) {
+            try {
+              const { data: sessionData } = await supabase.auth.getSession();
+              const uid = sessionData?.session?.user?.id;
+              if (uid) {
+                const { data: prof } = await supabase
+                  .from("profiles")
+                  .select("pro_until, is_pro")
+                  .eq("user_id", uid)
+                  .maybeSingle<ProfileMeta>();
+                pro = deriveIsPro(prof ?? null);
+                if (pro) setIsPro(true);
+              }
+            } catch {
+              // stay with the cached value
+            }
+          }
+          if (pro) {
             router.push({
               pathname: "/setup-history",
-              params: { bikeId: overflowBikeId },
+              params: { bikeId: bikeIdForHistory },
             } as any);
           } else {
             void logEvent("history_gate_hit", {
-              bike_id: overflowBikeId,
-              version_count: versionCounts[overflowBikeId] ?? 0,
+              bike_id: bikeIdForHistory,
+              version_count: versionCounts[bikeIdForHistory] ?? 0,
             });
             router.push("/premium?source=history_gate" as any);
           }
