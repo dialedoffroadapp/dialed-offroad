@@ -35,6 +35,7 @@ import {
 } from "../lib/setupVersions";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { NOTE_HINTS, reasonFromNotes } from "../lib/tuneNotes";
 import { logEvent } from "../lib/usage";
 
 /* ------------------------------ constants ------------------------------ */
@@ -60,20 +61,20 @@ const METRICS: { key: MetricKey; label: string; unit: string }[] = [
 ];
 
 // Value fields shown in diffs / expanded view / restore sheet, in order.
+// noteHints come from the shared map in lib/tuneNotes.ts.
 const VALUE_FIELDS: {
   key: keyof VersionWithFeedback;
   label: string;
   unit: string;
-  // note fragments that identify this circuit inside engine notes
-  noteHints: string[];
+  noteHints: readonly string[];
 }[] = [
-  { key: "fork_comp_clicks", label: "Fork comp", unit: "clicks", noteHints: ["fork compression", "fork comp"] },
-  { key: "fork_reb_clicks", label: "Fork reb", unit: "clicks", noteHints: ["fork rebound", "fork reb"] },
-  { key: "fork_air_bar", label: "Fork air", unit: "bar", noteHints: ["aer", "air"] },
-  { key: "shock_lsc_clicks", label: "Shock LSC", unit: "clicks", noteHints: ["shock lsc", "shock low-speed"] },
-  { key: "shock_hsc_turns", label: "Shock HSC", unit: "turns", noteHints: ["hsc"] },
-  { key: "shock_reb_clicks", label: "Shock reb", unit: "clicks", noteHints: ["shock rebound", "shock reb"] },
-  { key: "sag_mm", label: "Sag", unit: "mm", noteHints: ["sag"] },
+  { key: "fork_comp_clicks", label: "Fork comp", unit: "clicks", noteHints: NOTE_HINTS.fork_comp },
+  { key: "fork_reb_clicks", label: "Fork reb", unit: "clicks", noteHints: NOTE_HINTS.fork_reb },
+  { key: "fork_air_bar", label: "Fork air", unit: "bar", noteHints: NOTE_HINTS.fork_air },
+  { key: "shock_lsc_clicks", label: "Shock LSC", unit: "clicks", noteHints: NOTE_HINTS.shock_lsc },
+  { key: "shock_hsc_turns", label: "Shock HSC", unit: "turns", noteHints: NOTE_HINTS.shock_hsc },
+  { key: "shock_reb_clicks", label: "Shock reb", unit: "clicks", noteHints: NOTE_HINTS.shock_reb },
+  { key: "sag_mm", label: "Sag", unit: "mm", noteHints: NOTE_HINTS.sag },
 ];
 
 const OUTCOME_LABEL: Record<string, string> = {
@@ -132,23 +133,6 @@ function triggerLine(fb: VersionWithFeedback["feedback"]): string | null {
   return null;
 }
 
-/** Reason fragment for a changed circuit, mined from the version's engine notes. */
-function reasonForField(notes: string[], hints: string[]): string | null {
-  for (const note of notes ?? []) {
-    const lower = note.toLowerCase();
-    if (hints.some((h) => lower.includes(h))) {
-      // Engine notes read "Harsh on braking bumps → +4 fork compression …";
-      // the part before the arrow is the why.
-      const arrow = note.indexOf("→");
-      if (arrow > 0) {
-        const why = note.slice(0, arrow).trim().replace(/[.:]$/, "");
-        if (why.length > 2 && why.length < 60) return why;
-      }
-    }
-  }
-  return null;
-}
-
 type DiffRow = {
   label: string;
   from: number;
@@ -172,7 +156,7 @@ function diffRows(
       from,
       to,
       unit: f.unit,
-      reason: reasonForField(v.notes, f.noteHints),
+      reason: reasonFromNotes(v.notes, f.noteHints),
     });
   }
   return rows;

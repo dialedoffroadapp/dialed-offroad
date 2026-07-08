@@ -19,6 +19,11 @@ import { useToast } from "../components/Toast";
 import { ZeroTuneResult } from "../lib/ai";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import {
+  classifyTuneNotes,
+  NOTE_HINTS,
+  reasonFromNotes,
+} from "../lib/tuneNotes";
 
 /* ---------------- Free / Pro limits ---------------- */
 const FREE_BASELINE_LIMIT = 10;
@@ -45,6 +50,17 @@ type FeedbackMeta = {
 };
 
 type Mode = "balanced" | "comfort" | "precision";
+
+// Diff-row id → engine-note circuit hints (shared with setup-history).
+const DIFF_HINTS: Record<string, readonly string[]> = {
+  fork_comp: NOTE_HINTS.fork_comp,
+  fork_reb: NOTE_HINTS.fork_reb,
+  air_bar: NOTE_HINTS.fork_air,
+  shock_lsc: NOTE_HINTS.shock_lsc,
+  shock_hsc: NOTE_HINTS.shock_hsc,
+  shock_reb: NOTE_HINTS.shock_reb,
+  shock_sag: NOTE_HINTS.sag,
+};
 
 export default function TuneTwoResultScreen() {
   const { r, previous, meta } = useLocalSearchParams<{
@@ -338,6 +354,17 @@ export default function TuneTwoResultScreen() {
     });
   }, [prev, refined, airBarPrev, airBarRefined]);
 
+  // Classified engine notes for the "Why these changes" section, plus mined
+  // per-circuit reasons for the diff rows. Presentation only.
+  const classified = useMemo(() => classifyTuneNotes(refined?.notes), [refined]);
+  const diffReasons = useMemo(() => {
+    const map: Record<string, string | null> = {};
+    for (const [id, hints] of Object.entries(DIFF_HINTS)) {
+      map[id] = reasonFromNotes(refined?.notes, hints);
+    }
+    return map;
+  }, [refined]);
+
   const [savingBaseline, setSavingBaseline] = useState(false);
   const canSaveBaseline = !!bikeId;
 
@@ -476,6 +503,7 @@ export default function TuneTwoResultScreen() {
                     <Text style={S.diffSub}>
                       {num(d.from)} {"->"} {num(d.to)} {d.unit} ({sign}
                       {delta.toFixed(d.unit === "clicks" ? 0 : 2)} {d.unit})
+                      {diffReasons[d.id] ? ` — ${diffReasons[d.id]}` : ""}
                     </Text>
                   </View>
                   <Text
@@ -553,21 +581,84 @@ export default function TuneTwoResultScreen() {
           />
         </View>
 
-        {/* Optional notes */}
+        {/* Engine notes. Echo path keeps the simple numbered rendering; real
+            refinements get the classified "Why these changes" hierarchy. */}
         {refined?.notes?.length ? (
-          <View style={S.card}>
-            <Text style={S.h1}>Ride notes</Text>
-            <View style={{ marginTop: 4 }}>
-              {refined.notes.map((n, i) => (
-                <View key={`${i}-${n}`} style={S.stepRow}>
-                  <View style={S.stepBadge}>
-                    <Text style={S.stepBadgeText}>{i + 1}</Text>
+          classified.isEcho ? (
+            <View style={S.card}>
+              <Text style={S.h1}>Ride notes</Text>
+              <View style={{ marginTop: 4 }}>
+                {refined.notes.map((n, i) => (
+                  <View key={`${i}-${n}`} style={S.stepRow}>
+                    <View style={S.stepBadge}>
+                      <Text style={S.stepBadgeText}>{i + 1}</Text>
+                    </View>
+                    <Text style={S.stepText}>{n}</Text>
                   </View>
-                  <Text style={S.stepText}>{n}</Text>
+                ))}
+              </View>
+            </View>
+          ) : (
+            <View style={S.card}>
+              <Text style={S.h1}>Why these changes</Text>
+
+              {classified.summaryLead ? (
+                <Text style={S.noteLead}>{classified.summaryLead}</Text>
+              ) : null}
+              {classified.goals ? (
+                <Text style={S.noteGoals}>{classified.goals}</Text>
+              ) : null}
+
+              {/* Adaptive decisions — rare and important, always first */}
+              {classified.adaptive.map((n, i) => (
+                <View key={`adaptive-${i}`} style={S.adaptiveCallout}>
+                  <Text style={S.adaptiveText}>↩ {n}</Text>
                 </View>
               ))}
+
+              {/* Protect decisions */}
+              {classified.protect.map((n, i) => (
+                <View key={`protect-${i}`} style={S.protectRow}>
+                  <Ionicons
+                    name="shield-checkmark-outline"
+                    size={14}
+                    color="#34D399"
+                    style={{ marginTop: 1 }}
+                  />
+                  <Text style={S.protectText}>{n}</Text>
+                </View>
+              ))}
+
+              {/* Conflict resolutions — expertise, not an error */}
+              {classified.conflict.map((n, i) => (
+                <View key={`conflict-${i}`} style={S.labeledRow}>
+                  <Text style={S.microLabel}>JUDGMENT CALL</Text>
+                  <Text style={S.labeledText}>{n}</Text>
+                </View>
+              ))}
+
+              {/* Free-text parse additions */}
+              {classified.parse.map((n, i) => (
+                <View key={`parse-${i}`} style={S.labeledRow}>
+                  <Text style={S.microLabel}>FROM YOUR NOTE</Text>
+                  <Text style={S.labeledText}>{n}</Text>
+                </View>
+              ))}
+
+              {/* Routine per-symptom notes — muted, action part brighter */}
+              {classified.routine.length ? (
+                <View style={{ marginTop: 6 }}>
+                  {classified.routine.map((n, i) => (
+                    <RoutineNote key={`routine-${i}`} text={n} S={S} />
+                  ))}
+                </View>
+              ) : null}
+
+              {classified.retest ? (
+                <Text style={S.noteFooter}>{classified.retest}</Text>
+              ) : null}
             </View>
-          </View>
+          )
         ) : null}
 
         {/* Save + back */}
@@ -611,6 +702,20 @@ export default function TuneTwoResultScreen() {
         </View>
       </ScrollView>
     </View>
+  );
+}
+
+/* Routine note: explanation muted, the arrow-and-clicks action brighter. */
+function RoutineNote({ text, S }: { text: string; S: any }) {
+  const arrow = text.indexOf("→");
+  if (arrow <= 0) {
+    return <Text style={S.routineText}>{text}</Text>;
+  }
+  return (
+    <Text style={S.routineText}>
+      {text.slice(0, arrow).trim()}{" "}
+      <Text style={S.routineAction}>→ {text.slice(arrow + 1).trim()}</Text>
+    </Text>
   );
 }
 
@@ -760,6 +865,88 @@ const makeStyles = (C: any) =>
     diffDeltaDown: {
       backgroundColor: (C.SUCCESS ?? "#22c55e") + "33",
       color: "#fff",
+    },
+
+    // ── "Why these changes" (classified engine notes) ───────────────
+    noteLead: {
+      color: C.TEXT,
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: 2,
+    },
+    noteGoals: {
+      color: C.MUTED,
+      fontSize: 12,
+      marginTop: 6,
+    },
+    adaptiveCallout: {
+      backgroundColor: "rgba(29,155,240,0.10)",
+      borderLeftWidth: 3,
+      borderLeftColor: C.ACCENT,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      marginTop: 10,
+    },
+    adaptiveText: {
+      color: C.ACCENT,
+      fontSize: 12,
+      fontWeight: "700",
+      lineHeight: 17,
+    },
+    protectRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 7,
+      backgroundColor: "#122A1E",
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      marginTop: 10,
+    },
+    protectText: {
+      color: "#34D399",
+      fontSize: 12,
+      fontWeight: "600",
+      lineHeight: 17,
+      flex: 1,
+    },
+    labeledRow: {
+      backgroundColor: C.INK,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      marginTop: 10,
+    },
+    microLabel: {
+      color: C.MUTED,
+      fontSize: 9,
+      fontWeight: "800",
+      letterSpacing: 1.3,
+      marginBottom: 3,
+    },
+    labeledText: {
+      color: C.TEXT,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    routineText: {
+      color: C.MUTED,
+      fontSize: 12,
+      lineHeight: 18,
+      marginTop: 5,
+    },
+    routineAction: {
+      color: C.TEXT,
+      opacity: 0.92,
+      fontWeight: "600",
+    },
+    noteFooter: {
+      color: C.MUTED,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: 12,
+      fontStyle: "italic",
     },
 
     // ── Test plan steps ─────────────────────────────────────────────
