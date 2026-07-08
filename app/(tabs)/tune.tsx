@@ -41,6 +41,7 @@ import Svg, { Circle as SvgCircle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { OnboardingProgress } from "../../components/OnboardingProgress";
 import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
+import { PrerideCard } from "../../components/PrerideCard";
 import { RiskGate } from "../../components/RiskGate";
 import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
@@ -441,6 +442,9 @@ export default function TuneScreen() {
   const [bikes, setBikes] = useState<Bike[]>([]);
   const [bikeLoading, setBikeLoading] = useState(true);
   const [selectedBikeId, setSelectedBikeId] = useState<string | null>(null);
+  // Above-the-fold card coordination: null = check-in eligibility unresolved,
+  // true = check-in showing (pre-ride yields), false = pre-ride may show.
+  const [checkinVisible, setCheckinVisible] = useState<boolean | null>(null);
   const [bikeSheetOpen, setBikeSheetOpen] = useState(false);
 
   // ——— Free text bike fields (can override selection) ———
@@ -1400,7 +1404,13 @@ export default function TuneScreen() {
 
           {/* Outcome check-in: did the last refinement help? Feeds the engine's
               adaptive step. Renders only when an unanswered refinement exists. */}
-          {!isOnboarding && <OutcomeCheckinCard />}
+          {!isOnboarding && (
+            <OutcomeCheckinCard onEligibility={setCheckinVisible} />
+          )}
+
+          {/* Pre-ride reminder: current setup at a glance. Only renders once
+              the check-in card has resolved to NOT showing — never two cards. */}
+          {!isOnboarding && checkinVisible === false && <PrerideCard />}
 
           {/* Garage Selector */}
           <View style={S.selectorCard}>

@@ -23,6 +23,7 @@ import Svg, {
   Text as SvgText,
 } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
 import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
 import { deriveIsPro } from "../lib/proUtils";
@@ -325,6 +326,7 @@ export default function SetupHistoryScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [restoreFrom, setRestoreFrom] = useState<VersionWithFeedback | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const { shareView, share } = useShareSetup();
 
   const load = useCallback(async () => {
     if (typeof bikeId !== "string" || !bikeId) {
@@ -477,8 +479,37 @@ export default function SetupHistoryScreen() {
             {bikeTitle}
           </Text>
         </View>
-        <View style={S.headerBtn} />
+        {current ? (
+          <Pressable
+            onPress={() =>
+              share(
+                {
+                  bikeTitle,
+                  versionNumber: current.version_number,
+                  date: fmtDate(current.created_at),
+                  values: {
+                    forkComp: numOrNull(current.fork_comp_clicks),
+                    forkReb: numOrNull(current.fork_reb_clicks),
+                    shockLsc: numOrNull(current.shock_lsc_clicks),
+                    shockHsc: numOrNull(current.shock_hsc_turns),
+                    shockReb: numOrNull(current.shock_reb_clicks),
+                    sag: numOrNull(current.sag_mm),
+                  },
+                },
+                "history"
+              )
+            }
+            hitSlop={8}
+            style={S.headerBtn}
+          >
+            <Ionicons name="share-outline" size={21} color={C.TEXT} />
+          </Pressable>
+        ) : (
+          <View style={S.headerBtn} />
+        )}
       </View>
+
+      {shareView}
 
       {loading ? (
         <View style={S.centerFill}>

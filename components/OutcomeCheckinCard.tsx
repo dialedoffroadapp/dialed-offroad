@@ -67,12 +67,23 @@ function titleFromSymptoms(symptoms: unknown): string {
   return `Last time you said ${phrase}${where}. Better on the new setup?`;
 }
 
-export function OutcomeCheckinCard() {
+export function OutcomeCheckinCard({
+  onEligibility,
+}: {
+  /**
+   * Reports whether the check-in card is showing after each focus-time
+   * eligibility check. Lets sibling cards (pre-ride) yield — check-in wins,
+   * never two cards at once.
+   */
+  onEligibility?: (visible: boolean) => void;
+}) {
   const { colors: C } = useTheme();
 
   const [feedback, setFeedback] = useState<{ id: string; title: string } | null>(
     null
   );
+  const onEligibilityRef = useRef(onEligibility);
+  onEligibilityRef.current = onEligibility;
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [answering, setAnswering] = useState(false);
 
@@ -122,8 +133,12 @@ export function OutcomeCheckinCard() {
     useCallback(() => {
       let cancelled = false;
       (async () => {
+        let visible = false;
         try {
-          if (shownThisSession || feedback) return;
+          if (shownThisSession || feedback) {
+            visible = !!feedback;
+            return;
+          }
 
           const { data: auth } = await supabase.auth.getUser();
           const uid = auth?.user?.id;
@@ -159,10 +174,13 @@ export function OutcomeCheckinCard() {
 
           if (cancelled) return;
           shownThisSession = true;
+          visible = true;
           setFeedback({ id: row.id, title: titleFromSymptoms(row.symptoms) });
           void logEvent("checkin_shown", { feedback_id: row.id });
         } catch {
           // fail-silent: the check-in must never disturb the tune flow
+        } finally {
+          if (!cancelled) onEligibilityRef.current?.(visible);
         }
       })();
       return () => {

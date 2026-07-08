@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Chip } from "../components/Chip";
 import { SettingRow } from "../components/SettingRow";
+import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
 import { ZeroTuneResult } from "../lib/ai";
 import { supabase } from "../lib/supabase";
@@ -103,6 +104,61 @@ export default function TuneTwoResultScreen() {
 
   // Monetization: Pro flag (Supabase-only)
   const [isPro, setIsPro] = useState(false);
+
+  // Share card: latest version number for this bike (the refinement that was
+  // just created by the feedback screen's shadow write). Fail-soft.
+  const { shareView, share } = useShareSetup();
+  const [latestVersionNumber, setLatestVersionNumber] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!bikeId) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("setup_versions")
+          .select("version_number")
+          .eq("bike_id", bikeId)
+          .order("version_number", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (mounted && typeof data?.version_number === "number") {
+          setLatestVersionNumber(data.version_number);
+        }
+      } catch {
+        // no version chip on the share card, nothing else breaks
+      }
+    })();
+    return () => { mounted = false; };
+  }, [bikeId]);
+
+  const onShare = () => {
+    if (!refined) return;
+    // 0 clicks is a legitimate value — only non-finite becomes null.
+    const shareVal = (v: unknown): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    void share(
+      {
+        bikeTitle,
+        versionNumber: latestVersionNumber,
+        date: new Date().toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        }),
+        values: {
+          forkComp: shareVal(refined.fork.comp_clicks),
+          forkReb: shareVal(refined.fork.reb_clicks),
+          shockLsc: shareVal(refined.shock.lsc_clicks),
+          shockHsc: shareVal(refined.shock.hsc_turns),
+          shockReb: shareVal(refined.shock.reb_clicks),
+          sag: shareVal(refined.shock.sag_mm),
+        },
+      },
+      "results"
+    );
+  };
 
   useEffect(() => {
     (async () => {
@@ -377,8 +433,12 @@ export default function TuneTwoResultScreen() {
           <Ionicons name="chevron-back-outline" size={24} color={C.TEXT} />
         </Pressable>
         <Text style={S.compactHeaderTitle}>Refined Setup</Text>
-        <View style={S.headerIconBtn} />
+        <Pressable onPress={onShare} hitSlop={8} style={S.headerIconBtn}>
+          <Ionicons name="share-outline" size={21} color={C.TEXT} />
+        </Pressable>
       </View>
+
+      {shareView}
 
       {/* Subtitle + chips (below compact header, above scroll) */}
       <View style={S.subHeader}>
