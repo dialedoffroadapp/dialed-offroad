@@ -246,3 +246,80 @@ export async function getVersionHistory(
   // supabase-js can't infer a row type from the joined column string.
   return (data ?? []) as unknown as SetupVersionRow[];
 }
+
+export type VersionWithFeedback = SetupVersionRow & {
+  /** The ride_feedback row whose refinement PRODUCED this version, if any. */
+  feedback: RideFeedbackRow | null;
+};
+
+/**
+ * getHistoryWithFeedback — all versions for a bike (newest first), each
+ * carrying the feedback that triggered it (symptoms, free_text, outcome).
+ * Merged client-side: one query per table, joined on resulting_version_id.
+ */
+export async function getHistoryWithFeedback(
+  bikeId: string
+): Promise<VersionWithFeedback[]> {
+  const versions = await getVersionHistory(bikeId);
+  if (!versions.length) return [];
+
+  const ids = versions.map((v) => v.id);
+  const { data, error } = await supabase
+    .from("ride_feedback")
+    .select("*")
+    .in("resulting_version_id", ids);
+  if (error) throw error;
+
+  const byResult = new Map<string, RideFeedbackRow>();
+  for (const fb of (data ?? []) as unknown as RideFeedbackRow[]) {
+    if (fb.resulting_version_id) byResult.set(fb.resulting_version_id, fb);
+  }
+
+  return versions.map((v) => ({ ...v, feedback: byResult.get(v.id) ?? null }));
+}
+
+/**
+ * createRestoreVersion — save a past setup as a NEW version (nothing is
+ * deleted): copies fromVersion's clicker/sag/air values, parents onto the
+ * current version, and points restored_from_version_id at the source.
+ */
+export async function createRestoreVersion(params: {
+  bikeId: string | null;
+  fromVersion: SetupVersionRow;
+  currentVersionId: string;
+}): Promise<SetupVersionRow> {
+  const userId = await requireUserId();
+  const { fromVersion } = params;
+
+  const { data, error } = await supabase
+    .from("setup_versions")
+    .insert({
+      user_id: userId,
+      bike_id: params.bikeId ?? null,
+      source: "restore",
+      parent_version_id: params.currentVersionId,
+      restored_from_version_id: fromVersion.id,
+      fork_comp_clicks: fromVersion.fork_comp_clicks,
+      fork_reb_clicks: fromVersion.fork_reb_clicks,
+      fork_air_bar: fromVersion.fork_air_bar,
+      shock_lsc_clicks: fromVersion.shock_lsc_clicks,
+      shock_hsc_turns: fromVersion.shock_hsc_turns,
+      shock_reb_clicks: fromVersion.shock_reb_clicks,
+      sag_mm: fromVersion.sag_mm,
+      notes: [`Restored from v${fromVersion.version_number}`],
+      terrain: fromVersion.terrain,
+      context: fromVersion.context,
+    })
+    .select(VERSION_COLUMNS)
+    .single<SetupVersionRow>();
+
+  if (error) throw error;
+
+  void logEvent("version_created", {
+    source: "restore",
+    bike_id: params.bikeId ?? null,
+    version_number: data.version_number,
+    restored_from_version_id: fromVersion.id,
+  });
+  return data;
+}

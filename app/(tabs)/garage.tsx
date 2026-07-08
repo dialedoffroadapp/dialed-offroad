@@ -308,8 +308,11 @@ function OverflowSheet({
   open,
   bike,
   isDefault,
+  versionCount,
+  isPro,
   onClose,
   onSetDefault,
+  onOpenHistory,
   onDelete,
   colors,
   styles,
@@ -317,8 +320,11 @@ function OverflowSheet({
   open: boolean;
   bike: Bike | null;
   isDefault: boolean;
+  versionCount: number;
+  isPro: boolean;
   onClose: () => void;
   onSetDefault: () => void;
+  onOpenHistory: () => void;
   onDelete: () => void;
   colors: ThemeTokens;
   styles: any;
@@ -350,6 +356,30 @@ function OverflowSheet({
             {isDefault ? "Remove as default" : "Set as default"}
           </Text>
         </Pressable>
+
+        {versionCount >= 1 && (
+          <Pressable
+            onPress={() => { onOpenHistory(); onClose(); }}
+            style={styles.overflowRow}
+          >
+            <Ionicons name="time-outline" size={18} color={colors.TEXT} />
+            <Text style={[styles.overflowRowText, styles.noSelect]}>
+              Setup history
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ color: colors.MUTED, fontSize: 12, fontWeight: "700" }}>
+              {versionCount} version{versionCount === 1 ? "" : "s"}
+            </Text>
+            {!isPro && (
+              <Ionicons
+                name="lock-closed"
+                size={14}
+                color={colors.MUTED}
+                style={{ marginLeft: 6 }}
+              />
+            )}
+          </Pressable>
+        )}
 
         <Pressable
           onPress={() => { onDelete(); onClose(); }}
@@ -559,6 +589,8 @@ export default function GarageScreen() {
   const [isPro, setIsPro] = useState<boolean>(false);
   const [defaultBikeId, setDefaultBikeId] = useState<string | null>(null);
   const [lastSession, setLastSession] = useState<LastSessionMap>({});
+  // setup_versions count per bike — drives the "Setup history" entry point
+  const [versionCounts, setVersionCounts] = useState<Record<string, number>>({});
 
   // overflow menu
   const [overflowBikeId, setOverflowBikeId] = useState<string | null>(null);
@@ -666,6 +698,26 @@ export default function GarageScreen() {
           }
         } catch {
           // Non-critical — state line just won't show
+        }
+
+        // Batch-fetch setup-version counts for the Setup history entry point
+        try {
+          const bikeIds = bikeRows.map((b: Bike) => b.id);
+          const { data: versionRows } = await supabase
+            .from("setup_versions")
+            .select("bike_id")
+            .eq("user_id", userId)
+            .in("bike_id", bikeIds);
+
+          if (versionRows) {
+            const counts: Record<string, number> = {};
+            for (const v of versionRows as { bike_id: string | null }[]) {
+              if (v.bike_id) counts[v.bike_id] = (counts[v.bike_id] ?? 0) + 1;
+            }
+            setVersionCounts(counts);
+          }
+        } catch {
+          // Non-critical — the history row just won't show
         }
       }
     } catch (e: any) {
@@ -1272,6 +1324,23 @@ export default function GarageScreen() {
         open={!!overflowBikeId}
         bike={overflowBike}
         isDefault={overflowBikeId === defaultBikeId}
+        versionCount={overflowBikeId ? versionCounts[overflowBikeId] ?? 0 : 0}
+        isPro={isPro}
+        onOpenHistory={() => {
+          if (!overflowBikeId) return;
+          if (isPro) {
+            router.push({
+              pathname: "/setup-history",
+              params: { bikeId: overflowBikeId },
+            } as any);
+          } else {
+            void logEvent("history_gate_hit", {
+              bike_id: overflowBikeId,
+              version_count: versionCounts[overflowBikeId] ?? 0,
+            });
+            router.push("/premium?source=history_gate" as any);
+          }
+        }}
         onClose={() => setOverflowBikeId(null)}
         onSetDefault={() => { if (overflowBikeId) toggleDefault(overflowBikeId); }}
         onDelete={() => { if (overflowBike) requestDelete(overflowBike); }}
