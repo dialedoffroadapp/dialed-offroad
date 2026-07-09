@@ -1,9 +1,12 @@
 // app/tune-feedback.tsx
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    Animated,
+    Easing,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -12,6 +15,7 @@ import {
     Text,
     TextInput,
     View,
+    ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
@@ -107,6 +111,104 @@ const OVERALL_LABELS: Record<number, string> = {
   5: "Dialed — micro adjustments only",
 };
 
+/* ---------------- Tuner voice (sticky bar reactions) ---------------- */
+
+const IDLE_LINE = "Waiting on you — how'd it ride?";
+const FREETEXT_FOCUS_LINE = "Go ahead, say it how you'd say it.";
+const CLEARED_LINE = "Cleared. What else?";
+
+const OVERALL_REACTIONS: Record<number, string> = {
+  1: "Alright, rough one. Let's make real changes.",
+  2: "Heard. We'll take bigger swings this round.",
+  3: "Solid base — let's sharpen it.",
+  4: "Close. Small, targeted moves.",
+  5: "Nearly perfect — I'll barely touch it.",
+};
+
+const ISSUE_ACKS: Record<Tune2SymptomId, { mild: string; bad: string }> = {
+  harsh_braking_bumps: {
+    mild: "Harsh, noted — we'll soften it up.",
+    bad: "Really beating you up. On it.",
+  },
+  rear_kicks_accel: {
+    mild: "Rear kicking — got it.",
+    bad: "Rear kicking hard. On it.",
+  },
+  front_knifes: {
+    mild: "Front tucking — noted.",
+    bad: "Front's washing on you. Big one.",
+  },
+  bottoms_landings: {
+    mild: "Bottoming a bit — okay.",
+    bad: "Slamming through the stroke. Fixing that.",
+  },
+  dead_feel: {
+    mild: "Feels dead — we'll wake it up.",
+    bad: "No life at all. We'll get the pop back.",
+  },
+  unstable_whoops: {
+    mild: "A little nervous in the fast stuff — noted.",
+    bad: "Sketchy at speed. Priority one.",
+  },
+  packs_whoops: {
+    mild: "Packing up — got it.",
+    bad: "Packing down bad. We'll free it up.",
+  },
+  harsh_square_edge: {
+    mild: "Square edges biting — noted.",
+    bad: "Roots and rocks are hammering you. On it.",
+  },
+  // Not exposed as chips, but keep the map total for safety.
+  deflects_in_chop: {
+    mild: "Front deflecting — noted.",
+    bad: "Front's pinballing. On it.",
+  },
+  headshake: {
+    mild: "Bit of headshake — noted.",
+    bad: "Headshake at speed. On it.",
+  },
+  general_harsh: {
+    mild: "Generally harsh — noted.",
+    bad: "Harsh everywhere. We'll calm it down.",
+  },
+};
+
+const PROTECT_ACKS: Record<string, { on: string; off: string }> = {
+  "Rear traction": {
+    on: "Rear's hooked up — not touching it.",
+    off: "Okay, rear's fair game again.",
+  },
+  "Front planted": {
+    on: "Front's planted — leaving it alone.",
+    off: "Okay, front's fair game again.",
+  },
+  "Landings": {
+    on: "Landings are money — hands off.",
+    off: "Okay, landings are fair game again.",
+  },
+  "Cornering": {
+    on: "Corners are working — not touching those.",
+    off: "Okay, corners are fair game again.",
+  },
+};
+
+/* ---------------- Chip + section icons (Ionicons, state-colored) ------- */
+
+const ISSUE_ICONS: Record<Tune2SymptomId, keyof typeof Ionicons.glyphMap> = {
+  harsh_braking_bumps: "flash",
+  rear_kicks_accel: "arrow-up-circle",
+  front_knifes: "arrow-down-circle",
+  bottoms_landings: "download",
+  dead_feel: "battery-dead",
+  unstable_whoops: "pulse",
+  packs_whoops: "layers",
+  harsh_square_edge: "triangle",
+  // Unexposed ids — safe fallbacks.
+  deflects_in_chop: "pulse",
+  headshake: "pulse",
+  general_harsh: "flash",
+};
+
 // Chip state palettes (design system: accent #1D9BF0; amber for "bad", NOT red;
 // green for "working")
 const AMBER_BORDER = "#F59E0B";
@@ -116,6 +218,51 @@ const GREEN_BORDER = "#10B981";
 const GREEN_TEXT = "#34D399";
 const GREEN_BG = "rgba(16,185,129,0.12)";
 const ACCENT_BG = "rgba(29,155,240,0.10)";
+
+/* ------------------------------------------------------------------ */
+/* PulsePressable: 150–200ms scale pulse on tap. The pulse lives on a  */
+/* wrapping Animated.View so the Pressable stays tappable throughout.  */
+/* ------------------------------------------------------------------ */
+
+function PulsePressable({
+  onPress,
+  style,
+  containerStyle,
+  children,
+}: {
+  onPress: () => void;
+  style?: any;
+  containerStyle?: ViewStyle;
+  children: React.ReactNode;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.timing(scale, {
+        toValue: 1.06,
+        duration: 90,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: 90,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+    onPress();
+  };
+
+  return (
+    <Animated.View style={[containerStyle, { transform: [{ scale }] }]}>
+      <Pressable onPress={handlePress} style={style}>
+        {children}
+      </Pressable>
+    </Animated.View>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Screen                                                             */
@@ -178,11 +325,63 @@ export default function TuneFeedbackScreen() {
   const [protectedAreas, setProtectedAreas] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [overallTouched, setOverallTouched] = useState(false);
+
+  /* ---------------- Tuner bar reactions ---------------- */
+
+  const [reaction, setReaction] = useState<string | null>(null);
+  const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const barScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(
+    () => () => {
+      if (reactionTimer.current) clearTimeout(reactionTimer.current);
+    },
+    []
+  );
+
+  // Show a transient reaction line + subtle ~200ms bar pulse, then settle
+  // back to the composed summary (or idle line).
+  const react = useCallback(
+    (line: string) => {
+      setReaction(line);
+      if (reactionTimer.current) clearTimeout(reactionTimer.current);
+      reactionTimer.current = setTimeout(() => setReaction(null), 2400);
+      Animated.sequence([
+        Animated.timing(barScale, {
+          toValue: 1.02,
+          duration: 100,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(barScale, {
+          toValue: 1,
+          duration: 100,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    },
+    [barScale]
+  );
 
   /* ---------------- Handlers ---------------- */
 
+  const onRateOverall = (n: number) => {
+    setOverall(n);
+    setOverallTouched(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    react(OVERALL_REACTIONS[n] ?? OVERALL_REACTIONS[3]);
+  };
+
   const selectCondition = (c: string) => {
-    setCondition((prev) => (prev === c ? null : c));
+    setCondition((prev) => {
+      const selecting = prev !== c;
+      if (selecting) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+      return selecting ? c : null;
+    });
     void logEvent("conditions_selected", { condition: c });
   };
 
@@ -195,6 +394,16 @@ export default function TuneFeedbackScreen() {
         delete copy[id];
         return copy;
       });
+    }
+    if (next === 1) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      react(ISSUE_ACKS[id]?.mild ?? "Noted.");
+    } else if (next === 2) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      react(ISSUE_ACKS[id]?.bad ?? "On it.");
+    } else {
+      // clear: no haptic
+      react(CLEARED_LINE);
     }
     void logEvent("chip_toggled", { id, level: LEVEL_NAMES[next] });
   };
@@ -214,6 +423,13 @@ export default function TuneFeedbackScreen() {
     setProtectedAreas((prev) =>
       active ? prev.filter((a) => a !== area) : [...prev, area]
     );
+    if (!active) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      react(PROTECT_ACKS[area]?.on ?? "Locked in — not touching it.");
+    } else {
+      // deselect: no haptic
+      react(PROTECT_ACKS[area]?.off ?? "Okay, fair game again.");
+    }
     void logEvent("protect_toggled", { area, active: !active });
   };
 
@@ -223,15 +439,22 @@ export default function TuneFeedbackScreen() {
     (chip) => (issueLevels[chip.id] ?? 0) > 0
   );
   const issueCount = activeIssues.length;
-  const heardVisible = issueCount > 0 || protectedAreas.length > 0;
+  const hasAnyInput =
+    overallTouched ||
+    issueCount > 0 ||
+    protectedAreas.length > 0 ||
+    !!condition ||
+    notes.trim().length > 0;
 
+  // Analytics continuity: the old in-flow hearing card fired this when it
+  // first appeared; the sticky bar fires it on first meaningful input.
   const heardShownRef = useRef(false);
   useEffect(() => {
-    if (heardVisible && !heardShownRef.current) {
+    if (hasAnyInput && !heardShownRef.current) {
       heardShownRef.current = true;
-      void logEvent("heard_card_shown", {});
+      void logEvent("heard_card_shown", { surface: "tuner_bar" });
     }
-  }, [heardVisible]);
+  }, [hasAnyInput]);
 
   // Pure template — no network calls, rebuilt on every input change.
   const heardText = useMemo(() => {
@@ -368,6 +591,8 @@ export default function TuneFeedbackScreen() {
         bikeId, // enables the engine's adaptive step from the last rated outcome
       });
 
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
       // Lineage shadow write: record the refinement as a child version and
       // link it back to the feedback row that produced it.
       if (critiquedVersionId) {
@@ -454,8 +679,8 @@ export default function TuneFeedbackScreen() {
               <Ionicons name="chevron-back" size={20} color="#fff" />
             </Pressable>
             <View style={{ flex: 1 }}>
-              <Text style={S.headerTitle}>Refine Your Setup</Text>
-              <Text style={S.headerSub}>{bikeTitle}</Text>
+              <Text style={S.headerTitle}>Post-ride debrief</Text>
+              <Text style={S.headerSub}>{bikeTitle} · 30 seconds, be honest</Text>
             </View>
           </View>
 
@@ -480,20 +705,20 @@ export default function TuneFeedbackScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           >
-            {/* Conditions */}
+            {/* Conditions (no icons on this row by design) */}
             <View style={S.section}>
               <Text style={S.sectionTitle}>Conditions today</Text>
               <View style={S.pillRow}>
                 {CONDITIONS.map((c) => {
                   const on = condition === c;
                   return (
-                    <Pressable
+                    <PulsePressable
                       key={c}
                       onPress={() => selectCondition(c)}
                       style={[S.pill, on && S.pillOn]}
                     >
                       <Text style={[S.pillText, on && S.pillTextOn]}>{c}</Text>
-                    </Pressable>
+                    </PulsePressable>
                   );
                 })}
               </View>
@@ -501,10 +726,15 @@ export default function TuneFeedbackScreen() {
 
             {/* Overall */}
             <View style={S.section}>
-              <Text style={S.sectionTitle}>How did this setup feel overall?</Text>
+              <View style={S.sectionTitleRow}>
+                <Ionicons name="speedometer" size={16} color={C.MUTED} />
+                <Text style={S.sectionTitle}>
+                  How did this setup feel overall?
+                </Text>
+              </View>
               <RatingRow
                 value={overall}
-                onChange={setOverall}
+                onChange={onRateOverall}
                 scaleMax={SCALE_MAX}
                 C={C}
               />
@@ -513,7 +743,10 @@ export default function TuneFeedbackScreen() {
 
             {/* Issue chips (tap-twice severity) */}
             <View style={S.section}>
-              <Text style={S.sectionTitle}>What needs improvement?</Text>
+              <View style={S.sectionTitleRow}>
+                <Ionicons name="build" size={16} color={C.MUTED} />
+                <Text style={S.sectionTitle}>What needs work?</Text>
+              </View>
               <Text style={S.sectionSub}>
                 Tap once for mild, twice for bad.
               </Text>
@@ -522,9 +755,12 @@ export default function TuneFeedbackScreen() {
                 {ISSUE_CHIPS.map((chip) => {
                   const level = issueLevels[chip.id] ?? 0;
                   const selectedWhere = issueWhere[chip.id];
+                  const chipColor =
+                    level === 1 ? C.ACCENT : level === 2 ? AMBER_TEXT : C.TEXT;
                   return (
                     <View key={chip.id} style={S.issueBlock}>
-                      <Pressable
+                      <PulsePressable
+                        containerStyle={{ alignSelf: "flex-start" }}
                         onPress={() => cycleIssue(chip.id)}
                         style={[
                           S.issueChip,
@@ -532,6 +768,12 @@ export default function TuneFeedbackScreen() {
                           level === 2 && S.issueChipBad,
                         ]}
                       >
+                        <Ionicons
+                          name={ISSUE_ICONS[chip.id]}
+                          size={14}
+                          color={chipColor}
+                          style={{ marginRight: 6 }}
+                        />
                         <Text
                           style={[
                             S.issueChipText,
@@ -542,7 +784,7 @@ export default function TuneFeedbackScreen() {
                           {chip.label}
                           {LEVEL_SUFFIX[level]}
                         </Text>
-                      </Pressable>
+                      </PulsePressable>
 
                       {level > 0 ? (
                         <View style={S.whereRow}>
@@ -573,9 +815,12 @@ export default function TuneFeedbackScreen() {
               </View>
             </View>
 
-            {/* What was working */}
+            {/* What was dialed */}
             <View style={S.section}>
-              <Text style={S.sectionTitle}>What was working?</Text>
+              <View style={S.sectionTitleRow}>
+                <Ionicons name="shield-checkmark" size={16} color={C.MUTED} />
+                <Text style={S.sectionTitle}>What was dialed?</Text>
+              </View>
               <Text style={S.sectionSub}>
                 I won't touch what's already good.
               </Text>
@@ -583,15 +828,21 @@ export default function TuneFeedbackScreen() {
                 {PROTECT_OPTIONS.map((area) => {
                   const on = protectedAreas.includes(area);
                   return (
-                    <Pressable
+                    <PulsePressable
                       key={area}
                       onPress={() => toggleProtect(area)}
-                      style={[S.pill, on && S.protectPillOn]}
+                      style={[S.pill, S.pillWithIcon, on && S.protectPillOn]}
                     >
+                      <Ionicons
+                        name={on ? "shield-checkmark" : "ellipse-outline"}
+                        size={14}
+                        color={on ? GREEN_TEXT : C.TEXT}
+                        style={{ marginRight: 5 }}
+                      />
                       <Text style={[S.pillText, on && S.protectPillTextOn]}>
                         {area}
                       </Text>
-                    </Pressable>
+                    </PulsePressable>
                   );
                 })}
               </View>
@@ -599,10 +850,14 @@ export default function TuneFeedbackScreen() {
 
             {/* Free text */}
             <View style={S.section}>
-              <Text style={S.sectionTitle}>Or say it your way</Text>
+              <View style={S.sectionTitleRow}>
+                <Ionicons name="chatbubble-ellipses" size={16} color={C.MUTED} />
+                <Text style={S.sectionTitle}>Or say it your way</Text>
+              </View>
               <TextInput
                 value={notes}
                 onChangeText={setNotes}
+                onFocus={() => react(FREETEXT_FOCUS_LINE)}
                 placeholder="Front was sketchy into corners after the whoops..."
                 placeholderTextColor={C.MUTED}
                 style={S.notesInput}
@@ -613,34 +868,36 @@ export default function TuneFeedbackScreen() {
               />
             </View>
 
-            {/* What I'm hearing */}
-            {heardVisible ? (
-              <View style={S.heardCard}>
-                <Text style={S.heardLabel}>WHAT I'M HEARING</Text>
-                <Text style={S.heardText}>{heardText}</Text>
-              </View>
-            ) : null}
-
-            {/* Buttons */}
+            {/* Back link (submit lives in the docked tuner bar) */}
             <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
-              <Pressable
-                onPress={onSubmit}
-                style={[S.btnPrimary, submitting && S.btnDisabled]}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={S.btnPrimaryText}>{submitLabel}</Text>
-                )}
-              </Pressable>
-
-              <View style={{ height: 10 }} />
               <Pressable onPress={() => router.back()} style={S.btnGhost}>
                 <Text style={S.btnGhostText}>Back to Setup</Text>
               </Pressable>
             </View>
           </ScrollView>
+
+          {/* Sticky tuner bar: reacts to every input, docked above the
+              keyboard via the surrounding KeyboardAvoidingView. */}
+          <View style={[S.tunerBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <Text style={S.tunerLabel}>YOUR TUNER'S NOTES</Text>
+            <Animated.Text
+              style={[S.tunerText, { transform: [{ scale: barScale }] }]}
+              numberOfLines={2}
+            >
+              {reaction ?? (hasAnyInput ? heardText : IDLE_LINE)}
+            </Animated.Text>
+            <Pressable
+              onPress={onSubmit}
+              style={[S.btnPrimary, submitting && S.btnDisabled]}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={S.btnPrimaryText}>{submitLabel}</Text>
+              )}
+            </Pressable>
+          </View>
         </KeyboardAvoidingView>
     </View>
   );
@@ -793,6 +1050,11 @@ const makeStyles = (C: {
       fontWeight: "800",
       fontSize: 17,
     },
+    sectionTitleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 7,
+    },
     sectionSub: {
       color: C.MUTED,
       fontSize: 13,
@@ -823,6 +1085,10 @@ const makeStyles = (C: {
       fontWeight: "700",
       fontSize: 13,
     },
+    pillWithIcon: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
     pillTextOn: {
       color: C.ACCENT,
     },
@@ -840,6 +1106,8 @@ const makeStyles = (C: {
       marginBottom: 10,
     },
     issueChip: {
+      flexDirection: "row",
+      alignItems: "center",
       alignSelf: "flex-start",
       paddingHorizontal: 14,
       paddingVertical: 9,
@@ -919,27 +1187,27 @@ const makeStyles = (C: {
       fontSize: 14,
     },
 
-    // "What I'm hearing" card
-    heardCard: {
-      marginHorizontal: 20,
-      marginTop: 28,
+    // Sticky tuner bar (docked; submit lives inside it)
+    tunerBar: {
       backgroundColor: C.CARD,
-      borderRadius: 12,
-      borderLeftWidth: 3,
-      borderLeftColor: C.ACCENT,
-      padding: 14,
+      borderTopWidth: 2,
+      borderTopColor: C.ACCENT,
+      paddingHorizontal: 16,
+      paddingTop: 10,
     },
-    heardLabel: {
+    tunerLabel: {
       color: C.MUTED,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: "800",
-      letterSpacing: 1.2,
+      letterSpacing: 1.4,
     },
-    heardText: {
+    tunerText: {
       color: C.TEXT,
       fontSize: 14,
-      lineHeight: 20,
-      marginTop: 6,
+      fontWeight: "600",
+      lineHeight: 19,
+      marginTop: 4,
+      marginBottom: 10,
     },
 
     btnPrimary: {
