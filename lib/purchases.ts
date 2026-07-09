@@ -68,6 +68,25 @@ export function hasPurchasedThisSession(): boolean {
 }
 
 /**
+ * Race a promise against a hard timeout, resolving to `fallback` if the work
+ * doesn't finish in time. The work is NOT cancelled — it continues in the
+ * background and its effects (e.g. a profile upsert) still land when the
+ * network recovers. Post-purchase flows must never hang on network.
+ */
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  fallback: T
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+const SYNC_TIMEOUT_MS = 5000;
+
+/**
  * Reset RevenueCat state on sign-out so the next user gets a clean session.
  * Call this before navigating to the login screen on sign-out or account deletion.
  */
@@ -235,36 +254,45 @@ export async function syncProFromRevenueCat(opts?: {
 }): Promise<boolean> {
   if (isWeb) return false;
   try {
-    const { data: auth } = await supabase.auth.getUser();
-    const user = auth?.user;
-    if (!user?.id) return false;
+    // Self-timeboxed: the cache invalidation + fresh customer-info read are
+    // network calls with no native timeout. A post-purchase flow must never
+    // hang on this — after SYNC_TIMEOUT_MS we report false and let the
+    // RevenueCat webhook heal the profile server-side. The work itself keeps
+    // running in the background and may still land.
+    const work = (async (): Promise<boolean> => {
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth?.user;
+      if (!user?.id) return false;
 
-    // The SDK cache can lag a just-completed purchase — always read fresh
-    // before writing anything to the profile.
-    await invalidateCustomerInfoCache();
-    const info = await getCustomerInfo();
-    if (!info) return false;
+      // The SDK cache can lag a just-completed purchase — always read fresh
+      // before writing anything to the profile.
+      await invalidateCustomerInfoCache();
+      const info = await getCustomerInfo();
+      if (!info) return false;
 
-    const { isPro: hasPro, expiration } = activeProMeta(info);
+      const { isPro: hasPro, expiration } = activeProMeta(info);
 
-    if (!hasPro && !opts?.allowDowngrade) {
-      if (__DEV__) console.log("[RC] sync: no entitlement, downgrade skipped");
-      return false;
-    }
+      if (!hasPro && !opts?.allowDowngrade) {
+        if (__DEV__) console.log("[RC] sync: no entitlement, downgrade skipped");
+        return false;
+      }
 
-    const payload: any = {
-      user_id: user.id,
-      is_pro: hasPro,
-      pro_until: hasPro ? expiration : null,
-    };
+      const payload: any = {
+        user_id: user.id,
+        is_pro: hasPro,
+        pro_until: hasPro ? expiration : null,
+      };
 
-    const { error } = await supabase.from("profiles").upsert(payload);
-    if (error) {
-      console.warn("[RC] syncProFromRevenueCat upsert failed:", error);
-      return false;
-    }
-    if (__DEV__) console.log("[RC] Synced pro → Supabase", payload);
-    return true;
+      const { error } = await supabase.from("profiles").upsert(payload);
+      if (error) {
+        console.warn("[RC] syncProFromRevenueCat upsert failed:", error);
+        return false;
+      }
+      if (__DEV__) console.log("[RC] Synced pro → Supabase", payload);
+      return true;
+    })();
+
+    return await withTimeout(work, SYNC_TIMEOUT_MS, false);
   } catch (e) {
     if (__DEV__) console.warn("[RC] syncProFromRevenueCat error:", e);
     return false;

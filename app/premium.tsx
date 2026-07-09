@@ -16,6 +16,7 @@ import {
   isPro as isProEntitlement,
   markPurchasedThisSession,
   syncProFromRevenueCat,
+  withTimeout,
 } from "../lib/purchases";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
@@ -57,8 +58,23 @@ export default function PremiumScreen() {
   // right at the unlock transition.
   const presentedRef = React.useRef(false);
 
+  // Navigation off this screen must be UNCONDITIONAL once the paywall flow
+  // finishes. It used to be gated on the effect closure's isMounted flag —
+  // but the success path itself advances onboarding state, which re-runs the
+  // effect and flips the ORIGINAL closure's isMounted to false before its
+  // finally could navigate (the re-run bails on presentedRef without
+  // navigating either). Result: purchase succeeded, nobody navigated, the
+  // screen's spinner sat forever. navigatedRef dedupes instead of gating.
+  const navigatedRef = React.useRef(false);
+
   useEffect(() => {
     let isMounted = true;
+
+    const go = (dest: string) => {
+      if (navigatedRef.current) return;
+      navigatedRef.current = true;
+      router.replace(dest as any);
+    };
 
     const handleOnboardingSuccess = async () => {
       const funnelId = await getOrCreateFunnelId();
@@ -141,12 +157,12 @@ export default function PremiumScreen() {
       if (hasPurchasedThisSession()) {
         try {
           if (isOnboardingTrial) {
-            target = await handleOnboardingSuccess();
+            target = await withTimeout(handleOnboardingSuccess(), 8000, "/(tabs)");
           }
         } catch (e) {
           console.warn("post-purchase advance failed", e);
         } finally {
-          if (isMounted) router.replace(target as any);
+          go(target);
         }
         return;
       }
@@ -157,7 +173,7 @@ export default function PremiumScreen() {
           await forceProForDev();
           markPurchasedThisSession();
           if (isOnboardingTrial) {
-            target = await handleOnboardingSuccess();
+            target = await withTimeout(handleOnboardingSuccess(), 8000, "/(tabs)");
           }
           return;
         }
@@ -182,8 +198,6 @@ export default function PremiumScreen() {
           dismissAutomatically: true,
         });
 
-        if (!isMounted) return;
-
         if (
           result === PAYWALL_RESULT.PURCHASED ||
           result === PAYWALL_RESULT.RESTORED
@@ -191,30 +205,29 @@ export default function PremiumScreen() {
           // Flag FIRST — synchronously, before any state advance or await —
           // so no gate anywhere can re-present this session.
           markPurchasedThisSession();
-          // sync RC entitlements → Supabase profiles
+          // Best-effort profile sync (self-timeboxed inside). A miss is fine:
+          // the session flag already unlocks the client and the RevenueCat
+          // webhook heals the profile server-side. Never block the unlock.
           const synced = await syncProFromRevenueCat();
           if (!synced) {
-            toast.show("Purchase recorded but profile sync failed. Please restart the app.", { kind: "error" });
-            return;
+            console.warn("[paywall] pro sync deferred to webhook");
           }
           toast.show("Pro unlocked 🎉", { kind: "success" });
           if (isOnboardingTrial) {
-            target = await handleOnboardingSuccess();
+            target = await withTimeout(handleOnboardingSuccess(), 8000, "/(tabs)");
           }
         } else if (isOnboardingTrial) {
           // Paywall dismissed without PURCHASED/RESTORED — but the user may
           // already have an active entitlement (e.g. "already a member" from
           // the same Apple ID). Check RevenueCat directly before giving up.
-          const info = await getCustomerInfo();
+          const info = await withTimeout(getCustomerInfo(), 5000, null);
           if (isProEntitlement(info)) {
             markPurchasedThisSession();
-            const synced = await syncProFromRevenueCat();
-            if (synced) {
-              toast.show("Pro unlocked", { kind: "success" });
-              target = await handleOnboardingSuccess();
-              // Skip the dismissal log — this is a success, not a dismissal.
-              return;
-            }
+            void syncProFromRevenueCat(); // best-effort; webhook heals
+            toast.show("Pro unlocked", { kind: "success" });
+            target = await withTimeout(handleOnboardingSuccess(), 8000, "/(tabs)");
+            // Skip the dismissal log — this is a success, not a dismissal.
+            return;
           }
 
           const funnelId = await getOrCreateFunnelId();
@@ -241,15 +254,13 @@ export default function PremiumScreen() {
         toast.show("Could not open paywall", { kind: "error" });
         if (isOnboardingTrial) {
           // Same fallback: the error may mask an existing entitlement
-          const info = await getCustomerInfo();
+          const info = await withTimeout(getCustomerInfo(), 5000, null);
           if (isProEntitlement(info)) {
             markPurchasedThisSession();
-            const synced = await syncProFromRevenueCat();
-            if (synced) {
-              toast.show("Pro unlocked", { kind: "success" });
-              target = await handleOnboardingSuccess();
-              return;
-            }
+            void syncProFromRevenueCat(); // best-effort; webhook heals
+            toast.show("Pro unlocked", { kind: "success" });
+            target = await withTimeout(handleOnboardingSuccess(), 8000, "/(tabs)");
+            return;
           }
 
           const funnelId = await getOrCreateFunnelId();
@@ -272,10 +283,10 @@ export default function PremiumScreen() {
           target = pending ? "/tune-results" : "/(tabs)/tune";
         }
       } finally {
-        // ✅ Always land back on Tune Results (or whatever returnTo says)
-        if (isMounted) {
-          router.replace(target);
-        }
+        // ✅ Navigation is unconditional: the flow finished, so we leave —
+        // regardless of whether a state advance re-ran this effect and
+        // flipped this closure's isMounted. navigatedRef dedupes.
+        go(target);
       }
     };
 
