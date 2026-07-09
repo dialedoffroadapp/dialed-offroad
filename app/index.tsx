@@ -3,14 +3,13 @@ import { useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   type OnboardingStep,
-  PENDING_GUEST_BIKE_SYNC_KEY,
   readLocalOnboardingState,
   readPendingTune,
   useOnboarding,
 } from "../lib/onboarding";
+import { reconcileGuestBikes } from "../lib/bikeReconcile";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 
@@ -78,28 +77,12 @@ export default function IndexGate() {
           if (!mounted || didNavigateRef.current) return;
           profile = (data as ProfileBootRow | null) ?? null;
 
-          // Fix 4: Retry guest bike insert that failed during signup migration
+          // Reconcile guest-era bike state for signed-in users: migrates any
+          // surviving guest-store bikes into the bikes table (deduped), retries
+          // the signup-time sync record (previously "Fix 4"), remaps the guest
+          // default-bike key, and heals local bike ids inside the pending tune.
           try {
-            const syncRaw = await AsyncStorage.getItem(PENDING_GUEST_BIKE_SYNC_KEY);
-            if (syncRaw) {
-              const syncData = JSON.parse(syncRaw);
-              if (
-                syncData?.userId === userId &&
-                syncData?.make &&
-                syncData?.model &&
-                syncData?.year
-              ) {
-                const { error: bikeErr } = await supabase.from("bikes").insert({
-                  user_id: userId,
-                  make: String(syncData.make),
-                  model: String(syncData.model),
-                  year: Number(syncData.year),
-                });
-                if (!bikeErr) {
-                  await AsyncStorage.removeItem(PENDING_GUEST_BIKE_SYNC_KEY);
-                }
-              }
-            }
+            await reconcileGuestBikes(userId);
           } catch {
             // Non-critical
           }

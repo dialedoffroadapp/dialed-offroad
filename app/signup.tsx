@@ -21,6 +21,7 @@ import type { ThemeTokens } from "../constants/theme";
 import {
   PENDING_GUEST_BIKE_SYNC_KEY,
   readPendingTune,
+  remapPendingTuneBikeId,
   useOnboarding,
 } from "../lib/onboarding";
 import { supabase } from "../lib/supabase";
@@ -221,6 +222,10 @@ function SignupInner() {
 
         // 4) Migrate guest bike from pending tune into Supabase so hasLegacyUsage
         //    fires correctly on next cold start and the TrialPromptModal can show.
+        //    Capture the new uuid and rewrite the pending tune's bike ids with
+        //    it — the tune was generated as a guest, so its meta still carries
+        //    the LOCAL bike id, which would strand the post-signup refine/save
+        //    flow bikeless (no lineage/history).
         let pendingBike: { make: string; model: string; year: number } | null = null;
         try {
           const { tune: pending } = await readPendingTune();
@@ -233,11 +238,19 @@ function SignupInner() {
                 model: String(bike.model),
                 year: Number(bike.year),
               };
-              await supabase.from("bikes").insert({
-                user_id: signInData.user.id,
-                ...pendingBike,
-              });
+              const { data: insertedBike, error: bikeInsertErr } = await supabase
+                .from("bikes")
+                .insert({
+                  user_id: signInData.user.id,
+                  ...pendingBike,
+                })
+                .select("id")
+                .single();
+              if (bikeInsertErr) throw bikeInsertErr;
               pendingBike = null; // success — no retry needed
+              if (insertedBike?.id) {
+                await remapPendingTuneBikeId(insertedBike.id);
+              }
             }
           }
         } catch {

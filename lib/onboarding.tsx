@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { supabase } from "./supabase";
+import { isUuid } from "./uuid";
 
 export const ONBOARDING_STORAGE_KEY = "dialed_onboarding_v1";
 export const PENDING_TUNE_STORAGE_KEY = "dialed_pending_tune_v1";
@@ -227,6 +228,57 @@ export async function writePendingTune(
 
 export async function clearPendingTune(): Promise<void> {
   await AsyncStorage.removeItem(PENDING_TUNE_STORAGE_KEY);
+}
+
+/**
+ * remapPendingTuneBikeId
+ * Guest-onboarding tunes are generated BEFORE signup, so their meta snapshot
+ * carries the guest bike's LOCAL id ("1783553470201_…"). Once the bike exists
+ * in the bikes table, call this with the real uuid to rewrite every id slot in
+ * the pending tune — otherwise the post-signup refine/save flow runs bikeless
+ * (no lineage, no history, no check-in keying). Fail-silent by design.
+ */
+export async function remapPendingTuneBikeId(newBikeId: string): Promise<void> {
+  try {
+    const { tune } = await readPendingTune();
+    if (!tune) return;
+
+    let changed = false;
+    let meta = tune.meta;
+    try {
+      const m = JSON.parse(decodeURIComponent(tune.meta));
+      const fix = (obj: any, key: string) => {
+        if (
+          obj &&
+          typeof obj[key] === "string" &&
+          obj[key].length > 0 &&
+          !isUuid(obj[key])
+        ) {
+          obj[key] = newBikeId;
+          changed = true;
+        }
+      };
+      fix(m, "bike_id");
+      fix(m?.bike, "id");
+      fix(m?.bike, "selectedBikeId");
+      fix(m?.context, "bike_id");
+      fix(m?.context, "selectedBikeId");
+      if (changed) meta = encodeURIComponent(JSON.stringify(m));
+    } catch {
+      // meta unreadable — still fix the top-level bikeId below
+    }
+
+    const needsTopLevel = !!tune.bikeId && !isUuid(tune.bikeId);
+    if (changed || needsTopLevel) {
+      await writePendingTune({
+        ...tune,
+        meta,
+        bikeId: needsTopLevel ? newBikeId : tune.bikeId,
+      });
+    }
+  } catch (e) {
+    console.warn("remapPendingTuneBikeId skipped", e);
+  }
 }
 
 const Ctx = createContext<OnboardingContextValue>({
