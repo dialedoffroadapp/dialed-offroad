@@ -30,7 +30,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../../components/Toast";
 import type { ThemeTokens } from "../../constants/theme";
 import {
+  hasPurchasedThisSession,
   isPro,
+  markPurchasedThisSession,
   resetPurchases,
   restorePurchases,
   syncProFromRevenueCat,
@@ -347,6 +349,14 @@ export default function ProfileScreen() {
 
   // ---------- RevenueCat Paywall ----------
   const openPaywall = async () => {
+    // Once a purchase succeeded this session, never present the paywall again
+    // — refresh state instead.
+    if (hasPurchasedThisSession()) {
+      await syncProFromRevenueCat();
+      await loadProfile();
+      toast.show("You're already Pro", { kind: "success" });
+      return;
+    }
     try {
       const result = await RevenueCatUI.presentPaywall({
         dismissAutomatically: true,
@@ -356,6 +366,7 @@ export default function ProfileScreen() {
         result === PAYWALL_RESULT.PURCHASED ||
         result === PAYWALL_RESULT.RESTORED
       ) {
+        markPurchasedThisSession();
         await syncProFromRevenueCat();
         await loadProfile();
         toast.show("Pro unlocked", { kind: "success" });
@@ -370,6 +381,7 @@ export default function ProfileScreen() {
   const onRestorePurchases = async () => {
     try {
       const info = await restorePurchases();
+      if (isPro(info)) markPurchasedThisSession();
 
       await syncProFromRevenueCat();
       await loadProfile();

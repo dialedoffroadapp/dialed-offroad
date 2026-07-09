@@ -51,6 +51,23 @@ function getPlatformKey(): string | undefined {
 let configured = false;
 
 /**
+ * Session-level purchase flag. Set SYNCHRONOUSLY in every purchase success
+ * handler BEFORE any navigation or onboarding state advance; checked by every
+ * paywall presentation point. Once a purchase succeeds in-session, no gate may
+ * present the paywall again — profile reads and RevenueCat cache can lag, but
+ * this flag cannot. Cleared on sign-out (resetPurchases).
+ */
+let purchasedThisSession = false;
+
+export function markPurchasedThisSession(): void {
+  purchasedThisSession = true;
+}
+
+export function hasPurchasedThisSession(): boolean {
+  return purchasedThisSession;
+}
+
+/**
  * Reset RevenueCat state on sign-out so the next user gets a clean session.
  * Call this before navigating to the login screen on sign-out or account deletion.
  */
@@ -64,6 +81,7 @@ export async function resetPurchases(): Promise<void> {
     if (__DEV__) console.warn("[RC] logOut error:", e);
   } finally {
     configured = false;
+    purchasedThisSession = false; // next user must not inherit the flag
   }
 }
 

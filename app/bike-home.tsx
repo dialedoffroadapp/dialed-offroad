@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
 import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
 import { deriveIsPro } from "../lib/proUtils";
+import { hasPurchasedThisSession } from "../lib/purchases";
 import { buildRefineParams, formatValuesLine } from "../lib/refineFlow";
 import {
   getHistoryWithFeedback,
@@ -151,7 +152,7 @@ export default function BikeHomeScreen() {
   };
 
   const onHistory = () => {
-    if (isPro) {
+    if (isPro || hasPurchasedThisSession()) {
       router.push({
         pathname: "/setup-history",
         params: { bikeId: String(bikeId) },

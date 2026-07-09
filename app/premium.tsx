@@ -10,7 +10,13 @@ import {
   readPendingTune,
   useOnboarding,
 } from "../lib/onboarding";
-import { getCustomerInfo, isPro as isProEntitlement, syncProFromRevenueCat } from "../lib/purchases";
+import {
+  getCustomerInfo,
+  hasPurchasedThisSession,
+  isPro as isProEntitlement,
+  markPurchasedThisSession,
+  syncProFromRevenueCat,
+} from "../lib/purchases";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { clearFunnelId, getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -43,6 +49,13 @@ export default function PremiumScreen() {
     return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
   }, [state.lastUpdatedAt]);
   const ageMinutesSinceLastStep = Math.round(onboardingAgeMs / 60000);
+
+  // One presentation attempt per mount. The effect's deps include onboarding
+  // state that the SUCCESS PATH ITSELF advances (completeOnboarding flips
+  // onboardingStep/onboardingComplete/lastUpdatedAt while this screen is still
+  // mounted), which re-ran the effect and presented the paywall a second time
+  // right at the unlock transition.
+  const presentedRef = React.useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -119,10 +132,30 @@ export default function PremiumScreen() {
     const showPaywall = async () => {
       let target = returnTo;
 
+      if (presentedRef.current) return; // effect re-run — never present twice
+      presentedRef.current = true;
+
+      // Session purchase flag is authoritative: once any purchase succeeded
+      // this session, no gate presents the paywall again — advance straight
+      // to the unlocked app (completing onboarding if that's where we are).
+      if (hasPurchasedThisSession()) {
+        try {
+          if (isOnboardingTrial) {
+            target = await handleOnboardingSuccess();
+          }
+        } catch (e) {
+          console.warn("post-purchase advance failed", e);
+        } finally {
+          if (isMounted) router.replace(target as any);
+        }
+        return;
+      }
+
       try {
         // ✅ DEV: skip paywall entirely
         if (devMode) {
           await forceProForDev();
+          markPurchasedThisSession();
           if (isOnboardingTrial) {
             target = await handleOnboardingSuccess();
           }
@@ -155,6 +188,9 @@ export default function PremiumScreen() {
           result === PAYWALL_RESULT.PURCHASED ||
           result === PAYWALL_RESULT.RESTORED
         ) {
+          // Flag FIRST — synchronously, before any state advance or await —
+          // so no gate anywhere can re-present this session.
+          markPurchasedThisSession();
           // sync RC entitlements → Supabase profiles
           const synced = await syncProFromRevenueCat();
           if (!synced) {
@@ -171,6 +207,7 @@ export default function PremiumScreen() {
           // the same Apple ID). Check RevenueCat directly before giving up.
           const info = await getCustomerInfo();
           if (isProEntitlement(info)) {
+            markPurchasedThisSession();
             const synced = await syncProFromRevenueCat();
             if (synced) {
               toast.show("Pro unlocked", { kind: "success" });
@@ -206,6 +243,7 @@ export default function PremiumScreen() {
           // Same fallback: the error may mask an existing entitlement
           const info = await getCustomerInfo();
           if (isProEntitlement(info)) {
+            markPurchasedThisSession();
             const synced = await syncProFromRevenueCat();
             if (synced) {
               toast.show("Pro unlocked", { kind: "success" });

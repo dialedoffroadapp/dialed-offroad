@@ -27,6 +27,7 @@ import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
 import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
 import { deriveIsPro } from "../lib/proUtils";
+import { hasPurchasedThisSession } from "../lib/purchases";
 import {
   createRestoreVersion,
   FeedbackSymptom,
@@ -331,7 +332,7 @@ export default function SetupHistoryScreen() {
         .select("pro_until, is_pro")
         .eq("user_id", auth.user.id)
         .maybeSingle();
-      if (!deriveIsPro(prof)) {
+      if (!deriveIsPro(prof) && !hasPurchasedThisSession()) {
         void logEvent("history_gate_hit", { source: "screen_direct" });
         router.replace("/premium?source=history_gate" as any);
         return;

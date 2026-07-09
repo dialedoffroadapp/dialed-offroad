@@ -12,6 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { ActiveSetupCard } from "../../components/ActiveSetupCard";
 import { useToast } from "../../components/Toast";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
@@ -129,6 +130,9 @@ export default function HomeScreen() {
   const [bikes, setBikes] = useState<GarageBike[]>([]);
   const [bikeLastSession, setBikeLastSession] = useState<BikeLastSession>({});
   const [lastSession, setLastSession] = useState<LastSession | null>(null);
+  // Which bike the ActiveSetupCard is showing (null = hidden). Used to drop
+  // the redundant Last Session card when both would show the same bike.
+  const [activeSetupBikeId, setActiveSetupBikeId] = useState<string | null>(null);
 
   // Presets row
   const [presetsLoading, setPresetsLoading] = useState(true);
@@ -529,7 +533,11 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        {/* ── Last Session ── */}
+        {/* ── Active setup (current version of the freshest bike) ── */}
+        <ActiveSetupCard onBikeResolved={setActiveSetupBikeId} />
+
+        {/* ── Last Session — dropped when the setup card shows the same bike ── */}
+        {activeSetupBikeId && lastSession?.bike_id === activeSetupBikeId ? null : (
         <View style={styles.card}>
           <SectionHeader icon="time-outline" title="Last Session" />
 
@@ -596,6 +604,7 @@ export default function HomeScreen() {
             </>
           )}
         </View>
+        )}
 
         {/* ── Tip ── */}
         <View style={styles.tipCard}>

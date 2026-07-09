@@ -32,6 +32,7 @@ import {
 } from "../lib/onboarding";
 import { isProfane } from "../lib/profanity";
 import { deriveIsPro } from "../lib/proUtils";
+import { hasPurchasedThisSession } from "../lib/purchases";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -253,7 +254,9 @@ export default function TuneResultScreen() {
     }, [])
   );
 
-  const hasActiveEntitlement = isPro;
+  // The session purchase flag is authoritative: a purchase moments ago beats
+  // any not-yet-propagated profile read at the unlock step.
+  const hasActiveEntitlement = isPro || hasPurchasedThisSession();
   const shouldBlur = isOnboardingUnlockStep && !hasActiveEntitlement;
 
   // Auto-complete onboarding for users who are already Pro at results_locked.
@@ -264,7 +267,7 @@ export default function TuneResultScreen() {
     if (
       !didAutoCompleteRef.current &&
       proResolved &&
-      isPro &&
+      (isPro || hasPurchasedThisSession()) &&
       onboardingActive &&
       isOnboardingUnlockStep &&
       !state.onboardingComplete
