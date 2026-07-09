@@ -485,7 +485,22 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* ── Your Garage — alive data ── */}
+        {/* ── Your Garage ── merged setup card when a current version exists;
+            otherwise the classic garage card below renders unchanged. */}
+        {activeSetupBikeId ? (
+          <View style={styles.mergedHeaderRow}>
+            <Text style={styles.mergedMicroLabel}>YOUR GARAGE</Text>
+            <Pressable
+              onPress={() => router.push("/(tabs)/garage")}
+              hitSlop={8}
+            >
+              <Text style={styles.mergedManageLink}>Manage →</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        <ActiveSetupCard onBikeResolved={setActiveSetupBikeId} />
+
+        {!activeSetupBikeId && (
         <View style={styles.card}>
           <SectionHeader icon="bicycle-outline" title="Your Garage" />
 
@@ -532,9 +547,7 @@ export default function HomeScreen() {
             <Ionicons name="chevron-forward" size={16} color={t.ACCENT} />
           </Pressable>
         </View>
-
-        {/* ── Active setup (current version of the freshest bike) ── */}
-        <ActiveSetupCard onBikeResolved={setActiveSetupBikeId} />
+        )}
 
         {/* ── Last Session — dropped when the setup card shows the same bike ── */}
         {activeSetupBikeId && lastSession?.bike_id === activeSetupBikeId ? null : (
@@ -606,9 +619,9 @@ export default function HomeScreen() {
         </View>
         )}
 
-        {/* ── Tip ── */}
+        {/* ── Tip (footnote weight) ── */}
         <View style={styles.tipCard}>
-          <Ionicons name="bulb-outline" size={16} color={t.SUCCESS} />
+          <Ionicons name="bulb-outline" size={13} color={t.SUCCESS} />
           <Text style={styles.tipText}>
             <Text style={styles.tipPrefix}>Tip · </Text>
             For WP AER forks, start at the suggested air pressure, then adjust ±0.2 bar after
@@ -899,16 +912,34 @@ const makeStyles = (T: {
     // ── Tip ──
     tipCard: {
       backgroundColor: T.CARD,
-      borderColor: T.BORDER,
-      borderWidth: 1,
-      borderRadius: 16,
-      padding: 14,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
       flexDirection: "row",
       alignItems: "flex-start",
-      gap: 10,
+      gap: 8,
     },
-    tipPrefix: { color: T.TEXT, fontWeight: "700" },
-    tipText: { color: T.SUBTEXT, flex: 1, lineHeight: 20, fontSize: 13 },
+    tipPrefix: { color: T.SUBTEXT, fontWeight: "700" },
+    tipText: { color: T.SUBTEXT, flex: 1, lineHeight: 17, fontSize: 12 },
+
+    // ── Merged garage/setup header ──
+    mergedHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 8,
+    },
+    mergedMicroLabel: {
+      color: T.SUBTEXT,
+      fontSize: 10,
+      fontWeight: "800",
+      letterSpacing: 1.6,
+    },
+    mergedManageLink: {
+      color: T.ACCENT,
+      fontSize: 12,
+      fontWeight: "800",
+    },
 
     // ── Utility ──
     noteLabel: { color: T.SUBTEXT, fontSize: 12, fontWeight: "700" },
