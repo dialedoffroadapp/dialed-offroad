@@ -16,6 +16,7 @@ import { Chip } from "../components/Chip";
 import { SettingRow } from "../components/SettingRow";
 import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
+import { createBaselineVersion } from "../lib/setupVersions";
 import { ZeroTuneResult } from "../lib/ai";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
@@ -373,6 +374,95 @@ export default function TuneTwoResultScreen() {
   const [savingBaseline, setSavingBaseline] = useState(false);
   const canSaveBaseline = !!bikeId;
 
+  // Custom-bike rescue: no garage bikeId, but the tune context knows the
+  // bike's make/model — offer to add it to the garage and save against it,
+  // instead of stranding the rider at a dead helper message.
+  const bikeInfo = useMemo(() => {
+    const m: any = metaObj;
+    const candidates = [m?.bike, m?.bike_hint, m?.context];
+    for (const c of candidates) {
+      if (c?.make && c?.model) {
+        const year = Number(c.year);
+        return {
+          make: String(c.make).trim(),
+          model: String(c.model).trim(),
+          year: Number.isFinite(year) ? year : null,
+        };
+      }
+    }
+    return null;
+  }, [metaObj]);
+
+  const onAddBikeAndSave = async () => {
+    if (!bikeInfo || savingBaseline) return;
+    try {
+      setSavingBaseline(true);
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user?.id) {
+        router.push("/login");
+        return;
+      }
+
+      // Reuse an existing garage bike with the same make/model/year before
+      // inserting — repeat saves must not duplicate.
+      const { data: existing } = await supabase
+        .from("bikes")
+        .select("id, make, model, year")
+        .eq("user_id", auth.user.id);
+      const match = (existing ?? []).find(
+        (b: any) =>
+          String(b.make ?? "").trim().toLowerCase() ===
+            bikeInfo.make.toLowerCase() &&
+          String(b.model ?? "").trim().toLowerCase() ===
+            bikeInfo.model.toLowerCase() &&
+          (b.year ?? null) === bikeInfo.year
+      );
+
+      let newBikeId: string;
+      if (match) {
+        newBikeId = match.id;
+      } else {
+        const { data: inserted, error: insertErr } = await supabase
+          .from("bikes")
+          .insert({
+            user_id: auth.user.id,
+            make: bikeInfo.make,
+            model: bikeInfo.model,
+            year: bikeInfo.year,
+          })
+          .select("id")
+          .single();
+        if (insertErr || !inserted?.id) {
+          throw insertErr ?? new Error("Couldn't add the bike");
+        }
+        newBikeId = inserted.id;
+      }
+
+      // Start the bike's version chain with this refined setup so Bike Home /
+      // history / check-in have something to key on. Shadow write — a failure
+      // here must not block the save itself.
+      try {
+        const ctx: any = (metaObj as any).context ?? {};
+        await createBaselineVersion({
+          bikeId: newBikeId,
+          tune: refined,
+          terrain: Array.isArray(ctx.terrain)
+            ? ctx.terrain[0] ?? null
+            : ctx.terrain ?? null,
+          context: ctx,
+        });
+      } catch (shadowErr) {
+        console.warn("custom-bike version shadow write failed", shadowErr);
+      }
+
+      await doSave(auth.user.id, newBikeId);
+    } catch (e: any) {
+      toast.show(e?.message ?? "Save failed", { kind: "error" });
+    } finally {
+      setSavingBaseline(false);
+    }
+  };
+
   const onSaveBaseline = async () => {
     if (!canSaveBaseline) {
       toast.show(
@@ -389,13 +479,24 @@ export default function TuneTwoResultScreen() {
         router.push("/login");
         return;
       }
+      await doSave(auth.user.id, bikeId as string);
+    } catch (e: any) {
+      toast.show(e?.message ?? "Save failed", { kind: "error" });
+    } finally {
+      setSavingBaseline(false);
+    }
+  };
 
+  // Shared save body: free-plan cap check + sessions insert. Callers own the
+  // savingBaseline flag and error toasts.
+  const doSave = async (userId: string, saveBikeId: string) => {
+    {
       // Free plan: enforce saved-setup cap
       if (!isPro) {
         const { count, error: countErr } = await supabase
           .from("sessions")
           .select("*", { count: "exact", head: true })
-          .eq("user_id", auth.user.id);
+          .eq("user_id", userId);
 
         if (countErr) throw countErr;
 
@@ -415,8 +516,8 @@ export default function TuneTwoResultScreen() {
         : ctx.terrain ?? null;
 
       const insert = {
-        user_id: auth.user.id,
-        bike_id: bikeId,
+        user_id: userId,
+        bike_id: saveBikeId,
         rode_on: new Date().toISOString().slice(0, 10),
         surface: terrain,
         track: ctx.track ?? null,
@@ -442,11 +543,12 @@ export default function TuneTwoResultScreen() {
       const { error } = await supabase.from("sessions").insert(insert);
       if (error) throw error;
       toast.show("Refined setup saved", { kind: "success" });
-      router.push("/(tabs)/sessions");
-    } catch (e: any) {
-      toast.show(e?.message ?? "Save failed", { kind: "error" });
-    } finally {
-      setSavingBaseline(false);
+      // The natural end of the loop teaches its new beginning: land on the
+      // bike's home page, where the saved setup now lives.
+      router.replace({
+        pathname: "/bike-home",
+        params: { bikeId: saveBikeId },
+      } as any);
     }
   };
 
@@ -682,7 +784,7 @@ export default function TuneTwoResultScreen() {
 
         {/* Save + back */}
         <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-          {!canSaveBaseline ? (
+          {!canSaveBaseline && !bikeInfo ? (
             <View style={S.helperBox}>
               <Ionicons
                 name="alert-circle"
@@ -696,20 +798,45 @@ export default function TuneTwoResultScreen() {
             </View>
           ) : null}
 
-          <Pressable
-            onPress={onSaveBaseline}
-            style={[
-              S.btnPrimary,
-              (!canSaveBaseline || savingBaseline) && S.btnDisabled,
-            ]}
-            disabled={!canSaveBaseline || savingBaseline}
-          >
-            {savingBaseline ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={S.btnPrimaryText}>Save refined setup</Text>
-            )}
-          </Pressable>
+          {!canSaveBaseline && bikeInfo ? (
+            /* Custom-bike rescue: create the garage bike inline and save
+               against it — the refine loop must not dead-end here. */
+            <View style={S.addBikeBox}>
+              <Text style={S.addBikeText}>
+                Add{" "}
+                {[bikeInfo.year, bikeInfo.make, bikeInfo.model]
+                  .filter(Boolean)
+                  .join(" ")}{" "}
+                to your garage and save?
+              </Text>
+              <Pressable
+                onPress={onAddBikeAndSave}
+                style={[S.btnPrimary, savingBaseline && S.btnDisabled]}
+                disabled={savingBaseline}
+              >
+                {savingBaseline ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={S.btnPrimaryText}>Add to garage & save</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              onPress={onSaveBaseline}
+              style={[
+                S.btnPrimary,
+                (!canSaveBaseline || savingBaseline) && S.btnDisabled,
+              ]}
+              disabled={!canSaveBaseline || savingBaseline}
+            >
+              {savingBaseline ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={S.btnPrimaryText}>Save refined setup</Text>
+              )}
+            </Pressable>
+          )}
 
           <View style={{ height: 10 }} />
           <Pressable
@@ -1036,6 +1163,18 @@ const makeStyles = (C: any) =>
       backgroundColor: "transparent",
     },
     btnGhostText: { color: C.TEXT, fontWeight: "800" },
+    addBikeBox: {
+      borderRadius: 12,
+      backgroundColor: C.CARD,
+      padding: 14,
+      gap: 12,
+    },
+    addBikeText: {
+      color: C.TEXT,
+      fontSize: 14,
+      fontWeight: "700",
+      lineHeight: 20,
+    },
     helperBox: {
       flexDirection: "row",
       alignItems: "flex-start",

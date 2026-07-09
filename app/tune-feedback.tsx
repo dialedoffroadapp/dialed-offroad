@@ -608,6 +608,8 @@ export default function TuneFeedbackScreen() {
                 style={S.notesInput}
                 multiline
                 textAlignVertical="top"
+                returnKeyType="done"
+                blurOnSubmit
               />
             </View>
 

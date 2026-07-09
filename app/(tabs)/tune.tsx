@@ -39,10 +39,11 @@ import {
 } from "react-native";
 import Svg, { Circle as SvgCircle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GarageCoachmark } from "../../components/GarageCoachmark";
 import { OnboardingProgress } from "../../components/OnboardingProgress";
 import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
-import { PrerideCard } from "../../components/PrerideCard";
 import { RiskGate } from "../../components/RiskGate";
+import { RunningSetupRow } from "../../components/RunningSetupRow";
 import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
@@ -60,6 +61,7 @@ import { supabase } from "../../lib/supabase";
 import { lightTheme } from "../../constants/theme";
 import { useTheme } from "../../lib/theme";
 import type { UsageEvent } from "../../lib/usage";
+import { isUuid } from "../../lib/uuid";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
 /* --------------------------------- Types ---------------------------------- */
@@ -442,9 +444,6 @@ export default function TuneScreen() {
   const [bikes, setBikes] = useState<Bike[]>([]);
   const [bikeLoading, setBikeLoading] = useState(true);
   const [selectedBikeId, setSelectedBikeId] = useState<string | null>(null);
-  // Above-the-fold card coordination: null = check-in eligibility unresolved,
-  // true = check-in showing (pre-ride yields), false = pre-ride may show.
-  const [checkinVisible, setCheckinVisible] = useState<boolean | null>(null);
   const [bikeSheetOpen, setBikeSheetOpen] = useState(false);
 
   // ——— Free text bike fields (can override selection) ———
@@ -531,17 +530,18 @@ export default function TuneScreen() {
   // ——— Monetization state (trial/pro) ———
   const [trialUsed, setTrialUsed] = useState<number>(0);
   const [isPro, setIsPro] = useState<boolean>(false);
+  // Until the profile fetch resolves, pro/trial status is UNKNOWN — render a
+  // neutral CTA rather than flashing free-tier copy at Pro users.
+  const [proStatusResolved, setProStatusResolved] = useState(false);
 
   // --- CTA logic for main button ---
   const hasFreeTrialTune = !isPro && trialUsed < TRIAL_LIMIT;
-  const trialExhausted = !isPro && !hasFreeTrialTune;
+  const trialExhausted = proStatusResolved && !isPro && !hasFreeTrialTune;
   const primaryCtaLabel = isOnboarding
-    ? isPro
-      ? "Generate my first tune"
-      : hasFreeTrialTune
+    ? isPro || hasFreeTrialTune || !proStatusResolved
       ? "Generate my first tune"
       : "Go Pro for unlimited tunes"
-    : isPro
+    : !proStatusResolved || isPro
     ? "Generate tune"
     : hasFreeTrialTune
     ? "Use 1 free tune credit"
@@ -641,6 +641,10 @@ export default function TuneScreen() {
       console.warn("Tune: init failed", e);
       setIsPro(false);
       setTrialUsed(0);
+    } finally {
+      // Status is now known (even if it resolved to "free") — the CTA can
+      // stop showing the neutral label.
+      setProStatusResolved(true);
     }
   }, []);
 
@@ -1402,15 +1406,12 @@ export default function TuneScreen() {
             )}
           </View>
 
+          {/* One-time wayfinding for the Bike Home restructure */}
+          {!isOnboarding && <GarageCoachmark />}
+
           {/* Outcome check-in: did the last refinement help? Feeds the engine's
               adaptive step. Renders only when an unanswered refinement exists. */}
-          {!isOnboarding && (
-            <OutcomeCheckinCard onEligibility={setCheckinVisible} />
-          )}
-
-          {/* Pre-ride reminder: current setup at a glance. Only renders once
-              the check-in card has resolved to NOT showing — never two cards. */}
-          {!isOnboarding && checkinVisible === false && <PrerideCard />}
+          {!isOnboarding && <OutcomeCheckinCard />}
 
           {/* Garage Selector */}
           <View style={S.selectorCard}>
@@ -1484,6 +1485,12 @@ export default function TuneScreen() {
             )}
           </View>
         </View>
+
+        {/* Running setup: one-line pointer to Bike Home. The tune tab is for
+            generating; managing setups lives in the garage. */}
+        {!isOnboarding && selectedBikeId && isUuid(selectedBikeId) && (
+          <RunningSetupRow bikeId={selectedBikeId} />
+        )}
 
         {/* Bike (free text) */}
         <View style={S.card}>
