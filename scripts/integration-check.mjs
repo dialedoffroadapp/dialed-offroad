@@ -137,11 +137,21 @@ async function main() {
   const elig = await rest("GET", `/rest/v1/ride_feedback?select=id,symptoms&user_id=eq.${A.id}&resulting_version_id=not.is.null&outcome=is.null&created_at=lt.${encodeURIComponent(cutoff)}&order=created_at.desc&limit=1`, { key: anonKey, jwt: A.jwt });
   record("INT-6c", "outcome check-in eligibility query returns the 13h-old row", Array.isArray(elig.body) && elig.body[0]?.id === fb1.id, JSON.stringify(elig.body).slice(0, 60));
 
-  // 8. H3/M5: is_pro / pro_until client-writability (REPORT ONLY)
+  // 8. H3/M5: is_pro / pro_until client-writability (locked by 20260710170000)
   const proPatch = await rest("PATCH", `/rest/v1/profiles?user_id=eq.${A.id}`, { key: anonKey, jwt: A.jwt, body: { is_pro: true, pro_until: "2030-01-01T00:00:00Z" }, prefer: "return=representation" });
   const proAfter = await rest("GET", `/rest/v1/profiles?user_id=eq.${A.id}&select=is_pro,pro_until`, { key: serviceKey });
   const escalated = proAfter.body?.[0]?.is_pro === true;
   record("INT-7", "H3/M5 audit: is_pro NOT writable by client", !escalated, `patch=${proPatch.status} db is_pro=${proAfter.body?.[0]?.is_pro} pro_until=${proAfter.body?.[0]?.pro_until}`);
+  const trialPatch = await rest("PATCH", `/rest/v1/profiles?user_id=eq.${A.id}`, { key: anonKey, jwt: A.jwt, body: { trial_tunes_used: 0 } });
+  const trialAfterHack = await rest("GET", `/rest/v1/profiles?user_id=eq.${A.id}&select=trial_tunes_used`, { key: serviceKey });
+  record("INT-7b", "trial_tunes_used NOT writable by client (RPCs are the only writers)", trialPatch.status !== 200 && trialPatch.status !== 204, `patch=${trialPatch.status} db=${trialAfterHack.body?.[0]?.trial_tunes_used}`);
+
+  // 9. Legitimate profile edits still work post-lock (row exists via
+  //    claim_free_tune's insert-if-missing earlier in this run).
+  const nameEdit = await rest("PATCH", `/rest/v1/profiles?user_id=eq.${A.id}`, { key: anonKey, jwt: A.jwt, body: { display_name: "Integration Rider" }, prefer: "return=representation" });
+  record("INT-8a", "profiles: display_name PATCH under user JWT still succeeds", nameEdit.status === 200 && nameEdit.body?.[0]?.display_name === "Integration Rider", `status=${nameEdit.status}`);
+  const upsertEdit = await rest("POST", `/rest/v1/profiles?on_conflict=user_id`, { key: anonKey, jwt: A.jwt, body: { user_id: A.id, display_name: "Upsert Rider", avatar_url: null, updated_at: new Date().toISOString() }, prefer: "resolution=merge-duplicates,return=representation" });
+  record("INT-8b", "profiles: app-style upsert (lib/profiles.ts shape) still succeeds", (upsertEdit.status === 200 || upsertEdit.status === 201) && upsertEdit.body?.[0]?.display_name === "Upsert Rider", `status=${upsertEdit.status}`);
 }
 
 async function cleanup() {

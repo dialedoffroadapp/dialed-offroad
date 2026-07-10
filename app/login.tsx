@@ -116,12 +116,13 @@ function LoginInner() {
           // (e.g. signup created auth but profile insert failed), create it now.
           if (!prof) {
             const fallbackStep = localState.onboardingStep === "signup" ? "trial" : (localState.onboardingStep ?? "complete");
+            // is_pro is server-only (webhook/service role) since 20260710170000
+            // — including it would fail the whole upsert on column grants.
             await supabase.from("profiles").upsert(
               {
                 user_id: uid,
                 onboarding_step: fallbackStep,
                 onboarding_complete: fallbackStep === "complete",
-                is_pro: false,
               },
               { onConflict: "user_id" }
             );

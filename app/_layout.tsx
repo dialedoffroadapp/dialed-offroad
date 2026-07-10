@@ -184,12 +184,14 @@ function RootInner() {
         const { data: auth } = await supabase.auth.getUser();
         if (!auth?.user?.id) return;
 
-        // Check Pro status (+ onboarding_step: the server-side decliner
-        // signal, immune to the fresh-install race where local state still
-        // reads "intro" until IndexGate reconciles the profile)
+        // Check Pro status. Do NOT add onboarding_step here: that column does
+        // not exist in production profiles (verified 2026-07-10) — naming it
+        // 400s the whole select, prof comes back undefined, and the modal
+        // would show to Pro users. Decliner detection below uses local
+        // onboarding state only.
         const { data: prof } = await supabase
           .from("profiles")
-          .select("is_pro, pro_until, onboarding_step")
+          .select("is_pro, pro_until")
           .eq("user_id", auth.user.id)
           .maybeSingle();
 
@@ -221,8 +223,11 @@ function RootInner() {
         // Decliners: don't stack the modal on the Home unlock banner at cold
         // start — arm it for the first /bike-home visit this session instead.
         // (Their pro_until is null, so trialModalLapsed stays false above and
-        // they correctly get the trial copy when it does fire.)
-        if (declinerRef.current || (prof as any)?.onboarding_step === "trial") {
+        // they correctly get the trial copy when it does fire.) Local state is
+        // the only decliner signal: profiles has no onboarding_step column in
+        // production, so a fresh-install decliner (local state reset) simply
+        // gets the modal at cold start — the pre-recovery behavior.
+        if (declinerRef.current) {
           declinerModalArmedRef.current = true;
           return;
         }

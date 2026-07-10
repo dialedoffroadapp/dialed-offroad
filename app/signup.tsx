@@ -146,13 +146,15 @@ function SignupInner() {
           }
 
           // Signed in successfully — ensure the profile row exists (it may be missing)
+          // is_pro is intentionally NOT in the payload: it's server-only
+          // (webhook/service role) since 20260710170000, and including it
+          // would fail the whole upsert on column grants.
           if (recoveryData?.user?.id) {
             await supabase.from("profiles").upsert(
               {
                 user_id: recoveryData.user.id,
                 onboarding_step: state.onboardingStep === "signup" ? "trial" : "complete",
                 onboarding_complete: state.onboardingStep !== "signup",
-                is_pro: false,
               },
               { onConflict: "user_id", ignoreDuplicates: false }
             );
@@ -197,12 +199,13 @@ function SignupInner() {
       if (signInData?.user?.id) {
         let profileCreated = false;
         for (let attempt = 0; attempt < 3; attempt++) {
+          // is_pro is server-only (webhook/service role) since 20260710170000
+          // — including it would fail the whole upsert on column grants.
           const { error: profileErr } = await supabase.from("profiles").upsert(
             {
               user_id: signInData.user.id,
               onboarding_step: "trial",
               onboarding_complete: false,
-              is_pro: false,
             },
             { onConflict: "user_id", ignoreDuplicates: false }
           );
