@@ -16,6 +16,7 @@ import { ActiveSetupCard } from "../../components/ActiveSetupCard";
 import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
 import { useToast } from "../../components/Toast";
 import { readPendingTune, useOnboarding } from "../../lib/onboarding";
+import { deriveIsPaywallDecliner } from "../../lib/paywallDecliner";
 import { hasPurchasedThisSession } from "../../lib/purchases";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
@@ -265,16 +266,16 @@ export default function HomeScreen() {
 
   // Paywall decliner: finished the funnel (signup, bike, generated tune) but
   // dismissed the paywall — persisted onboarding state parked at "trial".
-  // Must be reactive to conversion, never cached for the session: the
-  // onboarding provider flips step to "complete" at purchase, isPro refreshes
-  // on every focus, and hasPurchasedThisSession() covers the gap before the
-  // profile write propagates.
-  const isPaywallDecliner =
-    onbHydrated &&
-    onbState.onboardingStep === "trial" &&
-    !onbState.onboardingComplete &&
-    !isPro &&
-    !hasPurchasedThisSession();
+  // Reactive to conversion, never cached: the onboarding provider flips step
+  // to "complete" at purchase, isPro refreshes on every focus, and
+  // hasPurchasedThisSession() covers the gap before the profile write lands.
+  const isPaywallDecliner = deriveIsPaywallDecliner({
+    hydrated: onbHydrated,
+    onboardingStep: onbState.onboardingStep,
+    onboardingComplete: onbState.onboardingComplete,
+    isPro,
+    purchasedThisSession: hasPurchasedThisSession(),
+  });
 
   // Recovery-funnel landing metric — once per app session.
   useEffect(() => {

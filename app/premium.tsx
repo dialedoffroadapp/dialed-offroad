@@ -19,6 +19,7 @@ import {
   syncProFromRevenueCat,
   withTimeout,
 } from "../lib/purchases";
+import { shouldLogDeclinerConversion } from "../lib/paywallDecliner";
 import { scheduleRideReminder } from "../lib/rideReminder";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
@@ -95,11 +96,12 @@ export default function PremiumScreen() {
 
       // Recovery-funnel metric. EVERY purchase passes through the trial step
       // (signup sets it minutes before the day-0 paywall), so "prior state
-      // was trial" alone would count normal funnel conversions too. Gate on
-      // the codebase's established resume heuristic instead: a trial step
-      // that has sat for >=5 minutes means the user declined and came back —
-      // a recovered decliner, not a straight-through funnel purchase.
-      if (state.onboardingStep === "trial" && ageMinutesSinceLastStep >= 5) {
+      // was trial" alone would count normal funnel conversions too — the
+      // >=5min resume gate inside shouldLogDeclinerConversion separates a
+      // decliner who came back from a straight-through funnel purchase.
+      if (
+        shouldLogDeclinerConversion(state.onboardingStep, ageMinutesSinceLastStep)
+      ) {
         void logEvent("decliner_converted", {
           funnel_id: funnelId,
           age_minutes_since_last_step: ageMinutesSinceLastStep,

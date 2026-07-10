@@ -34,7 +34,15 @@ import {
   View,
   ViewStyle,
 } from "react-native";
-import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
+import {
+  applyDismiss,
+  applySnooze,
+  DismissRecord,
+  isFirstRideEligible,
+  isRecordBlocking,
+  titleFromSymptoms,
+  TWELVE_HOURS_MS,
+} from "../lib/checkinLogic";
 import { buildRefineParams } from "../lib/refineFlow";
 import {
   FeedbackOutcome,
@@ -46,17 +54,12 @@ import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { logEvent } from "../lib/usage";
 
-const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
-const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-const MAX_DISMISSALS = 2;
 const CONFIRM_VISIBLE_MS = 2500;
 
 const dismissKey = (id: string) => `checkin_dismissed_${id}`;
 
 // Max one card per app session, across tab remounts and both host tabs.
 let shownThisSession = false;
-
-type DismissRecord = { count: number; until: number };
 
 type CardState =
   | { kind: "outcome"; feedbackId: string; title: string }
@@ -73,42 +76,17 @@ function dismissIdOf(card: CardState): string {
   return card.kind === "outcome" ? card.feedbackId : `v_${card.version.id}`;
 }
 
-const FALLBACK_TITLE = "How's the refined setup treating you?";
-
 const CONFIRMATIONS: Record<FeedbackOutcome, string> = {
   improved: "Logged — that's what the next refinement builds on.",
   same: "Noted. Next refinement takes a bigger step.",
   worse: "Got it — next refinement goes back and tries the other direction.",
 };
 
-/** Build the outcome-card title from the feedback's symptoms jsonb. */
-function titleFromSymptoms(symptoms: unknown): string {
-  const issues = (Array.isArray(symptoms) ? symptoms : []).filter(
-    (s: any) => s && typeof s.id === "string" && !s.protect
-  );
-  if (!issues.length) return FALLBACK_TITLE;
-
-  const top = [...issues].sort(
-    (a: any, b: any) => (Number(b.severity) || 0) - (Number(a.severity) || 0)
-  )[0];
-  const phrase = SYMPTOM_PHRASES[top.id as Tune2SymptomId];
-  if (!phrase) return FALLBACK_TITLE;
-
-  const where =
-    typeof top.where === "string" && top.where.trim().length
-      ? ` in ${top.where.trim().toLowerCase()}`
-      : "";
-  return `Last time you said ${phrase}${where}. Better on the new setup?`;
-}
-
 async function isSnoozedOrDismissed(id: string): Promise<boolean> {
   const raw = await AsyncStorage.getItem(dismissKey(id));
   if (!raw) return false;
   try {
-    const rec = JSON.parse(raw) as DismissRecord;
-    return (
-      (rec?.count ?? 0) >= MAX_DISMISSALS || (rec?.until ?? 0) > Date.now()
-    );
+    return isRecordBlocking(JSON.parse(raw) as DismissRecord, Date.now());
   } catch {
     return false; // unreadable record → treat as never dismissed
   }
@@ -238,13 +216,7 @@ export function OutcomeCheckinCard({
           if (cancelled || vErr) return;
 
           const version = (v as unknown as SetupVersionRow) ?? null;
-          if (
-            !version?.id ||
-            version.source !== "baseline" ||
-            !version.bike_id ||
-            new Date(version.created_at).getTime() >
-              Date.now() - TWELVE_HOURS_MS
-          ) {
+          if (!isFirstRideEligible(version, Date.now()) || !version) {
             return;
           }
 
@@ -323,26 +295,28 @@ export function OutcomeCheckinCard({
     router.push({ pathname: "/tune-feedback", params } as any);
   };
 
+  const readDismissRecord = async (id: string): Promise<DismissRecord | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(dismissKey(id));
+      return raw ? (JSON.parse(raw) as DismissRecord) : null;
+    } catch {
+      return null; // unreadable — start a fresh record
+    }
+  };
+
   /** "Haven't ridden yet": pure 3-day snooze. Never counts toward the
    *  2-strike limit — a rider who genuinely hasn't ridden twice must not
    *  lose the loop-closing prompt forever. */
   const onSnooze = async () => {
     if (!card || confirmation) return;
     const id = dismissIdOf(card);
-    let count = 0;
-    try {
-      const raw = await AsyncStorage.getItem(dismissKey(id));
-      if (raw) count = (JSON.parse(raw) as DismissRecord)?.count ?? 0;
-    } catch {
-      // ignore — start a fresh record
-    }
-    const rec: DismissRecord = { count, until: Date.now() + THREE_DAYS_MS };
+    const rec = applySnooze(await readDismissRecord(id), Date.now());
     AsyncStorage.setItem(dismissKey(id), JSON.stringify(rec)).catch(() => {});
     void logEvent("checkin_dismissed", {
       checkin_id: id,
       kind: card.kind,
       action: "snooze",
-      count,
+      count: rec.count,
       surface,
     });
     animateOut();
@@ -352,17 +326,7 @@ export function OutcomeCheckinCard({
   const onDismiss = async () => {
     if (!card || confirmation) return;
     const id = dismissIdOf(card);
-    let count = 0;
-    try {
-      const raw = await AsyncStorage.getItem(dismissKey(id));
-      if (raw) count = (JSON.parse(raw) as DismissRecord)?.count ?? 0;
-    } catch {
-      // ignore — start a fresh record
-    }
-    const rec: DismissRecord = {
-      count: count + 1,
-      until: Date.now() + THREE_DAYS_MS,
-    };
+    const rec = applyDismiss(await readDismissRecord(id), Date.now());
     AsyncStorage.setItem(dismissKey(id), JSON.stringify(rec)).catch(() => {});
     void logEvent("checkin_dismissed", {
       checkin_id: id,
