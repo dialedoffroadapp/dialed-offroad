@@ -216,6 +216,9 @@ export default function IndexGate() {
                 // Already signed in — advance past signup to trial in BOTH
                 // stores, then send to the paywall. Garage stranded the user:
                 // tabs hidden mid-onboarding and no funnel CTA there (S4).
+                // This is the user's FIRST paywall presentation (they quit
+                // before reaching it), so it stays in the funnel — unlike the
+                // trial branch below.
                 await setStep("trial");
                 void supabase.from("profiles").upsert(
                   { user_id: userId, onboarding_step: "trial" },
@@ -224,7 +227,15 @@ export default function IndexGate() {
                 target = "/premium";
                 break;
               case "trial":
-                target = "/premium";
+                // Paywall decliner: they already saw (and dismissed) the
+                // funnel paywall in a previous session. Booting them back
+                // into the auto-presenting /premium on every cold start
+                // walled off the app permanently. Land them on Home instead —
+                // the decliner unlock banner there is the conversion surface,
+                // and /premium is reached intentionally (banner CTA, locked
+                // results' Reveal CTA). Step stays "trial": conversion still
+                // completes the state machine via handleOnboardingSuccess.
+                target = "/(tabs)";
                 break;
               default:
                 target = "/(tabs)";

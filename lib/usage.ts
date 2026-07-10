@@ -46,7 +46,15 @@ export type UsageEvent =
   | "onboarding_paywall_shown"
   | "onboarding_paywall_dismissed"
   | "onboarding_trial_started"
-  | "onboarding_completed";
+  | "onboarding_completed"
+  | "decliner_home_landed"
+  | "decliner_banner_tapped"
+  | "decliner_converted";
+
+// ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
+// names. Adding a member here requires extending that constraint (see
+// supabase/migrations/20260710160000_usage_events_extend_event_types.sql) or
+// the insert is rejected and silently dropped by logEvent's catch.
 
 export type UsageEventType = UsageEvent;
 

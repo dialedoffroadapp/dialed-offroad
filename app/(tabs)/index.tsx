@@ -15,8 +15,11 @@ import {
 import { ActiveSetupCard } from "../../components/ActiveSetupCard";
 import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
 import { useToast } from "../../components/Toast";
+import { readPendingTune, useOnboarding } from "../../lib/onboarding";
+import { hasPurchasedThisSession } from "../../lib/purchases";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
+import { logEvent } from "../../lib/usage";
 
 /* --------------------------------- Types ---------------------------------- */
 
@@ -96,10 +99,14 @@ function hexToRgba(hex: string, alpha: number) {
 
 /* -------------------------------- Screen ---------------------------------- */
 
+// decliner_home_landed fires once per app session, across remounts.
+let declinerLandingLoggedThisSession = false;
+
 export default function HomeScreen() {
   const router = useRouter();
   const toast = useToast();
   const { colors } = useTheme();
+  const { state: onbState, hydrated: onbHydrated } = useOnboarding();
 
   const t = useMemo(() => {
     return {
@@ -256,6 +263,64 @@ export default function HomeScreen() {
   // The first / default bike for the garage card
   const primaryBike = bikes.length > 0 ? bikes[0] : null;
 
+  // Paywall decliner: finished the funnel (signup, bike, generated tune) but
+  // dismissed the paywall — persisted onboarding state parked at "trial".
+  // Must be reactive to conversion, never cached for the session: the
+  // onboarding provider flips step to "complete" at purchase, isPro refreshes
+  // on every focus, and hasPurchasedThisSession() covers the gap before the
+  // profile write propagates.
+  const isPaywallDecliner =
+    onbHydrated &&
+    onbState.onboardingStep === "trial" &&
+    !onbState.onboardingComplete &&
+    !isPro &&
+    !hasPurchasedThisSession();
+
+  // Recovery-funnel landing metric — once per app session.
+  useEffect(() => {
+    if (isPaywallDecliner && !declinerLandingLoggedThisSession) {
+      declinerLandingLoggedThisSession = true;
+      void logEvent("decliner_home_landed", {});
+    }
+  }, [isPaywallDecliner]);
+
+  // The onboarding tune (blurred results) stays reachable while it lives in
+  // pending storage (24h TTL) — the banner body taps through to it.
+  const [hasPendingTune, setHasPendingTune] = useState(false);
+  useEffect(() => {
+    if (!isPaywallDecliner) return;
+    let mounted = true;
+    readPendingTune()
+      .then(({ tune: pending }) => {
+        if (mounted) setHasPendingTune(!!pending);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [isPaywallDecliner]);
+
+  const onDeclinerRevealCta = () => {
+    void logEvent("decliner_banner_tapped", {
+      has_pending_tune: hasPendingTune,
+    });
+    // /premium auto-presents the RevenueCat paywall — now reached only
+    // intentionally, exactly as before for the presentation itself.
+    router.push("/premium");
+  };
+
+  const onDeclinerBannerBody = () => {
+    // Body tap (not the CTA): back to the blurred results while the pending
+    // tune survives; tune-results already renders correctly for a signed-in
+    // non-pro at the trial step (it's where the funnel's own paywall-dismiss
+    // path lands), restoring the tune from pending storage with no params.
+    if (hasPendingTune) {
+      router.push("/tune-results" as any);
+    } else {
+      router.push("/premium");
+    }
+  };
+
   // Local subcomponents
   function SectionHeader({
     icon,
@@ -315,6 +380,38 @@ export default function HomeScreen() {
         contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
         keyboardShouldPersistTaps="handled"
       >
+        {/* ── Decliner unlock banner ── top of Home, above everything, not
+            dismissible. The single conversion surface for paywall decliners;
+            disappears reactively the moment they convert. */}
+        {isPaywallDecliner && (
+          <Pressable
+            onPress={onDeclinerBannerBody}
+            style={styles.declinerBanner}
+            accessibilityRole="button"
+            accessibilityLabel="Your tune is ready — start your free trial to reveal it"
+          >
+            <View style={styles.declinerRow}>
+              <View style={styles.declinerIconTile}>
+                <Ionicons name="lock-closed" size={19} color={t.ACCENT} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.declinerTitle} numberOfLines={1}>
+                  {primaryBike
+                    ? `Your ${primaryBike.make} ${primaryBike.model} tune is ready`
+                    : "Your tune is ready"}
+                </Text>
+                <Text style={styles.declinerSub} numberOfLines={1}>
+                  Start your free trial to reveal it
+                </Text>
+              </View>
+            </View>
+            <Pressable onPress={onDeclinerRevealCta} style={styles.declinerCta}>
+              <Ionicons name="lock-open-outline" size={16} color="#fff" />
+              <Text style={styles.declinerCtaText}>Reveal My Setup</Text>
+            </Pressable>
+          </Pressable>
+        )}
+
         {/* ── Header ── */}
         <View style={styles.hero}>
           <View style={{ flex: 1 }}>
@@ -488,11 +585,15 @@ export default function HomeScreen() {
 
         {/* ── Ride check-in ── outcome or first-ride prompt; Home is the
             initial tab, so this is the loop's primary surface. Renders only
-            when eligible (max one instance per session across Home + Tune). */}
-        <OutcomeCheckinCard
-          surface="home"
-          style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
-        />
+            when eligible (max one instance per session across Home + Tune).
+            Paywall decliners are excluded — they have no revealed setup to
+            ride on, and the unlock banner owns their Home real estate. */}
+        {!isPaywallDecliner && (
+          <OutcomeCheckinCard
+            surface="home"
+            style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
+          />
+        )}
 
         {/* ── Your Garage ── merged setup card when a current version exists;
             otherwise the classic garage card below renders unchanged. */}
@@ -949,6 +1050,50 @@ const makeStyles = (T: {
       fontSize: 12,
       fontWeight: "800",
     },
+
+    // ── Decliner unlock banner ──
+    declinerBanner: {
+      backgroundColor: T.CARD,
+      borderWidth: 1,
+      borderColor: T.ACCENT,
+      borderRadius: 16,
+      padding: 14,
+      marginBottom: 12,
+    },
+    declinerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 11,
+    },
+    declinerIconTile: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: "rgba(29,155,240,0.14)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    declinerTitle: {
+      color: T.TEXT,
+      fontSize: 15,
+      fontWeight: "800",
+    },
+    declinerSub: {
+      color: T.SUBTEXT,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    declinerCta: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 7,
+      backgroundColor: T.ACCENT,
+      borderRadius: 12,
+      paddingVertical: 13,
+      marginTop: 12,
+    },
+    declinerCtaText: { color: "#fff", fontWeight: "900", fontSize: 14 },
 
     // ── Utility ──
     noteLabel: { color: T.SUBTEXT, fontSize: 12, fontWeight: "700" },

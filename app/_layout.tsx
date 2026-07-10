@@ -15,7 +15,7 @@ import TrialPromptModal, {
 } from "../components/TrialPromptModal";
 import { flushFeedbackRetryQueue } from "../lib/feedbackRetry";
 import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
-import { initPurchases } from "../lib/purchases";
+import { hasPurchasedThisSession, initPurchases } from "../lib/purchases";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { darkTheme } from "../constants/theme";
@@ -144,6 +144,32 @@ function RootInner() {
   // free trial, so the modal must show winback copy, never "Free for 7 days".
   const [trialModalLapsed, setTrialModalLapsed] = useState(false);
 
+  // Paywall decliner (persisted trial step): Home shows them the unlock
+  // banner, so the cold-start modal on top of it would be double paywall
+  // pressure in the first second. For them the modal is ARMED at cold start
+  // (all the same eligibility checks) and FIRED once per session on the first
+  // navigation into /bike-home — a genuine value moment — via the pathname
+  // this layout already tracks (no navigation listeners needed). A ref
+  // mirrors the flag so the once-per-boot effect below reads fresh state.
+  const isPaywallDecliner =
+    hydrated &&
+    state.onboardingStep === "trial" &&
+    !state.onboardingComplete;
+  const declinerRef = React.useRef(isPaywallDecliner);
+  declinerRef.current = isPaywallDecliner;
+  const declinerModalArmedRef = React.useRef(false);
+  const declinerModalFiredRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!declinerModalArmedRef.current || declinerModalFiredRef.current) return;
+    if (pathname !== "/bike-home") return;
+    // Re-check at fire time — a conversion earlier in the session flips the
+    // provider state / session purchase flag and permanently disarms this.
+    if (!declinerRef.current || hasPurchasedThisSession()) return;
+    declinerModalFiredRef.current = true;
+    setShowTrialModal(true);
+  }, [pathname]);
+
   useEffect(() => {
     if (!hydrated) return;
 
@@ -158,10 +184,12 @@ function RootInner() {
         const { data: auth } = await supabase.auth.getUser();
         if (!auth?.user?.id) return;
 
-        // Check Pro status
+        // Check Pro status (+ onboarding_step: the server-side decliner
+        // signal, immune to the fresh-install race where local state still
+        // reads "intro" until IndexGate reconciles the profile)
         const { data: prof } = await supabase
           .from("profiles")
-          .select("is_pro, pro_until")
+          .select("is_pro, pro_until, onboarding_step")
           .eq("user_id", auth.user.id)
           .maybeSingle();
 
@@ -189,6 +217,16 @@ function RootInner() {
         const b = bikes[0] as any;
         const fallback = [b.year, b.make, b.model].filter(Boolean).join(" ");
         setTrialBikeTitle(b.nickname || fallback);
+
+        // Decliners: don't stack the modal on the Home unlock banner at cold
+        // start — arm it for the first /bike-home visit this session instead.
+        // (Their pro_until is null, so trialModalLapsed stays false above and
+        // they correctly get the trial copy when it does fire.)
+        if (declinerRef.current || (prof as any)?.onboarding_step === "trial") {
+          declinerModalArmedRef.current = true;
+          return;
+        }
+
         setShowTrialModal(true);
       } catch {
         // Silently ignore — modal is non-critical
