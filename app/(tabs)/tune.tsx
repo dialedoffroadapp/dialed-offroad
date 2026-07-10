@@ -1435,9 +1435,10 @@ export default function TuneScreen() {
           {/* One-time wayfinding for the Bike Home restructure */}
           {!isOnboarding && <GarageCoachmark />}
 
-          {/* Outcome check-in: did the last refinement help? Feeds the engine's
-              adaptive step. Renders only when an unanswered refinement exists. */}
-          {!isOnboarding && <OutcomeCheckinCard />}
+          {/* Ride check-in: outcome ("did the last refinement help?") or
+              first-ride prompt. Home hosts the primary instance; the session
+              flag inside the card guarantees only one shows per session. */}
+          {!isOnboarding && <OutcomeCheckinCard surface="tune" />}
 
           {/* Garage Selector */}
           <View style={S.selectorCard}>

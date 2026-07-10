@@ -6,6 +6,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
+import { autoCreateBaselineFromPendingTune } from "../lib/autoBaseline";
 import {
   readPendingTune,
   useOnboarding,
@@ -103,6 +104,14 @@ export default function PremiumScreen() {
         );
       }
       const { tune: pending } = await readPendingTune();
+
+      // Auto-save the onboarding tune as v1 so Home's ActiveSetupCard, the
+      // tune tab's RunningSetupRow, and Bike Home all render real state on
+      // Day 1 without the rider having to tap "Save Setup". Returns null on
+      // any failure/skip — never blocks onboarding completion. The manual
+      // Save button stays idempotent against this row (tune-results.tsx).
+      await autoCreateBaselineFromPendingTune();
+
       await logEvent("onboarding_completed", {
         funnel_id: funnelId,
         onboarding_step: "complete",

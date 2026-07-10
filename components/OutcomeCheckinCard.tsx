@@ -1,28 +1,47 @@
 // components/OutcomeCheckinCard.tsx
-// Post-refinement outcome check-in: "Last time you said X. Better on the new
+// Ride check-in card, two modes:
+//
+// "outcome" — post-refinement: "Last time you said X. Better on the new
 // setup?" → Better / Same / Worse feeds ride_feedback.outcome, which the
 // engine's adaptive step (last_outcome) builds on.
 //
-// Eligibility (checked on tab focus, one query, fail-silent):
-// - newest ride_feedback for the signed-in user with a resulting refinement,
-//   no outcome yet, and at least 12h old (give them time to actually ride)
-// - not dismissed: AsyncStorage checkin_dismissed_${feedbackId} = {count, until};
-//   skipped while `until` is in the future or after 2 dismissals
-// - guests never see it; max one card per app session
+// "first_ride" — post-baseline (the loop's most important prompt, previously
+// missing): the newest version is an uncritiqued baseline ≥12h old →
+// "How did the {bike} feel on v1?" → routes into the refine flow.
+//
+// Eligibility (checked on tab focus, fail-silent), outcome mode wins:
+// - outcome: newest ride_feedback for the signed-in user with a resulting
+//   refinement, no outcome yet, and at least 12h old (time to actually ride)
+// - first_ride: newest setup_versions row is source="baseline" with a bike,
+//   ≥12h old, and no ride_feedback critiques it yet
+// - not snoozed/dismissed: AsyncStorage checkin_dismissed_<id> = {count, until};
+//   skipped while `until` is in the future. "Haven't ridden yet" only snoozes
+//   (3 days, unlimited); the ✕ dismissal counts toward the 2-strike limit.
+// - guests never see it; max one card per app session across all mounts
+//   (Home + Tune tab both render this — the first eligible instance wins).
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
   Pressable,
+  StyleProp,
   StyleSheet,
   Text,
   View,
+  ViewStyle,
 } from "react-native";
 import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
-import { FeedbackOutcome, updateFeedbackOutcome } from "../lib/setupVersions";
+import { buildRefineParams } from "../lib/refineFlow";
+import {
+  FeedbackOutcome,
+  SetupVersionRow,
+  updateFeedbackOutcome,
+  VERSION_COLUMNS,
+} from "../lib/setupVersions";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { logEvent } from "../lib/usage";
@@ -32,12 +51,27 @@ const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_DISMISSALS = 2;
 const CONFIRM_VISIBLE_MS = 2500;
 
-const dismissKey = (feedbackId: string) => `checkin_dismissed_${feedbackId}`;
+const dismissKey = (id: string) => `checkin_dismissed_${id}`;
 
-// Max one card per app session, across tab remounts.
+// Max one card per app session, across tab remounts and both host tabs.
 let shownThisSession = false;
 
 type DismissRecord = { count: number; until: number };
+
+type CardState =
+  | { kind: "outcome"; feedbackId: string; title: string }
+  | {
+      kind: "first_ride";
+      version: SetupVersionRow;
+      bikeTitle: string;
+      title: string;
+    };
+
+/** Snooze/dismiss id: outcome cards key on the feedback row, first-ride cards
+ *  on the version row (prefixed so the two can never collide). */
+function dismissIdOf(card: CardState): string {
+  return card.kind === "outcome" ? card.feedbackId : `v_${card.version.id}`;
+}
 
 const FALLBACK_TITLE = "How's the refined setup treating you?";
 
@@ -47,7 +81,7 @@ const CONFIRMATIONS: Record<FeedbackOutcome, string> = {
   worse: "Got it — next refinement goes back and tries the other direction.",
 };
 
-/** Build the card title from the feedback's symptoms jsonb. */
+/** Build the outcome-card title from the feedback's symptoms jsonb. */
 function titleFromSymptoms(symptoms: unknown): string {
   const issues = (Array.isArray(symptoms) ? symptoms : []).filter(
     (s: any) => s && typeof s.id === "string" && !s.protect
@@ -67,21 +101,41 @@ function titleFromSymptoms(symptoms: unknown): string {
   return `Last time you said ${phrase}${where}. Better on the new setup?`;
 }
 
+async function isSnoozedOrDismissed(id: string): Promise<boolean> {
+  const raw = await AsyncStorage.getItem(dismissKey(id));
+  if (!raw) return false;
+  try {
+    const rec = JSON.parse(raw) as DismissRecord;
+    return (
+      (rec?.count ?? 0) >= MAX_DISMISSALS || (rec?.until ?? 0) > Date.now()
+    );
+  } catch {
+    return false; // unreadable record → treat as never dismissed
+  }
+}
+
 export function OutcomeCheckinCard({
+  surface = "tune",
+  style,
   onEligibility,
 }: {
+  /** Which tab hosts this instance — analytics only. */
+  surface?: "home" | "tune";
+  /** Container override — hosts with their own padding zero out the default
+   *  16px side margins. Nothing renders (and no style applies) when the card
+   *  isn't eligible. */
+  style?: StyleProp<ViewStyle>;
   /**
    * Reports whether the check-in card is showing after each focus-time
-   * eligibility check. Lets sibling cards (pre-ride) yield — check-in wins,
-   * never two cards at once.
+   * eligibility check. Lets sibling cards yield — check-in wins, never two
+   * cards at once.
    */
   onEligibility?: (visible: boolean) => void;
 }) {
   const { colors: C } = useTheme();
+  const router = useRouter();
 
-  const [feedback, setFeedback] = useState<{ id: string; title: string } | null>(
-    null
-  );
+  const [card, setCard] = useState<CardState | null>(null);
   const onEligibilityRef = useRef(onEligibility);
   onEligibilityRef.current = onEligibility;
   const [confirmation, setConfirmation] = useState<string | null>(null);
@@ -98,9 +152,9 @@ export function OutcomeCheckinCard({
     []
   );
 
-  // Subtle entrance once eligible feedback is set.
+  // Subtle entrance once an eligible card is set.
   useEffect(() => {
-    if (!feedback) return;
+    if (!card) return;
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
@@ -115,7 +169,7 @@ export function OutcomeCheckinCard({
         useNativeDriver: true,
       }),
     ]).start();
-  }, [feedback, opacity, translateY]);
+  }, [card, opacity, translateY]);
 
   const animateOut = useCallback(() => {
     Animated.timing(opacity, {
@@ -124,7 +178,7 @@ export function OutcomeCheckinCard({
       easing: Easing.in(Easing.quad),
       useNativeDriver: true,
     }).start(() => {
-      setFeedback(null);
+      setCard(null);
       setConfirmation(null);
     });
   }, [opacity]);
@@ -135,8 +189,8 @@ export function OutcomeCheckinCard({
       (async () => {
         let visible = false;
         try {
-          if (shownThisSession || feedback) {
-            visible = !!feedback;
+          if (shownThisSession || card) {
+            visible = !!card;
             return;
           }
 
@@ -145,6 +199,8 @@ export function OutcomeCheckinCard({
           if (!uid) return; // guests / signed-out never see the card
 
           const cutoff = new Date(Date.now() - TWELVE_HOURS_MS).toISOString();
+
+          // ── Branch 1 (wins): outcome check-in on the last refinement ──
           const { data: row, error } = await supabase
             .from("ride_feedback")
             .select("id, symptoms")
@@ -155,30 +211,81 @@ export function OutcomeCheckinCard({
             .order("created_at", { ascending: false })
             .limit(1)
             .maybeSingle();
-          if (error || !row?.id || cancelled) return;
+          if (cancelled) return;
 
-          const raw = await AsyncStorage.getItem(dismissKey(row.id));
-          if (raw) {
-            try {
-              const rec = JSON.parse(raw) as DismissRecord;
-              if (
-                (rec?.count ?? 0) >= MAX_DISMISSALS ||
-                (rec?.until ?? 0) > Date.now()
-              ) {
-                return;
-              }
-            } catch {
-              // unreadable record → treat as never dismissed
-            }
+          if (!error && row?.id && !(await isSnoozedOrDismissed(row.id))) {
+            if (cancelled) return;
+            shownThisSession = true;
+            visible = true;
+            setCard({
+              kind: "outcome",
+              feedbackId: row.id,
+              title: titleFromSymptoms(row.symptoms),
+            });
+            void logEvent("checkin_shown", { feedback_id: row.id, surface });
+            return;
           }
 
+          // ── Branch 2: first ride on an uncritiqued baseline ──
+          const { data: v, error: vErr } = await supabase
+            .from("setup_versions")
+            .select(VERSION_COLUMNS)
+            .eq("user_id", uid)
+            .not("bike_id", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (cancelled || vErr) return;
+
+          const version = (v as unknown as SetupVersionRow) ?? null;
+          if (
+            !version?.id ||
+            version.source !== "baseline" ||
+            !version.bike_id ||
+            new Date(version.created_at).getTime() >
+              Date.now() - TWELVE_HOURS_MS
+          ) {
+            return;
+          }
+
+          // Already critiqued? Then the loop is running — nothing to prompt.
+          const { data: fb, error: fbErr } = await supabase
+            .from("ride_feedback")
+            .select("id")
+            .eq("setup_version_id", version.id)
+            .limit(1)
+            .maybeSingle();
+          if (cancelled || fbErr || fb?.id) return;
+
+          if (await isSnoozedOrDismissed(`v_${version.id}`)) return;
+
+          const { data: bike } = await supabase
+            .from("bikes")
+            .select("make, model, year, nickname")
+            .eq("id", version.bike_id)
+            .maybeSingle();
           if (cancelled) return;
+
+          const bikeTitle =
+            bike?.nickname ||
+            [bike?.make, bike?.model].filter(Boolean).join(" ") ||
+            "the bike";
+
           shownThisSession = true;
           visible = true;
-          setFeedback({ id: row.id, title: titleFromSymptoms(row.symptoms) });
-          void logEvent("checkin_shown", { feedback_id: row.id });
+          setCard({
+            kind: "first_ride",
+            version,
+            bikeTitle,
+            title: `How did the ${bikeTitle} feel on v${version.version_number}?`,
+          });
+          void logEvent("preride_shown", {
+            version_id: version.id,
+            bike_id: version.bike_id,
+            surface,
+          });
         } catch {
-          // fail-silent: the check-in must never disturb the tune flow
+          // fail-silent: the check-in must never disturb the host tab
         } finally {
           if (!cancelled) onEligibilityRef.current?.(visible);
         }
@@ -186,17 +293,18 @@ export function OutcomeCheckinCard({
       return () => {
         cancelled = true;
       };
-    }, [feedback])
+    }, [card, surface])
   );
 
   const onAnswer = async (outcome: FeedbackOutcome) => {
-    if (!feedback || answering || confirmation) return;
+    if (!card || card.kind !== "outcome" || answering || confirmation) return;
     setAnswering(true);
     try {
-      await updateFeedbackOutcome(feedback.id, outcome);
+      await updateFeedbackOutcome(card.feedbackId, outcome);
       void logEvent("checkin_answered", {
-        feedback_id: feedback.id,
+        feedback_id: card.feedbackId,
         outcome,
+        surface,
       });
       setConfirmation(CONFIRMATIONS[outcome]);
       hideTimerRef.current = setTimeout(animateOut, CONFIRM_VISIBLE_MS);
@@ -208,11 +316,45 @@ export function OutcomeCheckinCard({
     }
   };
 
-  const onDismiss = async () => {
-    if (!feedback || confirmation) return;
+  const onFirstRideCta = () => {
+    if (!card || card.kind !== "first_ride") return;
+    const params = buildRefineParams(card.version, card.bikeTitle);
+    animateOut();
+    router.push({ pathname: "/tune-feedback", params } as any);
+  };
+
+  /** "Haven't ridden yet": pure 3-day snooze. Never counts toward the
+   *  2-strike limit — a rider who genuinely hasn't ridden twice must not
+   *  lose the loop-closing prompt forever. */
+  const onSnooze = async () => {
+    if (!card || confirmation) return;
+    const id = dismissIdOf(card);
     let count = 0;
     try {
-      const raw = await AsyncStorage.getItem(dismissKey(feedback.id));
+      const raw = await AsyncStorage.getItem(dismissKey(id));
+      if (raw) count = (JSON.parse(raw) as DismissRecord)?.count ?? 0;
+    } catch {
+      // ignore — start a fresh record
+    }
+    const rec: DismissRecord = { count, until: Date.now() + THREE_DAYS_MS };
+    AsyncStorage.setItem(dismissKey(id), JSON.stringify(rec)).catch(() => {});
+    void logEvent("checkin_dismissed", {
+      checkin_id: id,
+      kind: card.kind,
+      action: "snooze",
+      count,
+      surface,
+    });
+    animateOut();
+  };
+
+  /** Explicit ✕: the only dismissal that counts toward MAX_DISMISSALS. */
+  const onDismiss = async () => {
+    if (!card || confirmation) return;
+    const id = dismissIdOf(card);
+    let count = 0;
+    try {
+      const raw = await AsyncStorage.getItem(dismissKey(id));
       if (raw) count = (JSON.parse(raw) as DismissRecord)?.count ?? 0;
     } catch {
       // ignore — start a fresh record
@@ -221,23 +363,25 @@ export function OutcomeCheckinCard({
       count: count + 1,
       until: Date.now() + THREE_DAYS_MS,
     };
-    AsyncStorage.setItem(dismissKey(feedback.id), JSON.stringify(rec)).catch(
-      () => {}
-    );
+    AsyncStorage.setItem(dismissKey(id), JSON.stringify(rec)).catch(() => {});
     void logEvent("checkin_dismissed", {
-      feedback_id: feedback.id,
+      checkin_id: id,
+      kind: card.kind,
+      action: "dismiss",
       count: rec.count,
+      surface,
     });
     animateOut();
   };
 
-  if (!feedback) return null;
+  if (!card) return null;
 
   return (
     <Animated.View
       style={[
         styles.card,
         { backgroundColor: C.CARD, opacity, transform: [{ translateY }] },
+        style,
       ]}
     >
       {confirmation ? (
@@ -246,33 +390,55 @@ export function OutcomeCheckinCard({
         </Text>
       ) : (
         <>
-          <Text style={[styles.title, { color: C.TEXT }]}>{feedback.title}</Text>
-
-          <View style={styles.buttonRow}>
+          <View style={styles.titleRow}>
+            <Text style={[styles.title, { color: C.TEXT }]}>{card.title}</Text>
             <Pressable
-              onPress={() => onAnswer("improved")}
-              disabled={answering}
-              style={[styles.btn, { backgroundColor: C.ACCENT }]}
+              onPress={onDismiss}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss check-in"
+              style={styles.closeBtn}
             >
-              <Text style={styles.btnPrimaryText}>Better</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => onAnswer("same")}
-              disabled={answering}
-              style={[styles.btn, styles.btnGhost, { borderColor: C.BORDER }]}
-            >
-              <Text style={[styles.btnGhostText, { color: C.TEXT }]}>Same</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => onAnswer("worse")}
-              disabled={answering}
-              style={[styles.btn, styles.btnGhost, { borderColor: C.BORDER }]}
-            >
-              <Text style={[styles.btnGhostText, { color: C.TEXT }]}>Worse</Text>
+              <Ionicons name="close" size={16} color={C.MUTED} />
             </Pressable>
           </View>
 
-          <Pressable onPress={onDismiss} hitSlop={8} style={styles.dismissLink}>
+          {card.kind === "outcome" ? (
+            <View style={styles.buttonRow}>
+              <Pressable
+                onPress={() => onAnswer("improved")}
+                disabled={answering}
+                style={[styles.btn, { backgroundColor: C.ACCENT }]}
+              >
+                <Text style={styles.btnPrimaryText}>Better</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => onAnswer("same")}
+                disabled={answering}
+                style={[styles.btn, styles.btnGhost, { borderColor: C.BORDER }]}
+              >
+                <Text style={[styles.btnGhostText, { color: C.TEXT }]}>Same</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => onAnswer("worse")}
+                disabled={answering}
+                style={[styles.btn, styles.btnGhost, { borderColor: C.BORDER }]}
+              >
+                <Text style={[styles.btnGhostText, { color: C.TEXT }]}>Worse</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.buttonRow}>
+              <Pressable
+                onPress={onFirstRideCta}
+                style={[styles.btn, { backgroundColor: C.ACCENT }]}
+              >
+                <Text style={styles.btnPrimaryText}>Give feedback</Text>
+              </Pressable>
+            </View>
+          )}
+
+          <Pressable onPress={onSnooze} hitSlop={8} style={styles.dismissLink}>
             <Text style={[styles.dismissText, { color: C.MUTED }]}>
               Haven't ridden yet
             </Text>
@@ -291,10 +457,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 15,
   },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
   title: {
+    flex: 1,
     fontSize: 15,
     fontWeight: "700",
     lineHeight: 21,
+  },
+  closeBtn: {
+    marginTop: 1,
+    padding: 2,
   },
   buttonRow: {
     flexDirection: "row",

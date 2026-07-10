@@ -63,7 +63,7 @@ export type RideFeedbackRow = {
   created_at: string;
 };
 
-const VERSION_COLUMNS =
+export const VERSION_COLUMNS =
   "id, user_id, bike_id, version_number, source, parent_version_id, " +
   "restored_from_version_id, fork_comp_clicks, fork_reb_clicks, fork_air_bar, " +
   "shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm, notes, terrain, " +

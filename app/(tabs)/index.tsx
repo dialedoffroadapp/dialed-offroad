@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { ActiveSetupCard } from "../../components/ActiveSetupCard";
+import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
 import { useToast } from "../../components/Toast";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
@@ -484,6 +485,14 @@ export default function HomeScreen() {
             </ScrollView>
           )}
         </View>
+
+        {/* ── Ride check-in ── outcome or first-ride prompt; Home is the
+            initial tab, so this is the loop's primary surface. Renders only
+            when eligible (max one instance per session across Home + Tune). */}
+        <OutcomeCheckinCard
+          surface="home"
+          style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
+        />
 
         {/* ── Your Garage ── merged setup card when a current version exists;
             otherwise the classic garage card below renders unchanged. */}

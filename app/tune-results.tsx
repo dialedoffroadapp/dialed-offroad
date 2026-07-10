@@ -22,6 +22,7 @@ import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
 import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
 import { ZeroTuneResult } from "../lib/ai";
+import { versionMatchesTune } from "../lib/autoBaseline";
 import { createBaselineVersion } from "../lib/setupVersions";
 import {
   clearPendingTune,
@@ -840,18 +841,35 @@ export default function TuneResultScreen() {
       const { error } = await supabase.from("sessions").insert(insert);
       if (error) throw error;
 
-      // Shadow write to the lineage table. Runs in parallel with the sessions
-      // insert above and must never break the existing save flow.
+      // Shadow write to the lineage table. Must never break the save flow.
+      // Idempotent against the auto-created onboarding v1 (lib/autoBaseline)
+      // and double-taps: if the bike's latest version already carries these
+      // exact values, reuse it instead of minting a duplicate. A tune with
+      // different values (new generation, mode tweak) still saves normally.
       try {
-        const version = await createBaselineVersion({
-          bikeId,
-          tune: result,
-          terrain: Array.isArray(metaObj?.context?.terrain)
-            ? metaObj.context.terrain[0] ?? null
-            : metaObj?.context?.terrain ?? null,
-          context: metaObj?.context ?? null,
-        });
-        baselineVersionIdRef.current = version.id;
+        const { data: latest } = await supabase
+          .from("setup_versions")
+          .select(
+            "id, fork_comp_clicks, fork_reb_clicks, fork_air_bar, shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm"
+          )
+          .eq("bike_id", bikeId)
+          .order("version_number", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (latest && versionMatchesTune(latest as any, result)) {
+          baselineVersionIdRef.current = (latest as any).id;
+        } else {
+          const version = await createBaselineVersion({
+            bikeId,
+            tune: result,
+            terrain: Array.isArray(metaObj?.context?.terrain)
+              ? metaObj.context.terrain[0] ?? null
+              : metaObj?.context?.terrain ?? null,
+            context: metaObj?.context ?? null,
+          });
+          baselineVersionIdRef.current = version.id;
+        }
       } catch (shadowErr) {
         console.warn("setup_versions shadow write failed", shadowErr);
       }
