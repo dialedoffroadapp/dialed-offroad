@@ -904,6 +904,10 @@ export default function TuneScreen() {
       return;
     }
 
+    // Set when claim_free_tune actually consumed the trial credit (reason
+    // "trial", not "pro") so a failed/timed-out generation can refund it.
+    let claimedTrialCredit = false;
+
     try {
       const { data: auth } = await supabase.auth.getUser();
       const user = auth?.user;
@@ -944,6 +948,7 @@ export default function TuneScreen() {
         }
 
         // claim.reason is 'trial' or 'pro'
+        claimedTrialCredit = (claim as any)?.reason === "trial";
         const trialCountFromServer = (claim as any)?.trial_tunes_used;
 
         if (typeof trialCountFromServer === "number") {
@@ -1110,6 +1115,27 @@ export default function TuneScreen() {
         },
       });
     } catch (e: any) {
+      // The credit was claimed before the engine ran (deliberate — claiming
+      // after generation would allow race abuse). Nothing was delivered, so
+      // give the credit back. Fire-and-forget: refund failure must not mask
+      // the generation error the rider needs to see.
+      if (claimedTrialCredit) {
+        void (async () => {
+          try {
+            const { data, error: refundErr } = await supabase
+              .rpc("refund_free_tune")
+              .single();
+            if (refundErr) {
+              console.error("refund_free_tune failed", refundErr);
+              return;
+            }
+            const used = (data as any)?.trial_tunes_used;
+            if (typeof used === "number") setTrialUsed(used);
+          } catch (refundErr) {
+            console.error("refund_free_tune failed", refundErr);
+          }
+        })();
+      }
       toast.show(e?.message ?? "AI tune failed", { kind: "error" });
     } finally {
       generatingRef.current = false;

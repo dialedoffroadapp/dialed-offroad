@@ -12,6 +12,7 @@ import TrialPromptModal, {
   TRIAL_MODAL_DISMISS_KEY,
   TRIAL_MODAL_MAX_DISMISSALS,
 } from "../components/TrialPromptModal";
+import { flushFeedbackRetryQueue } from "../lib/feedbackRetry";
 import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
 import { initPurchases } from "../lib/purchases";
 import { deriveIsPro } from "../lib/proUtils";
@@ -138,6 +139,9 @@ function RootInner() {
   // ——— Trial prompt modal for existing signed-in non-pro users ———
   const [showTrialModal, setShowTrialModal] = useState(false);
   const [trialBikeTitle, setTrialBikeTitle] = useState("");
+  // Lapsed subscriber (pro_until in the past): stores won't grant a second
+  // free trial, so the modal must show winback copy, never "Free for 7 days".
+  const [trialModalLapsed, setTrialModalLapsed] = useState(false);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -165,6 +169,11 @@ function RootInner() {
           return;
         }
 
+        // Not Pro here — a non-null pro_until therefore lies in the past
+        // (deriveIsPro would have returned true otherwise): lapsed subscriber.
+        // pro_until null/never-set keeps the trial copy.
+        setTrialModalLapsed(!!prof?.pro_until);
+
         // Check has at least one bike
         const { data: bikes } = await supabase
           .from("bikes")
@@ -189,6 +198,12 @@ function RootInner() {
       mounted = false;
     };
   }, [hydrated]);
+
+  // Flush lineage writes that failed during a previous session's refine flow
+  // (lib/feedbackRetry.ts). Entries survive while signed out.
+  useEffect(() => {
+    void flushFeedbackRetryQueue();
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -250,6 +265,7 @@ function RootInner() {
       <TrialPromptModal
         visible={showTrialModal && !isRecoveryRoute}
         bikeTitle={trialBikeTitle}
+        lapsed={trialModalLapsed}
         onRequestClose={() => setShowTrialModal(false)}
       />
     </>

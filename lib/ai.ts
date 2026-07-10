@@ -2,8 +2,33 @@
 // Zero-based AI tuning call (Supabase Edge Function)
 // Returns absolute click counts "from zero" (fully closed) + safety clamps.
 
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { isUuid } from "./uuid";
+
+/**
+ * supabase.functions.invoke collapses every non-2xx response into a generic
+ * FunctionsHttpError ("Edge Function returned a non-2xx status code"), hiding
+ * the server's { error } body — so the 401 "Sign in to refine your tune." and
+ * 429 hourly-limit messages never reached the rider and read as random
+ * failures. Pull the real message out of the response body when there is one.
+ */
+async function edgeErrorMessage(
+  error: unknown,
+  fallback: string
+): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    try {
+      const body = await error.context.json();
+      const msg = body?.error ?? body?.message;
+      if (typeof msg === "string" && msg.trim().length) return msg;
+    } catch {
+      // body already consumed or not JSON — fall through
+    }
+  }
+  const msg = (error as { message?: unknown })?.message;
+  return typeof msg === "string" && msg.trim().length ? msg : fallback;
+}
 
 /* ------------------------------------------------------------------ */
 /* Base Tune (Tune One)                                               */
@@ -179,7 +204,7 @@ export async function generateTune(input: ZeroTuneInput): Promise<ZeroTuneResult
   };
 
   const { data, error } = await supabase.functions.invoke("ai-tune", { body: payload });
-  if (error) throw new Error(error.message || "AI tune failed");
+  if (error) throw new Error(await edgeErrorMessage(error, "AI tune failed"));
 
   return normalizeResult(data as Partial<ZeroTuneResult>);
 }
@@ -266,7 +291,7 @@ export async function generateTuneTwo(params: {
   };
 
   const { data, error } = await supabase.functions.invoke("ai-tune", { body: payload });
-  if (error) throw new Error(error.message || "AI Tune Two failed");
+  if (error) throw new Error(await edgeErrorMessage(error, "AI Tune Two failed"));
 
   return normalizeResult(data as Partial<ZeroTuneResult>);
 }

@@ -18,10 +18,22 @@ export const TRIAL_MODAL_MAX_DISMISSALS = 3;
 type Props = {
   visible: boolean;
   bikeTitle: string;
+  /**
+   * Lapsed subscriber (pro_until set but in the past). Apple/Google will NOT
+   * grant these users a second free trial, so showing "Free for 7 days" is
+   * false advertising — and unclear trial terms have caused Google Play
+   * rejections before. Lapsed users get winback copy instead.
+   */
+  lapsed?: boolean;
   onRequestClose: () => void;
 };
 
-export default function TrialPromptModal({ visible, bikeTitle, onRequestClose }: Props) {
+export default function TrialPromptModal({
+  visible,
+  bikeTitle,
+  lapsed = false,
+  onRequestClose,
+}: Props) {
   const router = useRouter();
   const { colors: C } = useTheme();
   const insets = useSafeAreaInsets();
@@ -65,13 +77,16 @@ export default function TrialPromptModal({ visible, bikeTitle, onRequestClose }:
         >
           {/* Title */}
           <Text style={[styles.title, { color: C.TEXT }]} numberOfLines={2}>
-            {bikeTitle} is ready to get dialed
+            {lapsed
+              ? "Welcome back — pick up where your setup left off"
+              : `${bikeTitle} is ready to get dialed`}
           </Text>
 
           {/* Body */}
           <Text style={[styles.body, { color: C.MUTED }]}>
-            Get exact compression, rebound, and sag clicks for your specific bike, weight,
-            and track. Free for 7 days.
+            {lapsed
+              ? "Your bikes, sessions, and setup history are all still here. Resubscribe to keep refining with exact compression, rebound, and sag clicks."
+              : "Get exact compression, rebound, and sag clicks for your specific bike, weight, and track. Free for 7 days."}
           </Text>
 
           {/* Primary CTA */}
@@ -82,7 +97,9 @@ export default function TrialPromptModal({ visible, bikeTitle, onRequestClose }:
               { backgroundColor: C.ACCENT, opacity: pressed ? 0.88 : 1 },
             ]}
           >
-            <Text style={styles.primaryText}>Start My Free Trial</Text>
+            <Text style={styles.primaryText}>
+              {lapsed ? "Resubscribe · $7.99/mo" : "Start My Free Trial"}
+            </Text>
           </Pressable>
 
           {/* Secondary CTA */}

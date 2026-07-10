@@ -26,6 +26,7 @@ import {
     Tune2SymptomId,
     ZeroTuneResult,
 } from "../lib/ai";
+import { enqueueFeedbackRetry } from "../lib/feedbackRetry";
 import {
     createBaselineVersion,
     createFeedback,
@@ -551,12 +552,36 @@ export default function TuneFeedbackScreen() {
 
       // Lineage shadow writes: persist the feedback against the critiqued
       // version BEFORE the engine runs, so rider feedback survives even if the
-      // refinement call fails. Never let shadow failures break the flow.
+      // refinement call fails. Failures never break the flow, but they are no
+      // longer silent: the rider gets a toast and the un-persisted remainder
+      // goes to the retry queue (lib/feedbackRetry.ts, flushed on next launch).
       // ride_feedback.symptoms jsonb = issue entries + {area, protect: true}
       // entries in one flat array (see FeedbackEntry in lib/setupVersions.ts).
       let critiquedVersionId: string | null =
         typeof versionId === "string" && versionId.length > 0 ? versionId : null;
       let feedbackId: string | null = null;
+      let shadowWriteFailed = false;
+      const feedbackEntries: FeedbackEntry[] = [
+        ...symptoms,
+        ...protectedAreas.map((area) => ({ area, protect: true as const })),
+      ];
+      const feedbackPayload = {
+        overallRating: overallRatingTen ?? null,
+        symptoms: feedbackEntries,
+        freeText: notes.trim() || null,
+      };
+      // The retry queue replays whatever is still null/pending in this entry.
+      const retryEntry = () => ({
+        versionId: critiquedVersionId,
+        bikeId,
+        previousTune,
+        refinedTune: null as ZeroTuneResult | null,
+        feedback: feedbackId ? null : feedbackPayload,
+        feedbackId,
+        resultingVersionId: null as string | null,
+        terrain: surface ?? null,
+        context: ctxObj ?? null,
+      });
       try {
         if (!critiquedVersionId) {
           // Rider is refining a tune they never saved — create the baseline
@@ -569,35 +594,51 @@ export default function TuneFeedbackScreen() {
           });
           critiquedVersionId = baseline.id;
         }
-        const feedbackEntries: FeedbackEntry[] = [
-          ...symptoms,
-          ...protectedAreas.map((area) => ({ area, protect: true as const })),
-        ];
         const fb = await createFeedback({
           setupVersionId: critiquedVersionId,
-          overallRating: overallRatingTen ?? null,
+          overallRating: feedbackPayload.overallRating,
           symptoms: feedbackEntries,
           freeText: notes,
         });
         feedbackId = fb.id;
-      } catch (shadowErr) {
-        console.warn("ride_feedback shadow write failed", shadowErr);
+      } catch (shadowErr: any) {
+        shadowWriteFailed = true;
+        // Real Supabase error, not a generic line — RLS rejections (42501)
+        // must be distinguishable from network failures in dev.
+        console.error("ride_feedback shadow write failed", {
+          code: shadowErr?.code,
+          message: shadowErr?.message,
+          details: shadowErr?.details,
+        });
       }
 
-      const result = await generateTuneTwo({
-        previous: previousTune,
-        feedback,
-        context: ctxObj ?? undefined,
-        bikeId, // enables the engine's adaptive step from the last rated outcome
-      });
+      let result: ZeroTuneResult;
+      try {
+        result = await generateTuneTwo({
+          previous: previousTune,
+          feedback,
+          context: ctxObj ?? undefined,
+          bikeId, // enables the engine's adaptive step from the last rated outcome
+        });
+      } catch (engineErr) {
+        // Engine failed after the debrief write also failed: keep the debrief
+        // anyway (it's the part the rider typed), then let the outer catch
+        // surface the engine error.
+        if (shadowWriteFailed) {
+          void enqueueFeedbackRetry(retryEntry());
+        }
+        throw engineErr;
+      }
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       // Lineage shadow write: record the refinement as a child version and
       // link it back to the feedback row that produced it.
+      let refinementSaved = false;
+      let refinementRowId: string | null = null;
       if (critiquedVersionId) {
         try {
-          await createRefinementVersion({
+          const refinement = await createRefinementVersion({
             bikeId,
             parentVersionId: critiquedVersionId,
             tune: result,
@@ -605,9 +646,30 @@ export default function TuneFeedbackScreen() {
             context: ctxObj ?? null,
             feedbackId,
           });
-        } catch (shadowErr) {
-          console.warn("setup_versions refinement shadow write failed", shadowErr);
+          refinementSaved = true;
+          refinementRowId = refinement.id;
+        } catch (shadowErr: any) {
+          shadowWriteFailed = true;
+          console.error("setup_versions refinement shadow write failed", {
+            code: shadowErr?.code,
+            message: shadowErr?.message,
+            details: shadowErr?.details,
+          });
         }
+      }
+
+      if (shadowWriteFailed) {
+        void enqueueFeedbackRetry({
+          ...retryEntry(),
+          refinedTune: refinementSaved ? null : result,
+          // Feedback row pending + refinement row saved: the replayed feedback
+          // must link to the refinement that already exists.
+          resultingVersionId: feedbackId ? null : refinementRowId,
+        });
+        toast.show(
+          "Your refined tune is ready, but we couldn't save this ride's notes — we'll retry automatically.",
+          { kind: "info", durationMs: 3500 }
+        );
       }
 
       const mergedContext = {
