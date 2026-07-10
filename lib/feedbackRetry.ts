@@ -14,6 +14,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Tune2Context, ZeroTuneResult } from "./ai";
+import { cancelRideReminderForVersion } from "./rideReminder";
 import {
   createBaselineVersion,
   createFeedback,
@@ -112,6 +113,8 @@ async function replay(
       });
       e.feedbackId = fb.id;
       e.feedback = null;
+      // Feedback finally landed — release any ride reminder for this version.
+      void cancelRideReminderForVersion(e.versionId);
       if (e.resultingVersionId) {
         // Refinement row already exists from the original session — restore
         // the link the failed feedback write left dangling.

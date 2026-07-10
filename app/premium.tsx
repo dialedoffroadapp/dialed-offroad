@@ -19,6 +19,7 @@ import {
   syncProFromRevenueCat,
   withTimeout,
 } from "../lib/purchases";
+import { scheduleRideReminder } from "../lib/rideReminder";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { clearFunnelId, getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -110,7 +111,17 @@ export default function PremiumScreen() {
       // Day 1 without the rider having to tap "Save Setup". Returns null on
       // any failure/skip — never blocks onboarding completion. The manual
       // Save button stays idempotent against this row (tune-results.tsx).
-      await autoCreateBaselineFromPendingTune();
+      const autoBaseline = await autoCreateBaselineFromPendingTune();
+      if (autoBaseline) {
+        // No-op unless notification permission is already granted — for a
+        // brand-new user the inline ask on the results screen (which follows
+        // this navigation) grants and schedules instead.
+        void scheduleRideReminder({
+          versionId: autoBaseline.version.id,
+          versionNumber: autoBaseline.version.version_number,
+          bikeName: autoBaseline.bikeTitle,
+        });
+      }
 
       await logEvent("onboarding_completed", {
         funnel_id: funnelId,

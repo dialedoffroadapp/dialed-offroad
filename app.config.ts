@@ -64,6 +64,11 @@ const config: ExpoConfig = {
         dark: { backgroundColor: "#0B0F13" },
       },
     ],
+    // Local ride-reminder notifications (lib/rideReminder.ts). LOCAL
+    // scheduling only — no push backend, no tokens. ⚠️ Config-plugin change:
+    // a new dev client / EAS build is required before notifications work;
+    // they are inert in older binaries.
+    "expo-notifications",
   ],
 
   experiments: {

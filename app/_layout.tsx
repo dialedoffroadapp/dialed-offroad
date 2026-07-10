@@ -1,6 +1,7 @@
 // app/_layout.tsx
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
+import * as Notifications from "expo-notifications";
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
@@ -204,6 +205,38 @@ function RootInner() {
   useEffect(() => {
     void flushFeedbackRetryQueue();
   }, []);
+
+  // Ride-reminder tap → Home tab, where the check-in card mounts. Local
+  // notifications never auto-navigate, so both the warm tap and the tap that
+  // cold-started the app are handled here. "/(tabs)" is exactly where
+  // IndexGate sends completed users anyway (app/index.tsx), so racing the
+  // boot resolver is harmless — the cold-start handler still waits a beat so
+  // its navigation lands on top of the resolver's replace().
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    const handleResponse = (
+      resp: Notifications.NotificationResponse | null
+    ) => {
+      const data: any = resp?.notification?.request?.content?.data;
+      if (data?.kind !== "ride_reminder") return;
+      router.navigate("/(tabs)" as any);
+    };
+
+    let cancelled = false;
+    Notifications.getLastNotificationResponseAsync()
+      .then((resp) => {
+        if (!cancelled && resp) setTimeout(() => handleResponse(resp), 800);
+      })
+      .catch(() => {});
+
+    const sub =
+      Notifications.addNotificationResponseReceivedListener(handleResponse);
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, [router]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;

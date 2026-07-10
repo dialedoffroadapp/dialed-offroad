@@ -27,6 +27,7 @@ import {
     ZeroTuneResult,
 } from "../lib/ai";
 import { enqueueFeedbackRetry } from "../lib/feedbackRetry";
+import { cancelRideReminderForVersion } from "../lib/rideReminder";
 import {
     createBaselineVersion,
     createFeedback,
@@ -601,6 +602,9 @@ export default function TuneFeedbackScreen() {
           freeText: notes,
         });
         feedbackId = fb.id;
+        // Feedback landed for this version — the ride reminder pointing at it
+        // has done its job (or is no longer needed).
+        void cancelRideReminderForVersion(critiquedVersionId);
       } catch (shadowErr: any) {
         shadowWriteFailed = true;
         // Real Supabase error, not a generic line — RLS rejections (42501)
