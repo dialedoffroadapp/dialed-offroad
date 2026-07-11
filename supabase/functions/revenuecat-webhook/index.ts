@@ -12,9 +12,37 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get(
 )!;
 const WEBHOOK_SECRET = Deno.env.get("REVENUECAT_WEBHOOK_SECRET") ?? null;
 
+// Startup-style alarm (H4 history: this check was once silently broken
+// because the header wasn't configured in RevenueCat; a missing env var
+// used to silently skip validation entirely). The handler below fails
+// closed regardless — this log just makes the misconfiguration loud.
+if (!WEBHOOK_SECRET) {
+  console.error(
+    "[webhook] FATAL: REVENUECAT_WEBHOOK_SECRET is not set — every event will be rejected with 500 (fail-closed)",
+  );
+}
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+
+/**
+ * Constant-time secret comparison: compare fixed-length SHA-256 digests of
+ * both values with a full XOR sweep, so neither content nor length of the
+ * expected secret leaks through timing.
+ */
+async function secretsMatch(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [da, db] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const va = new Uint8Array(da);
+  const vb = new Uint8Array(db);
+  let diff = 0;
+  for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
+  return diff === 0;
+}
 
 type RevenueCatEvent = {
   type?: string;
@@ -59,13 +87,39 @@ serve(async (req: Request): Promise<Response> => {
     return new Response("Method not allowed", { status: 405 });
   }
 
-  if (WEBHOOK_SECRET) {
-    const auth = req.headers.get("authorization") ?? "";
-    const token = auth.replace(/^Bearer\s+/i, "");
-    if (token !== WEBHOOK_SECRET) {
-      console.warn("Webhook: invalid secret");
-      return new Response("Unauthorized", { status: 401 });
-    }
+  // ── Auth: FAIL CLOSED (H4). This function is deployed with
+  // verify_jwt=false (RevenueCat cannot send a Supabase JWT), so this block
+  // is the ONLY gate in front of a service-role writer of Pro status.
+  //
+  // RevenueCat sends the exact string configured in the dashboard's
+  // "Authorization header value" field as the `Authorization` header — RC
+  // adds no scheme of its own. This code reads that exact header and
+  // tolerates an optional "Bearer " prefix in the dashboard value, comparing
+  // the bare token against REVENUECAT_WEBHOOK_SECRET (same normalization the
+  // previous implementation used, so a correctly-configured RC dashboard
+  // keeps working unchanged).
+  if (!WEBHOOK_SECRET) {
+    console.error(
+      JSON.stringify({ scope: "webhook_auth", reject: "secret_env_missing" }),
+    );
+    return new Response("Server misconfigured", { status: 500 });
+  }
+  const authHeader = req.headers.get("authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    console.warn(
+      JSON.stringify({
+        scope: "webhook_auth",
+        reject: "missing_authorization_header",
+      }),
+    );
+    return new Response("Unauthorized", { status: 401 });
+  }
+  if (!(await secretsMatch(token, WEBHOOK_SECRET))) {
+    console.warn(
+      JSON.stringify({ scope: "webhook_auth", reject: "secret_mismatch" }),
+    );
+    return new Response("Unauthorized", { status: 401 });
   }
 
   let payload: RevenueCatPayload;
