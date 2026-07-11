@@ -187,6 +187,16 @@ async function main() {
   const proGen = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, jwt: A.jwt, body: tunePayload });
   const proAfterGen = await rest("GET", `/rest/v1/profiles?user_id=eq.${A.id}&select=trial_tunes_used`, { key: serviceKey });
   record("INT-9f", "pro user (spent credit) → 200, credit untouched", proGen.status === 200 && proAfterGen.body?.[0]?.trial_tunes_used === 1, `status=${proGen.status} used=${proAfterGen.body?.[0]?.trial_tunes_used}`);
+
+  // 11. Onboarding-state columns (20260710200000): client-writable own-row,
+  //     never another user's row.
+  const stepOwn = await rest("PATCH", `/rest/v1/profiles?user_id=eq.${A.id}`, { key: anonKey, jwt: A.jwt, body: { onboarding_step: "trial", onboarding_complete: false }, prefer: "return=representation" });
+  record("INT-10a", "profiles: user can write own onboarding_step", stepOwn.status === 200 && stepOwn.body?.[0]?.onboarding_step === "trial", `status=${stepOwn.status} step=${stepOwn.body?.[0]?.onboarding_step}`);
+  const stepOther = await rest("PATCH", `/rest/v1/profiles?user_id=eq.${B.id}`, { key: anonKey, jwt: A.jwt, body: { onboarding_step: "complete" }, prefer: "return=representation" });
+  const bStep = await rest("GET", `/rest/v1/profiles?user_id=eq.${B.id}&select=onboarding_step`, { key: serviceKey });
+  record("INT-10b", "profiles: user CANNOT write another user's onboarding_step", (stepOther.body?.length ?? 0) === 0 && bStep.body?.[0]?.onboarding_step !== "complete", `rows=${stepOther.body?.length ?? 0} b_step=${bStep.body?.[0]?.onboarding_step}`);
+  const badStep = await rest("PATCH", `/rest/v1/profiles?user_id=eq.${A.id}`, { key: anonKey, jwt: A.jwt, body: { onboarding_step: "not_a_step" } });
+  record("INT-10c", "profiles: garbage onboarding_step rejected by CHECK", badStep.status === 400 && badStep.body?.code === "23514", `status=${badStep.status} code=${badStep.body?.code}`);
 }
 
 async function cleanup() {
