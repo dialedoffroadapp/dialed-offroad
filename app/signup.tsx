@@ -149,15 +149,28 @@ function SignupInner() {
           // is_pro is intentionally NOT in the payload: it's server-only
           // (webhook/service role) since 20260710170000, and including it
           // would fail the whole upsert on column grants.
+          //
+          // Write the user's ACTUAL local funnel position. The old default of
+          // "complete" for every non-signup step let a mid-funnel re-signup
+          // (e.g. results_locked) skip the paywall once the onboarding
+          // columns began persisting (20260710200000). "signup" maps to
+          // "trial" (the account now exists); "intro" carries no funnel info
+          // — a fresh install recovering an old account — so only the row's
+          // existence is ensured, never a step downgrade.
           if (recoveryData?.user?.id) {
-            await supabase.from("profiles").upsert(
-              {
-                user_id: recoveryData.user.id,
-                onboarding_step: state.onboardingStep === "signup" ? "trial" : "complete",
-                onboarding_complete: state.onboardingStep !== "signup",
-              },
-              { onConflict: "user_id", ignoreDuplicates: false }
-            );
+            const local = state.onboardingStep;
+            const payload: Record<string, unknown> = {
+              user_id: recoveryData.user.id,
+            };
+            if (local !== "intro") {
+              const resolvedStep = local === "signup" ? "trial" : local;
+              payload.onboarding_step = resolvedStep;
+              payload.onboarding_complete = resolvedStep === "complete";
+            }
+            await supabase.from("profiles").upsert(payload, {
+              onConflict: "user_id",
+              ignoreDuplicates: false,
+            });
           }
 
           toast.show("Welcome back! Signed in ✅", { kind: "success" });
