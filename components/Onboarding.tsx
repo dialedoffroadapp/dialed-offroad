@@ -13,6 +13,10 @@ type OnboardingProps = {
   onFinish: () => void;
 };
 
+// ─── Social-proof stats (slide 3) — update periodically ──────────────────────
+const RIDERS_STAT = "19K";
+const TUNES_GENERATED_STAT = "5K";
+
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
 const XIcon = () => (
@@ -50,14 +54,6 @@ const LinesIcon = () => (
   </Svg>
 );
 
-const ClockIcon = () => (
-  <Svg width={14} height={14} viewBox="0 0 14 14" fill="none">
-    <Path d="M7 1.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11z" stroke="#1D9BF0" strokeWidth={1.4} />
-    <Line x1={7} y1={4} x2={7} y2={7} stroke="#1D9BF0" strokeWidth={1.4} strokeLinecap="round" />
-    <Line x1={7} y1={7} x2={9.5} y2={9} stroke="#1D9BF0" strokeWidth={1.4} strokeLinecap="round" />
-  </Svg>
-);
-
 // Small SVG icons for the clicker preview card
 const SettingsIcon = () => (
   <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
@@ -70,6 +66,15 @@ const RotateIcon = () => (
   <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
     <Path d="M1.5 6a4.5 4.5 0 018.3-2.4M10.5 6a4.5 4.5 0 01-8.3 2.4" stroke="#1D9BF0" strokeWidth={1.2} strokeLinecap="round" />
     <Path d="M9.8 1.5v2.1H7.7M2.2 10.5V8.4h2.1" stroke="#1D9BF0" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
+  </Svg>
+);
+
+/** Refresh-style loop icon; color parameterized so slide 2's step 4 (accent
+ *  on dark) and slide 4's filled perk tile (white on accent) can share it. */
+const RefineIcon = ({ color = "#1D9BF0" }: { color?: string }) => (
+  <Svg width={15} height={15} viewBox="0 0 12 12" fill="none">
+    <Path d="M1.5 6a4.5 4.5 0 018.3-2.4M10.5 6a4.5 4.5 0 01-8.3 2.4" stroke={color} strokeWidth={1.4} strokeLinecap="round" />
+    <Path d="M9.8 1.5v2.1H7.7M2.2 10.5V8.4h2.1" stroke={color} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
   </Svg>
 );
 
@@ -187,7 +192,9 @@ const Slide1Content = () => (
         <View style={s.divider} />
         <View style={s.s1IconRow}>
           <View style={s.checkBox}><CheckIcon /></View>
-          <Text style={s.s1CheckText}>AI tuned to your bike, body, and terrain</Text>
+          <Text style={s.s1CheckText}>
+            AI tuned to your bike, your body, and the way you ride today
+          </Text>
         </View>
       </View>
     </View>
@@ -203,8 +210,8 @@ const Slide2Content = () => (
     </View>
 
     <Text style={s.h1}>
-      {"Three steps.\nOne perfect "}
-      <Text style={s.accent}>{"baseline."}</Text>
+      {"Three steps.\n"}
+      <Text style={s.accent}>{"Then it gets better every ride."}</Text>
     </Text>
 
     <View style={s.stepsWrap}>
@@ -244,13 +251,27 @@ const Slide2Content = () => (
       </View>
 
       {/* Step 3 */}
-      <View style={[s.stepRow, { marginBottom: 0 }]}>
+      <View style={s.stepRow}>
         <View style={s.stepLeft}>
           <View style={s.numBox}><Text style={s.numText}>3</Text></View>
+          <View style={s.connector} />
         </View>
         <View style={s.stepRight}>
           <Text style={s.stepTitle}>Get exact clicker settings</Text>
           <Text style={[s.stepDesc, { marginBottom: 0 }]}>Fork comp, rebound, shock LSC, HSC, sag — all zero-referenced.</Text>
+        </View>
+      </View>
+
+      {/* Step 4 — the loop, not a number: what no chart can do */}
+      <View style={[s.stepRow, { marginBottom: 0 }]}>
+        <View style={s.stepLeft}>
+          <View style={s.refineBox}><RefineIcon /></View>
+        </View>
+        <View style={[s.stepRight, s.refineRight]}>
+          <Text style={s.stepTitle}>Ride, rate, refine</Text>
+          <Text style={[s.stepDesc, { marginBottom: 0 }]}>
+            Tell it what the bike did. Get a targeted second pass. No chart can do that.
+          </Text>
         </View>
       </View>
     </View>
@@ -319,17 +340,20 @@ const Slide3Content = () => (
         <Text style={s.accent}>{"difference."}</Text>
       </Text>
 
-      {/* Stats */}
+      {/* Stats — numberOfLines={1} guards against mid-number wrapping on
+          narrow devices (abbreviated K-form, never digit-grouped). */}
       <View style={s.statsGrid}>
         <View style={s.statCard}>
-          <Text style={s.statNum}>
-            19K<Text style={s.accent}>+</Text>
+          <Text style={s.statNum} numberOfLines={1}>
+            {RIDERS_STAT}
+            <Text style={s.accent}>+</Text>
           </Text>
           <Text style={s.statLabel}>riders on the platform</Text>
         </View>
         <View style={s.statCard}>
-          <Text style={s.statNum}>
-            5K<Text style={s.accent}>+</Text>
+          <Text style={s.statNum} numberOfLines={1}>
+            {TUNES_GENERATED_STAT}
+            <Text style={s.accent}>+</Text>
           </Text>
           <Text style={s.statLabel}>tunes generated</Text>
         </View>
@@ -342,6 +366,9 @@ const Slide3Content = () => (
           name="MotoKyle_88"
           review="Finally stopped guessing. My bike feels completely different — in a good way."
         />
+        {/* TODO(winback-batch): this second slot is reserved for a
+            refinement-focused testimonial (ride → rate → second pass) once a
+            real quote is supplied — do not invent one. */}
         <ReviewCard
           initials="TR"
           name="TrailRipper_CO"
@@ -358,13 +385,16 @@ const PerkRow = ({
   icon,
   title,
   desc,
+  featured,
 }: {
   icon: React.ReactNode;
   title: string;
   desc: string;
+  /** Accent-filled icon tile (white icon expected) for the lead perk. */
+  featured?: boolean;
 }) => (
   <View style={s.perkRow}>
-    <View style={s.perkIconBox}>{icon}</View>
+    <View style={[s.perkIconBox, featured && s.perkIconBoxFeatured]}>{icon}</View>
     <View style={{ flex: 1 }}>
       <Text style={s.perkTitle}>{title}</Text>
       <Text style={s.perkDesc}>{desc}</Text>
@@ -388,7 +418,15 @@ const Slide4Content = () => (
         Add your bike, generate your tune, and feel the difference before you pay anything.
       </Text>
 
+      {/* Ride & refine leads — it's the differentiator (and the loop the
+          trial exists to prove); accent-filled tile marks it. */}
       <View style={s.perksWrap}>
+        <PerkRow
+          icon={<RefineIcon color="#FFFFFF" />}
+          title="Ride and refine"
+          desc="Rate your ride, get a second AI pass with targeted adjustments."
+          featured
+        />
         <PerkRow
           icon={<LockIcon />}
           title="Full tune unlocked"
@@ -399,26 +437,27 @@ const Slide4Content = () => (
           title="Save sessions"
           desc="Log every setup you've ridden. Track what worked at each track."
         />
-        <PerkRow
-          icon={<ClockIcon />}
-          title="Ride and refine"
-          desc="Rate your ride, get a second AI pass with targeted adjustments."
-        />
       </View>
 
-      <View style={s.priceRow}>
-        <View>
-          <Text style={s.priceLabel}>After your trial</Text>
+      {/* Pricing preview — annual visually primary, monthly quiet secondary.
+          PREVIEW ONLY: actual plan selection happens inside RevenueCat's
+          remote paywall (premium.tsx presentPaywall). This layout must agree
+          with the RC dashboard's annual-first ordering (WS3) — no selector
+          here, ever. Prices/trial length unchanged. */}
+      <View style={s.annualCard}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.annualLabel}>Best value · after your trial</Text>
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 3 }}>
-            <Text style={s.priceMain}>$7.99</Text>
-            <Text style={s.priceSub}>/ month</Text>
+            <Text style={s.priceMain}>$59.99</Text>
+            <Text style={s.priceSub}>/ yr</Text>
           </View>
         </View>
         <View style={s.priceBadge}>
           <Text style={s.priceBadgeTop}>SAVE 37%</Text>
-          <Text style={s.priceBadgeBottom}>$59.99 / yr</Text>
+          <Text style={s.priceBadgeBottom}>$5.00 / mo</Text>
         </View>
       </View>
+      <Text style={s.monthlyRow}>or $7.99/mo, billed monthly</Text>
     </View>
   </View>
 );
@@ -470,6 +509,15 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
           <Text style={s.btnPrimaryText}>{rightLabel}</Text>
         </Pressable>
       </View>
+      {/* ⚠️ RELEASE COUPLING: "reminder before your trial ends" is a promise
+          kept by WS1's day-5 trial notification (lib/trialReminder.ts). Both
+          ship in the same release — if the trial reminder is cut, cut this
+          line with it. */}
+      {index === TOTAL - 1 ? (
+        <Text style={s.cancelNote}>
+          Cancel anytime in Settings · reminder before your trial ends
+        </Text>
+      ) : null}
     </View>
   );
 };
@@ -637,6 +685,12 @@ const s = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
   },
+  cancelNote: {
+    color: "rgba(255,255,255,0.4)",
+    fontSize: 11,
+    textAlign: "center",
+    marginTop: 10,
+  },
 
   // ── Shared ──────────────────────────────────────────────────────────────────
   divider: {
@@ -726,9 +780,24 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.08)",
     marginVertical: 4,
   },
+  // paddingBottom 14→10: buys vertical room for step 4 on SE-class heights
+  // (the root ScrollView still scrolls gracefully if a device is shorter).
   stepRight: {
     flex: 1,
-    paddingBottom: 14,
+    paddingBottom: 10,
+  },
+  refineBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "rgba(29,155,240,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(29,155,240,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  refineRight: {
+    paddingBottom: 12,
   },
   stepTitle: {
     color: "#FFFFFF",
@@ -906,6 +975,9 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  perkIconBoxFeatured: {
+    backgroundColor: "#1D9BF0",
+  },
   perkTitle: {
     color: "#FFFFFF",
     fontSize: 14,
@@ -917,10 +989,10 @@ const s = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
   },
-  priceRow: {
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.07)",
+  annualCard: {
+    backgroundColor: "rgba(29,155,240,0.07)",
+    borderWidth: 1.5,
+    borderColor: "rgba(29,155,240,0.45)",
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -928,10 +1000,17 @@ const s = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  priceLabel: {
-    color: "rgba(255,255,255,0.45)",
+  annualLabel: {
+    color: "#5BC0F8",
     fontSize: 11,
+    fontWeight: "600",
     marginBottom: 3,
+  },
+  monthlyRow: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 12,
+    marginTop: 8,
+    textAlign: "center",
   },
   priceMain: {
     color: "#FFFFFF",
