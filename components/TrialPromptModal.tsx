@@ -52,7 +52,9 @@ export default function TrialPromptModal({
   const handleStartTrial = () => {
     // Do NOT increment dismiss count when user taps the primary CTA.
     onRequestClose();
-    router.push("/premium");
+    // Lapsed subscribers get the dedicated winback screen (their own data as
+    // the hook, annual-first); trial-eligible users go to the paywall.
+    router.push(lapsed ? ("/winback" as any) : "/premium");
   };
 
   if (!visible) return null;

@@ -20,7 +20,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
 import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
-import { deriveIsPro } from "../lib/proUtils";
+import { deriveIsLapsed, deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
 import { buildRefineParams, formatValuesLine } from "../lib/refineFlow";
 import {
@@ -81,6 +81,7 @@ export default function BikeHomeScreen() {
   const [bike, setBike] = useState<BikeRow | null>(null);
   const [history, setHistory] = useState<VersionWithFeedback[]>([]);
   const [isPro, setIsPro] = useState(false);
+  const [isLapsed, setIsLapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -110,8 +111,10 @@ export default function BikeHomeScreen() {
           .eq("user_id", auth.user.id)
           .maybeSingle();
         setIsPro(deriveIsPro(prof ?? null));
+        setIsLapsed(deriveIsLapsed(prof ?? null));
       } else {
         setIsPro(false);
+        setIsLapsed(false);
       }
     } catch (e: any) {
       toast.show(e?.message ?? "Couldn't load bike", { kind: "error" });
@@ -152,7 +155,10 @@ export default function BikeHomeScreen() {
   };
 
   const onHistory = () => {
-    if (isPro || hasPurchasedThisSession()) {
+    if (isPro || hasPurchasedThisSession() || isLapsed) {
+      // Lapsed subscribers see the list + stats strip (their own data IS the
+      // winback hook); setup-history enforces the detail/restore gate with
+      // winback CTAs.
       router.push({
         pathname: "/setup-history",
         params: { bikeId: String(bikeId) },

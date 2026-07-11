@@ -26,7 +26,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
 import { SYMPTOM_PHRASES, Tune2SymptomId } from "../lib/ai";
-import { deriveIsPro } from "../lib/proUtils";
+import { deriveIsLapsed, deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
 import {
   createRestoreVersion,
@@ -311,6 +311,11 @@ export default function SetupHistoryScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [restoreFrom, setRestoreFrom] = useState<VersionWithFeedback | null>(null);
   const [restoring, setRestoring] = useState(false);
+  // Lapsed-subscriber progression view (audit R8): the timeline LIST and
+  // stats strip are visible — their own data is the winback hook — but
+  // clicker values, trend chart, expansion, restore, and share stay gated
+  // behind the winback CTA.
+  const [restricted, setRestricted] = useState(false);
   const { shareView, share } = useShareSetup();
 
   const load = useCallback(async () => {
@@ -332,11 +337,15 @@ export default function SetupHistoryScreen() {
         .select("pro_until, is_pro")
         .eq("user_id", auth.user.id)
         .maybeSingle();
-      if (!deriveIsPro(prof) && !hasPurchasedThisSession()) {
+      const proNow = deriveIsPro(prof) || hasPurchasedThisSession();
+      const lapsed = deriveIsLapsed(prof);
+      if (!proNow && !lapsed) {
+        // Free tier (never paid): full gate, exactly as before.
         void logEvent("history_gate_hit", { source: "screen_direct" });
         router.replace("/premium?source=history_gate" as any);
         return;
       }
+      setRestricted(!proNow);
 
       const [{ data: bike }, rows] = await Promise.all([
         supabase
@@ -400,6 +409,12 @@ export default function SetupHistoryScreen() {
     : null;
 
   const onExpand = (v: VersionWithFeedback) => {
+    if (restricted) {
+      // Version detail is the Pro surface — tapping a row is the winback CTA.
+      void logEvent("winback_cta_tapped", { source: "history_row" });
+      router.push("/winback" as any);
+      return;
+    }
     const next = expandedId === v.id ? null : v.id;
     setExpandedId(next);
     if (next) {
@@ -464,7 +479,7 @@ export default function SetupHistoryScreen() {
             {bikeTitle}
           </Text>
         </View>
-        {current ? (
+        {current && !restricted ? (
           <Pressable
             onPress={() =>
               share(
@@ -512,6 +527,23 @@ export default function SetupHistoryScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
         >
+          {/* Winback banner — lapsed users only */}
+          {restricted ? (
+            <Pressable
+              onPress={() => {
+                void logEvent("winback_cta_tapped", { source: "history_banner" });
+                router.push("/winback" as any);
+              }}
+              style={S.winbackBanner}
+            >
+              <Ionicons name="time-outline" size={18} color={C.ACCENT} />
+              <Text style={S.winbackBannerText}>
+                Your setup history is waiting — pick up where you left off
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={C.ACCENT} />
+            </Pressable>
+          ) : null}
+
           {/* Stats strip */}
           <Text style={S.statsStrip}>
             {`${history.length} version${history.length === 1 ? "" : "s"}`}
@@ -519,8 +551,8 @@ export default function SetupHistoryScreen() {
             {dialedSince ? ` · dialed since ${dialedSince}` : ""}
           </Text>
 
-          {/* Trend card */}
-          {history.length >= 2 && (
+          {/* Trend card (clicker values — Pro surface) */}
+          {history.length >= 2 && !restricted && (
             <View style={S.card}>
               <View style={S.trendHeader}>
                 <Text style={S.cardTitle}>Trend</Text>
@@ -648,9 +680,22 @@ export default function SetupHistoryScreen() {
                   </View>
                 ) : null}
 
-                {/* Body: baseline summary or diff rows */}
+                {/* Body: baseline summary or diff rows. Restricted mode keeps
+                    the narrative (triggers, outcomes) but locks the numbers —
+                    the values are the Pro surface. */}
                 {isBaseline ? (
                   <Text style={S.baselineSummary}>{baselineSummary(v)}</Text>
+                ) : restricted ? (
+                  rows.length ? (
+                    <Text style={S.lockedValuesHint}>
+                      <Ionicons name="lock-closed" size={11} color={C.MUTED} />
+                      {"  "}
+                      {rows.length} setting change{rows.length === 1 ? "" : "s"} —
+                      values with Pro
+                    </Text>
+                  ) : (
+                    <Text style={S.noChanges}>No setting changes.</Text>
+                  )
                 ) : rows.length ? (
                   <View style={{ marginTop: 8 }}>
                     {rows.map((r) => (
@@ -804,6 +849,33 @@ const makeStyles = (C: any) =>
       fontSize: 13,
       fontWeight: "600",
       paddingHorizontal: 16,
+      marginTop: 8,
+    },
+
+    winbackBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 9,
+      backgroundColor: C.CARD,
+      borderWidth: 1,
+      borderColor: C.ACCENT,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      marginHorizontal: 16,
+      marginTop: 10,
+    },
+    winbackBannerText: {
+      flex: 1,
+      color: C.TEXT,
+      fontSize: 13,
+      fontWeight: "700",
+      lineHeight: 18,
+    },
+    lockedValuesHint: {
+      color: C.MUTED,
+      fontSize: 12,
+      fontWeight: "600",
       marginTop: 8,
     },
 

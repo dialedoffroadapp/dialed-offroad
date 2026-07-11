@@ -11,3 +11,17 @@ export function deriveIsPro(
   if (!profile.pro_until) return false;
   return new Date(profile.pro_until).getTime() > Date.now() - 60_000;
 }
+
+/**
+ * Lapsed subscriber: once paid (pro_until was set by the RevenueCat webhook)
+ * but no longer entitled. Distinct from free-tier users who never paid —
+ * lapsed users get winback surfaces (their own history as the hook) instead
+ * of the cold paywall.
+ */
+export function deriveIsLapsed(
+  profile: { is_pro?: boolean | null; pro_until?: string | null } | null
+): boolean {
+  if (!profile) return false;
+  if (deriveIsPro(profile)) return false;
+  return !!profile.pro_until;
+}
