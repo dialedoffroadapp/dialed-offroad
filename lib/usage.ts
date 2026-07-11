@@ -49,7 +49,13 @@ export type UsageEvent =
   | "onboarding_completed"
   | "decliner_home_landed"
   | "decliner_banner_tapped"
-  | "decliner_converted";
+  | "decliner_converted"
+  | "trial_countdown_shown"
+  | "trial_countdown_cta_tapped"
+  | "trial_value_card_shown"
+  | "trial_value_card_dismissed"
+  | "winback_screen_shown"
+  | "winback_cta_tapped";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

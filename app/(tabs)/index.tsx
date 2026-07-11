@@ -15,11 +15,14 @@ import {
 import { ActiveSetupCard } from "../../components/ActiveSetupCard";
 import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
 import { useToast } from "../../components/Toast";
+import { TrialMomentCard } from "../../components/TrialMomentCard";
 import { readPendingTune, useOnboarding } from "../../lib/onboarding";
 import { deriveIsPaywallDecliner } from "../../lib/paywallDecliner";
 import { hasPurchasedThisSession } from "../../lib/purchases";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
+import { reconcileTrialReminder } from "../../lib/trialReminder";
+import { getTrialStatus, TrialStatus } from "../../lib/trialStatus";
 import { logEvent } from "../../lib/usage";
 
 /* --------------------------------- Types ---------------------------------- */
@@ -259,10 +262,38 @@ export default function HomeScreen() {
     }, [load])
   );
 
+  // Trial awareness (WS1): session-cached RevenueCat read, refreshed on
+  // focus so a conversion mid-session drops the trial UI immediately.
+  const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      getTrialStatus({ refresh: true })
+        .then((s) => {
+          if (!cancelled) setTrialStatus(s);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
   const firstName = displayName?.trim().split(" ")[0] || "Rider";
 
   // The first / default bike for the garage card
   const primaryBike = bikes.length > 0 ? bikes[0] : null;
+
+  // Keep the day-5 trial notification honest against observed state:
+  // schedules for the auto-renew-off cohort, cancels on conversion/expiry/
+  // auto-renew-on. Idempotent; never asks for permission.
+  useEffect(() => {
+    if (!trialStatus) return;
+    const bikeName = primaryBike
+      ? primaryBike.nickname || `${primaryBike.make} ${primaryBike.model}`
+      : "bike";
+    void reconcileTrialReminder(trialStatus, bikeName);
+  }, [trialStatus, primaryBike]);
 
   // Paywall decliner: finished the funnel (signup, bike, generated tune) but
   // dismissed the paywall — persisted onboarding state parked at "trial".
@@ -431,6 +462,13 @@ export default function HomeScreen() {
 
             <Text style={styles.hi}>Welcome back, {firstName}</Text>
             <Text style={styles.subtle}>Dial in a setup, then go ride.</Text>
+            {/* Subtle trial status — the countdown card takes over at day 5
+                (daysRemaining <= 2), so this line only shows before that. */}
+            {trialStatus?.isInTrial && (trialStatus.daysRemaining ?? 0) > 2 ? (
+              <Text style={styles.trialLine}>
+                Trial · {trialStatus.daysRemaining} days left
+              </Text>
+            ) : null}
           </View>
 
           <View style={styles.planBadge}>
@@ -595,6 +633,10 @@ export default function HomeScreen() {
             style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
           />
         )}
+
+        {/* ── Trial moments ── day-5 countdown recap or day-2 value card;
+            pickTrialCard guarantees at most one renders. */}
+        <TrialMomentCard status={trialStatus} />
 
         {/* ── Your Garage ── merged setup card when a current version exists;
             otherwise the classic garage card below renders unchanged. */}
@@ -821,6 +863,12 @@ const makeStyles = (T: {
       marginTop: 4,
       fontSize: 14,
       lineHeight: 19,
+    },
+    trialLine: {
+      color: T.ACCENT,
+      marginTop: 5,
+      fontSize: 12,
+      fontWeight: "700",
     },
     planBadge: {
       paddingHorizontal: 10,

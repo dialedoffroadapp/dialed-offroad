@@ -12,11 +12,18 @@ module.exports = {
     "^react-native$": "<rootDir>/__tests__/stubs/react-native.js",
     "^expo-notifications$": "<rootDir>/__tests__/stubs/expo-notifications.js",
     "^react-native-url-polyfill/auto$": "<rootDir>/__tests__/stubs/empty.js",
+    "^react-native-purchases$":
+      "<rootDir>/__tests__/stubs/react-native-purchases.js",
+    "^expo-constants$": "<rootDir>/__tests__/stubs/expo-constants.js",
   },
   transform: {
     "^.+\\.tsx?$": [
       "ts-jest",
       {
+        // TS2614: react-native-purchases' broken `Offerings` type export —
+        // a pre-existing app-wide diagnostic (see hooks/usePro.ts), not
+        // something the tests should re-litigate.
+        diagnostics: { ignoreCodes: [2614] },
         tsconfig: {
           module: "commonjs",
           target: "es2019",

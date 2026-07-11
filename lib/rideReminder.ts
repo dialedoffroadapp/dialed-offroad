@@ -46,13 +46,15 @@ if (supported()) {
   });
 }
 
-async function ensureAndroidChannel(): Promise<void> {
+export async function ensureAndroidChannel(): Promise<void> {
   if (Platform.OS !== "android") return;
   await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
     name: "Ride reminders",
     importance: Notifications.AndroidImportance.DEFAULT,
   });
 }
+
+export const RIDE_REMINDER_CHANNEL_ID = ANDROID_CHANNEL_ID;
 
 export type NotifPermission = "granted" | "denied" | "undetermined";
 

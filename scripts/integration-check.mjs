@@ -52,6 +52,9 @@ const EVENT_NAMES = [
   "onboarding_signup_completed","onboarding_paywall_shown","onboarding_paywall_dismissed",
   "onboarding_trial_started","onboarding_completed",
   "decliner_home_landed","decliner_banner_tapped","decliner_converted",
+  "trial_countdown_shown","trial_countdown_cta_tapped",
+  "trial_value_card_shown","trial_value_card_dismissed",
+  "winback_screen_shown","winback_cta_tapped",
 ];
 
 const stamp = Date.now();
@@ -103,9 +106,9 @@ async function main() {
   // 4. usage_events: all 43 whitelisted names insert as the user
   const evRows = EVENT_NAMES.map((event_type) => ({ user_id: A.id, event_type, meta: { it: true } }));
   const evIns = await rest("POST", "/rest/v1/usage_events", { key: anonKey, jwt: A.jwt, body: evRows });
-  record("INT-3a", "all 43 whitelisted event names insert (user JWT)", evIns.status === 201, `status=${evIns.status} ${JSON.stringify(evIns.body).slice(0, 80)}`);
+  record("INT-3a", `all ${EVENT_NAMES.length} whitelisted event names insert (user JWT)`, evIns.status === 201, `status=${evIns.status} ${JSON.stringify(evIns.body).slice(0, 80)}`);
   const evCount = await rest("GET", `/rest/v1/usage_events?user_id=eq.${A.id}&select=id`, { key: serviceKey, prefer: "count=exact" });
-  record("INT-3b", "43 rows landed", Array.isArray(evCount.body) && evCount.body.length === 43, `count=${Array.isArray(evCount.body) ? evCount.body.length : "?"}`);
+  record("INT-3b", `${EVENT_NAMES.length} rows landed`, Array.isArray(evCount.body) && evCount.body.length === EVENT_NAMES.length, `count=${Array.isArray(evCount.body) ? evCount.body.length : "?"}`);
   const evBad = await rest("POST", "/rest/v1/usage_events", { key: anonKey, jwt: A.jwt, body: { user_id: A.id, event_type: "not_a_real_event", meta: {} } });
   record("INT-3c", "bogus event name rejected by CHECK (23514)", evBad.status === 400 && evBad.body?.code === "23514", `status=${evBad.status} code=${evBad.body?.code}`);
 

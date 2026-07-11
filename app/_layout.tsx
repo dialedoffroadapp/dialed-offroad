@@ -262,7 +262,9 @@ function RootInner() {
       resp: Notifications.NotificationResponse | null
     ) => {
       const data: any = resp?.notification?.request?.content?.data;
-      if (data?.kind !== "ride_reminder") return;
+      if (data?.kind !== "ride_reminder" && data?.kind !== "trial_reminder") {
+        return;
+      }
       router.navigate("/(tabs)" as any);
     };
 
