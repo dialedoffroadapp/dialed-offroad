@@ -509,14 +509,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
           <Text style={s.btnPrimaryText}>{rightLabel}</Text>
         </Pressable>
       </View>
-      {/* ⚠️ RELEASE COUPLING: "reminder before your trial ends" is a promise
-          kept by WS1's day-5 trial notification (lib/trialReminder.ts). Both
-          ship in the same release — if the trial reminder is cut, cut this
-          line with it. */}
       {index === TOTAL - 1 ? (
-        <Text style={s.cancelNote}>
-          Cancel anytime in Settings · reminder before your trial ends
-        </Text>
+        <Text style={s.cancelNote}>Cancel anytime in Settings</Text>
       ) : null}
     </View>
   );
