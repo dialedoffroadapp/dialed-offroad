@@ -152,6 +152,41 @@ async function main() {
   record("INT-8a", "profiles: display_name PATCH under user JWT still succeeds", nameEdit.status === 200 && nameEdit.body?.[0]?.display_name === "Integration Rider", `status=${nameEdit.status}`);
   const upsertEdit = await rest("POST", `/rest/v1/profiles?on_conflict=user_id`, { key: anonKey, jwt: A.jwt, body: { user_id: A.id, display_name: "Upsert Rider", avatar_url: null, updated_at: new Date().toISOString() }, prefer: "resolution=merge-duplicates,return=representation" });
   record("INT-8b", "profiles: app-style upsert (lib/profiles.ts shape) still succeeds", (upsertEdit.status === 200 || upsertEdit.status === 201) && upsertEdit.body?.[0]?.display_name === "Upsert Rider", `status=${upsertEdit.status}`);
+
+  // 10. H2: server-side Pro/credit enforcement in ai-tune.
+  //     A's credit state here: claimed (INT-1) then refunded (INT-2) → used=0.
+  const tunePayload = {
+    mode: "zero_baseline_v1",
+    input: {
+      terrain: "hardpack",
+      rider: { skill: "intermediate", style: "short_motos", goals: [] },
+      has_zeroed_clickers: true,
+    },
+  };
+  const gen1 = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, jwt: A.jwt, body: tunePayload });
+  const afterGen1 = await rest("GET", `/rest/v1/profiles?user_id=eq.${A.id}&select=trial_tunes_used,trial_claimed_at`, { key: serviceKey });
+  record("INT-9a", "ai-tune direct call: non-pro with credit → 200, server consumes credit", gen1.status === 200 && !!gen1.body?.fork && afterGen1.body?.[0]?.trial_tunes_used === 1 && afterGen1.body?.[0]?.trial_claimed_at === null, `status=${gen1.status} used=${afterGen1.body?.[0]?.trial_tunes_used} stamp=${afterGen1.body?.[0]?.trial_claimed_at}`);
+
+  const gen2 = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, jwt: A.jwt, body: tunePayload });
+  record("INT-9b", "second direct call → 402 no_trial (free-credit bypass closed)", gen2.status === 402 && gen2.body?.error === "no_trial", `status=${gen2.status} ${JSON.stringify(gen2.body).slice(0, 50)}`);
+
+  // Interim compat: B behaves like a deployed v2.0.x client — claims via the
+  // RPC first, then calls ai-tune. Must pass through WITHOUT double-consuming.
+  const bClaim = await rest("POST", "/rest/v1/rpc/claim_free_tune", { key: anonKey, jwt: B.jwt, body: {} });
+  const bGen = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, jwt: B.jwt, body: tunePayload });
+  const bAfter = await rest("GET", `/rest/v1/profiles?user_id=eq.${B.id}&select=trial_tunes_used`, { key: serviceKey });
+  record("INT-9c", "old-client flow: RPC claim then ai-tune → 200, no double-consume", bClaim.body?.ok === true && bGen.status === 200 && bAfter.body?.[0]?.trial_tunes_used === 1, `claim=${JSON.stringify(bClaim.body).slice(0, 40)} gen=${bGen.status} used=${bAfter.body?.[0]?.trial_tunes_used}`);
+
+  const noJwt = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, body: { mode: "tune2_v1", input: { previous: {}, feedback: { symptoms: [] }, rider: {} } } });
+  record("INT-9d", "tune2 without user JWT → 401", noJwt.status === 401, `status=${noJwt.status} ${JSON.stringify(noJwt.body).slice(0, 50)}`);
+
+  const guestGen = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, body: tunePayload });
+  record("INT-9e", "guest (anon-key) baseline still allowed (onboarding path)", guestGen.status === 200 && !!guestGen.body?.fork, `status=${guestGen.status}`);
+
+  await rest("PATCH", `/rest/v1/profiles?user_id=eq.${A.id}`, { key: serviceKey, body: { is_pro: true } });
+  const proGen = await rest("POST", "/functions/v1/ai-tune", { key: anonKey, jwt: A.jwt, body: tunePayload });
+  const proAfterGen = await rest("GET", `/rest/v1/profiles?user_id=eq.${A.id}&select=trial_tunes_used`, { key: serviceKey });
+  record("INT-9f", "pro user (spent credit) → 200, credit untouched", proGen.status === 200 && proAfterGen.body?.[0]?.trial_tunes_used === 1, `status=${proGen.status} used=${proAfterGen.body?.[0]?.trial_tunes_used}`);
 }
 
 async function cleanup() {

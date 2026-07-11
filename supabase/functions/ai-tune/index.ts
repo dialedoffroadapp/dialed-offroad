@@ -1688,6 +1688,99 @@ export const defaultDeps: HandlerDeps = {
   parseFreeText: (text) => callParseFeedback(text),
 };
 
+/* ---------------- H2: server-side entitlement / credit gate ---------------- */
+// Until now the free-credit quota and Pro gate lived only in the client
+// (tune.tsx calls claim_free_tune before invoking this function), so direct
+// API calls got unlimited baseline tunes and the claim/refund pairing was
+// client-trusted. Enforcement now happens here, per request:
+//
+//   guests (anon-key, zero_baseline only): allowed — guest onboarding depends
+//     on it; abuse-bounded by the per-IP hourly rate limit.
+//   tune2_v1: authenticated-only (checked above the mode branch), and NO
+//     Pro/credit gate — mirrors the product: the client refine flow
+//     (tune-feedback.tsx) has never been Pro-gated (churned users may refine
+//     their saved setups); it never claims credits for refinements.
+//   zero_baseline_v1 + authenticated: Pro passes through untouched; non-Pro
+//     must hold the free credit. The server claims it atomically BEFORE
+//     generation and refunds it itself if generation throws.
+//
+// INTERIM COMPATIBILITY with deployed v2.0.x clients (they claim client-side
+// via claim_free_tune, then call this function; a second server claim would
+// double-consume and reject legitimate first tunes): claim_free_tune stamps
+// profiles.trial_claimed_at when it consumes (migration 20260710180000).
+// "Credit consumed + fresh stamp" therefore means THIS request carries the
+// client's claim → pass through without claiming again, and without a server
+// refund on failure (the old client performs its own refund, which clears
+// the stamp). Server-side claims deliberately do NOT stamp, so a
+// server-claimed request opens no grace window of its own — the second
+// direct call sees a stale/absent stamp and is rejected. Once pre-claiming
+// clients age out, drop CLIENT_CLAIM_GRACE_MS to 0.
+
+const CLIENT_CLAIM_GRACE_MS = 2 * 60 * 1000;
+
+type CreditDecision =
+  | { allow: true; serverClaimed: boolean }
+  | { allow: false; status: number; error: string };
+
+async function enforceBaselineCredit(userId: string): Promise<CreditDecision> {
+  // Atomic claim/pro decision lives in SQL (server_claim_free_tune,
+  // migration 20260710190000, service_role-only) under the same row lock the
+  // client RPC uses. NOTE: this was first built as a PostgREST guarded
+  // update with an or=() filter, which Postgres rejects with a spurious
+  // 42703 on UPDATE — do not reintroduce that shape.
+  const { data, error } = await getServiceClient().rpc(
+    "server_claim_free_tune",
+    { p_user_id: userId },
+  );
+  if (error) {
+    // Fail-open with a loud log, matching this function's rate-limit
+    // precedent: this runs as service role, so a caller cannot induce the
+    // failure, and blocking paying users on an infra blip is worse than one
+    // uncounted tune.
+    console.error(
+      "server claim failed (fail-open):",
+      String(error.message ?? error).slice(0, 160),
+    );
+    return { allow: true, serverClaimed: false };
+  }
+
+  const reason = (data as any)?.reason;
+  if (reason === "pro") return { allow: true, serverClaimed: false };
+  if (reason === "claimed") return { allow: true, serverClaimed: true };
+
+  // no_trial → interim pass-through window: an old client claimed for this
+  // exact request moments ago (claim_free_tune stamps trial_claimed_at;
+  // server claims never do).
+  const claimedAtMs = (data as any)?.claimed_at
+    ? new Date((data as any).claimed_at).getTime()
+    : 0;
+  if (claimedAtMs && Date.now() - claimedAtMs <= CLIENT_CLAIM_GRACE_MS) {
+    return { allow: true, serverClaimed: false };
+  }
+  return { allow: false, status: 402, error: "no_trial" };
+}
+
+/** Exact inverse of a server-side claim (guarded decrement in SQL). */
+async function refundServerClaim(userId: string): Promise<void> {
+  try {
+    const { error } = await getServiceClient().rpc(
+      "server_refund_free_tune",
+      { p_user_id: userId },
+    );
+    if (error) {
+      console.error(
+        "server refund failed:",
+        String(error.message ?? error).slice(0, 160),
+      );
+    }
+  } catch (e) {
+    console.error(
+      "server refund threw:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: CORS_HEADERS });
 }
@@ -1801,42 +1894,63 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       }
 
       // ------------------------ MODE: Baseline (zero_baseline_v1) ------------------------
-      const z = body.input;
-
-      // Build initial baseline (fallback). If OpenAI is available, refine.
-      let partial: Partial<ZeroResult> = buildFallback(z);
-
-      if (OPENAI_API_KEY) {
-        try {
-          const ai = await callOpenAI(z);
-          // merge AI fields over baseline
-          partial = {
-            ...partial,
-            ...ai,
-            fork: { ...partial.fork, ...ai?.fork } as ZeroResult["fork"],
-            shock: { ...partial.shock, ...ai?.shock } as ZeroResult["shock"],
-            detected: { ...partial.detected, ...ai?.detected },
-            notes: ai?.notes ?? partial.notes,
-          };
-        } catch (e) {
-          // keep baseline but include note
-          const msg = (e as Error).message ?? String(e);
-          partial.notes = [
-            ...(partial.notes ?? []),
-            `AI fallback used: ${msg.slice(0, 160)}`,
-          ];
+      // ---- H2: server-side Pro/credit gate (guests pass; see helper) ----
+      let serverClaimedCredit = false;
+      if (userId) {
+        const decision = await enforceBaselineCredit(userId);
+        if (!decision.allow) {
+          return jsonResponse({ error: decision.error }, decision.status);
         }
-      } else {
-        partial.notes = [
-          ...(partial.notes ?? []),
-          "OPENAI_API_KEY not set — using safe baseline.",
-        ];
+        serverClaimedCredit = decision.serverClaimed;
       }
 
-      // Enforce guardrails & shape
-      const result = safeShape(partial, z.guardrails);
+      try {
+        const z = body.input;
 
-      return jsonResponse(result, 200);
+        // Build initial baseline (fallback). If OpenAI is available, refine.
+        let partial: Partial<ZeroResult> = buildFallback(z);
+
+        if (OPENAI_API_KEY) {
+          try {
+            const ai = await callOpenAI(z);
+            // merge AI fields over baseline
+            partial = {
+              ...partial,
+              ...ai,
+              fork: { ...partial.fork, ...ai?.fork } as ZeroResult["fork"],
+              shock: { ...partial.shock, ...ai?.shock } as ZeroResult["shock"],
+              detected: { ...partial.detected, ...ai?.detected },
+              notes: ai?.notes ?? partial.notes,
+            };
+          } catch (e) {
+            // keep baseline but include note
+            const msg = (e as Error).message ?? String(e);
+            partial.notes = [
+              ...(partial.notes ?? []),
+              `AI fallback used: ${msg.slice(0, 160)}`,
+            ];
+          }
+        } else {
+          partial.notes = [
+            ...(partial.notes ?? []),
+            "OPENAI_API_KEY not set — using safe baseline.",
+          ];
+        }
+
+        // Enforce guardrails & shape
+        const result = safeShape(partial, z.guardrails);
+
+        return jsonResponse(result, 200);
+      } catch (genErr) {
+        // The server claimed the credit before generation — generation
+        // failed, so the server gives it back (H2: claim/refund pairing is
+        // server-owned now). Old-client pass-through requests refund
+        // themselves via refund_free_tune.
+        if (serverClaimedCredit && userId) {
+          await refundServerClaim(userId);
+        }
+        throw genErr;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return jsonResponse({ error: msg }, 400);
