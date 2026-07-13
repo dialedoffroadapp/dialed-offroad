@@ -15,6 +15,27 @@ import { supabase } from "../lib/supabase";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+
+// ── Startup watchdogs (Apple 2.1(a) hardening) ──────────────────────────────
+// The boot resolver below awaits storage reads and network fetches with no
+// native timeouts. A throw is survivable (finally still hides the splash),
+// but an await that NEVER SETTLES — a wedged AsyncStorage read, a blackholed
+// profile fetch on a proxied network, provider hydration stalling — used to
+// leave the native splash up forever. Two layers, both no-ops on the happy
+// path (navigation always wins the race and sets the guards first):
+//   1. IndexGate arms a component watchdog on mount: after
+//      SPLASH_WATCHDOG_MS without navigation, hide the splash and fall
+//      through to the tab navigator with whatever local state exists — the
+//      app degrades to usable, never hangs.
+//   2. This module-scope timer is the last resort for the case where
+//      IndexGate itself never mounts: hideAsync is idempotent, so firing
+//      after the splash is already hidden does nothing.
+const SPLASH_WATCHDOG_MS = 8000;
+
+setTimeout(() => {
+  SplashScreen.hideAsync().catch(() => {});
+}, SPLASH_WATCHDOG_MS + 2000);
+
 type ProfileBootRow = {
   onboarding_complete?: boolean | null;
   onboarding_step?: string | null;
@@ -42,6 +63,34 @@ export default function IndexGate() {
   const didNavigateRef = useRef(false);
   const { hydrated, replaceState, setStep } = useOnboarding();
 
+  // Component watchdog: armed on MOUNT, independent of the `hydrated` gate
+  // below (so it also covers provider hydration never completing). If the
+  // resolver hasn't navigated within SPLASH_WATCHDOG_MS, force the safe
+  // default route and hide the splash — signed-in users land on their tabs
+  // with cached/local state, signed-out users get the app shell instead of a
+  // dead splash. On the happy path the resolver navigates in well under a
+  // second and this timer finds didNavigateRef already set.
+  useEffect(() => {
+    const watchdog = setTimeout(() => {
+      if (didNavigateRef.current) return;
+      console.warn(
+        "[IndexGate] startup watchdog fired — boot resolution stalled; forcing safe route"
+      );
+      didNavigateRef.current = true;
+      try {
+        router.replace("/(tabs)" as never);
+      } catch {
+        // even a failed replace must not stop the splash from hiding
+      }
+      if (!hidOnce.current) {
+        hidOnce.current = true;
+        SplashScreen.hideAsync().catch(() => {});
+      }
+    }, SPLASH_WATCHDOG_MS);
+    return () => clearTimeout(watchdog);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     // Wait for the OnboardingProvider to finish its hydration READ before any
     // boot resolution. The reconciliation write below goes through the
@@ -53,12 +102,40 @@ export default function IndexGate() {
 
     (async () => {
       try {
-        const [{ data: sessionData }, localState, { tune: pendingTune }] =
-          await Promise.all([
+        // ── Phase 1: session + local reads. Failure falls through to the
+        // fresh-install defaults rather than blocking boot.
+        let sessionData: Awaited<
+          ReturnType<typeof supabase.auth.getSession>
+        >["data"] = { session: null };
+        let localState = await (async () => {
+          try {
+            return await readLocalOnboardingState();
+          } catch (e) {
+            console.warn("[IndexGate] local state read failed — defaults", e);
+            // readLocalOnboardingState(null-raw) shape: fresh-install state.
+            return {
+              version: 1 as const,
+              hasSeenIntro: false,
+              onboardingStep: "intro" as OnboardingStep,
+              guestBikeId: null,
+              accountCreated: false,
+              trialStarted: false,
+              onboardingComplete: false,
+              lastUpdatedAt: new Date(0).toISOString(),
+            };
+          }
+        })();
+        let pendingTune: unknown = null;
+        try {
+          const [s, p] = await Promise.all([
             supabase.auth.getSession(),
-            readLocalOnboardingState(),
             readPendingTune(),
           ]);
+          sessionData = s.data;
+          pendingTune = p.tune;
+        } catch (e) {
+          console.warn("[IndexGate] session/pending reads failed — continuing signed-out", e);
+        }
 
         if (!mounted || didNavigateRef.current) return;
 
@@ -68,14 +145,20 @@ export default function IndexGate() {
         let profile: ProfileBootRow | null = null;
         let hasLegacyUsage = false;
         if (userId) {
-          const { data } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("user_id", userId)
-            .maybeSingle();
+          // ── Phase 2: profile fetch (network). Failure = boot from local
+          // state only; every consumer below already handles profile null.
+          try {
+            const { data } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("user_id", userId)
+              .maybeSingle();
+            profile = (data as ProfileBootRow | null) ?? null;
+          } catch (e) {
+            console.warn("[IndexGate] profile fetch failed — local state only", e);
+          }
 
           if (!mounted || didNavigateRef.current) return;
-          profile = (data as ProfileBootRow | null) ?? null;
 
           // Reconcile guest-era bike state for signed-in users: migrates any
           // surviving guest-store bikes into the bikes table (deduped), retries
@@ -116,38 +199,44 @@ export default function IndexGate() {
               new Date(profile.pro_until).getTime() > Date.now()
             )
           ) {
-            const [bikesRes, sessionsRes, presetsRes] = await Promise.all([
-              supabase
-                .from("bikes")
-                .select("*", { count: "exact", head: true })
-                .eq("user_id", userId),
-              supabase
-                .from("sessions")
-                .select("*", { count: "exact", head: true })
-                .eq("user_id", userId),
-              supabase
-                .from("user_presets")
-                .select("*", { count: "exact", head: true })
-                .eq("user_id", userId),
-            ]);
+            // ── Phase 3: legacy-usage heuristic (network). Failure means the
+            // user simply isn't auto-completed this launch — recoverable.
+            try {
+              const [bikesRes, sessionsRes, presetsRes] = await Promise.all([
+                supabase
+                  .from("bikes")
+                  .select("*", { count: "exact", head: true })
+                  .eq("user_id", userId),
+                supabase
+                  .from("sessions")
+                  .select("*", { count: "exact", head: true })
+                  .eq("user_id", userId),
+                supabase
+                  .from("user_presets")
+                  .select("*", { count: "exact", head: true })
+                  .eq("user_id", userId),
+              ]);
 
-            if (!mounted || didNavigateRef.current) return;
+              if (!mounted || didNavigateRef.current) return;
 
-            hasLegacyUsage =
-              (profile?.trial_tunes_used ?? 0) > 0 ||
-              (bikesRes.count ?? 0) > 0 ||
-              (sessionsRes.count ?? 0) > 0 ||
-              (presetsRes.count ?? 0) > 0;
+              hasLegacyUsage =
+                (profile?.trial_tunes_used ?? 0) > 0 ||
+                (bikesRes.count ?? 0) > 0 ||
+                (sessionsRes.count ?? 0) > 0 ||
+                (presetsRes.count ?? 0) > 0;
 
-            if (hasLegacyUsage) {
-              const { error: upsertErr } = await supabase.from("profiles").upsert({
-                user_id: userId,
-                onboarding_complete: true,
-                onboarding_step: "complete",
-              });
-              if (upsertErr) {
-                console.warn("[IndexGate] legacy upsert failed:", upsertErr);
+              if (hasLegacyUsage) {
+                const { error: upsertErr } = await supabase.from("profiles").upsert({
+                  user_id: userId,
+                  onboarding_complete: true,
+                  onboarding_step: "complete",
+                });
+                if (upsertErr) {
+                  console.warn("[IndexGate] legacy upsert failed:", upsertErr);
+                }
               }
+            } catch (e) {
+              console.warn("[IndexGate] legacy heuristic failed — skipping", e);
             }
           }
         }
@@ -179,16 +268,22 @@ export default function IndexGate() {
             localState.onboardingComplete !== (resolvedStep === "complete") ||
             !localState.accountCreated
           ) {
-            await replaceState((current) => ({
-              ...current,
-              onboardingStep: resolvedStep,
-              onboardingComplete: resolvedStep === "complete",
-              // Signed in ⇒ an account exists; record it so downstream auth
-              // routing (results CTA) can distinguish "has account" from guest.
-              accountCreated: true,
-              // Any step past intro implies the intro was seen on some device.
-              hasSeenIntro: current.hasSeenIntro || resolvedStep !== "intro",
-            }));
+            // Reconciliation write is best-effort — a storage failure must
+            // not block routing (the resolved values below are in memory).
+            try {
+              await replaceState((current) => ({
+                ...current,
+                onboardingStep: resolvedStep,
+                onboardingComplete: resolvedStep === "complete",
+                // Signed in ⇒ an account exists; record it so downstream auth
+                // routing (results CTA) can distinguish "has account" from guest.
+                accountCreated: true,
+                // Any step past intro implies the intro was seen on some device.
+                hasSeenIntro: current.hasSeenIntro || resolvedStep !== "intro",
+              }));
+            } catch (e) {
+              console.warn("[IndexGate] state reconcile write failed", e);
+            }
           }
           if (!mounted || didNavigateRef.current) return;
         }
@@ -219,7 +314,11 @@ export default function IndexGate() {
                 // This is the user's FIRST paywall presentation (they quit
                 // before reaching it), so it stays in the funnel — unlike the
                 // trial branch below.
-                await setStep("trial");
+                try {
+                  await setStep("trial");
+                } catch (e) {
+                  console.warn("[IndexGate] setStep(trial) failed", e);
+                }
                 void supabase.from("profiles").upsert(
                   { user_id: userId, onboarding_step: "trial" },
                   { onConflict: "user_id" }
@@ -275,7 +374,33 @@ export default function IndexGate() {
 
         if (!didNavigateRef.current) {
           didNavigateRef.current = true;
-          router.replace(target as never);
+          // ROOT CAUSE of the Apple 2.1(a) iPad frozen-splash rejection:
+          // "/" IS this boot resolver's own route. router.replace("/") from
+          // "/" is a no-op on iPhone but REMOUNTS this screen on iPad
+          // (native-stack replace semantics differ by idiom), so the
+          // resolver re-ran and re-navigated in a synchronous microtask loop
+          // forever — starving timers, hideAsync, and the watchdog. Every
+          // fresh install resolves target "/" (intro), which is why App
+          // Review's fresh-install-on-iPad hit it 100% of the time. There is
+          // nothing to navigate to: the intro overlay (RootInner) keys off
+          // pathname === "/" — staying put is the correct behavior, and the
+          // finally below still hides the splash.
+          if (target !== "/") {
+            router.replace(target as never);
+          }
+        }
+      } catch (e) {
+        // Belt-and-braces: the per-phase guards above should make this
+        // unreachable, but an unexpected throw must still land the user in
+        // the app shell — never a dead splash, never a blank gate view.
+        console.error("[IndexGate] boot resolution threw — safe route", e);
+        if (!didNavigateRef.current) {
+          didNavigateRef.current = true;
+          try {
+            router.replace("/(tabs)" as never);
+          } catch {
+            // splash hide below still runs
+          }
         }
       } finally {
         if (!mounted) return;

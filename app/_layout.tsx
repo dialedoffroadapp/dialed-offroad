@@ -32,13 +32,14 @@ import { ThemeProvider, useTheme } from "../lib/theme";
 // timing and the component mount.
 console.log("[deep-link] module loaded, registering early capture");
 
+
 let _capturedDeepLinkUrl: string | null = null;
 let _initialUrlResolved = false;
 
 // Cold start: grab the URL as early as possible.
 // We store the Promise so consumers can `await` it if the value isn't ready yet.
-const _initialUrlPromise: Promise<string | null> = Linking.getInitialURL().then(
-  (url) => {
+const _initialUrlPromise: Promise<string | null> = Linking.getInitialURL()
+  .then((url) => {
     _initialUrlResolved = true;
     if (url && url.includes("auth-callback")) {
       console.log("[deep-link] captured initial URL:", url);
@@ -46,8 +47,13 @@ const _initialUrlPromise: Promise<string | null> = Linking.getInitialURL().then(
       return url;
     }
     return null;
-  }
-);
+  })
+  .catch(() => {
+    // A rejected initial-URL read must not poison consumeCapturedDeepLink's
+    // await (startup hardening — see app/index.tsx watchdogs).
+    _initialUrlResolved = true;
+    return null;
+  });
 
 // Warm start: listen for URL events fired while the app is backgrounded
 Linking.addEventListener("url", ({ url }) => {
