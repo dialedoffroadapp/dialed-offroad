@@ -15,6 +15,7 @@ import TrialPromptModal, {
 } from "../components/TrialPromptModal";
 import { flushFeedbackRetryQueue } from "../lib/feedbackRetry";
 import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
+import { markReminderArrival } from "../lib/reminderArrival";
 import { hasPurchasedThisSession, initPurchases } from "../lib/purchases";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
@@ -270,6 +271,13 @@ function RootInner() {
       const data: any = resp?.notification?.request?.content?.data;
       if (data?.kind !== "ride_reminder" && data?.kind !== "trial_reminder") {
         return;
+      }
+      if (data.kind === "ride_reminder") {
+        // Arrival flag: lets the check-in card bypass its 12h age gate so
+        // the tap always lands on the experience the notification promised.
+        void markReminderArrival(
+          typeof data.version_id === "string" ? data.version_id : null
+        );
       }
       router.navigate("/(tabs)" as any);
     };

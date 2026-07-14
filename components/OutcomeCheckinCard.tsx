@@ -45,6 +45,10 @@ import {
 } from "../lib/checkinLogic";
 import { buildRefineParams } from "../lib/refineFlow";
 import {
+  consumeReminderArrival,
+  subscribeReminderArrival,
+} from "../lib/reminderArrival";
+import {
   FeedbackOutcome,
   SetupVersionRow,
   updateFeedbackOutcome,
@@ -116,6 +120,14 @@ export function OutcomeCheckinCard({
   const [card, setCard] = useState<CardState | null>(null);
   const onEligibilityRef = useRef(onEligibility);
   onEligibilityRef.current = onEligibility;
+  // Ride-reminder tap while this tab is already focused (incl. the delayed
+  // cold-start handler): bump a tick so the focus-time eligibility check
+  // re-runs and picks up the arrival flag it would otherwise have missed.
+  const [arrivalTick, setArrivalTick] = useState(0);
+  useEffect(
+    () => subscribeReminderArrival(() => setArrivalTick((t) => t + 1)),
+    []
+  );
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [answering, setAnswering] = useState(false);
 
@@ -163,6 +175,9 @@ export function OutcomeCheckinCard({
 
   useFocusEffect(
     useCallback(() => {
+      // arrivalTick is the re-run trigger for reminder-tap pings; reference
+      // it so exhaustive-deps counts it as used.
+      void arrivalTick;
       let cancelled = false;
       (async () => {
         let visible = false;
@@ -216,7 +231,22 @@ export function OutcomeCheckinCard({
           if (cancelled || vErr) return;
 
           const version = (v as unknown as SetupVersionRow) ?? null;
-          if (!isFirstRideEligible(version, Date.now()) || !version) {
+
+          // Reminder-tap arrival bypasses ONLY the 12h age gate (and only
+          // for the version the reminder was scheduled against, when known).
+          // Consuming here means the flag is spent even if a later exclusion
+          // blocks the card — the override never outlives one attempt.
+          const arrival = await consumeReminderArrival();
+          const viaReminder =
+            !!arrival &&
+            (!arrival.versionId || arrival.versionId === version?.id);
+
+          if (
+            !version ||
+            !isFirstRideEligible(version, Date.now(), {
+              bypassAgeGate: viaReminder,
+            })
+          ) {
             return;
           }
 
@@ -255,6 +285,7 @@ export function OutcomeCheckinCard({
             version_id: version.id,
             bike_id: version.bike_id,
             surface,
+            shown_via_reminder: viaReminder,
           });
         } catch {
           // fail-silent: the check-in must never disturb the host tab
@@ -265,7 +296,7 @@ export function OutcomeCheckinCard({
       return () => {
         cancelled = true;
       };
-    }, [card, surface])
+    }, [card, surface, arrivalTick])
   );
 
   const onAnswer = async (outcome: FeedbackOutcome) => {

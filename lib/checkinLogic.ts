@@ -45,17 +45,21 @@ export function applyDismiss(
 /** First-ride branch eligibility for a candidate NEWEST version row:
  *  an uncritiqued baseline with a real bike, at least 12h old. (The "no
  *  ride_feedback critiques it" and "newest" conditions are enforced by the
- *  caller's queries.) */
+ *  caller's queries.) `bypassAgeGate` (a ride-reminder tap arrival,
+ *  lib/reminderArrival.ts) skips ONLY the 12h age check — the baseline/bike
+ *  requirements still hold. */
 export function isFirstRideEligible(
   version:
     | Pick<SetupVersionRow, "id" | "source" | "bike_id" | "created_at">
     | null
     | undefined,
-  nowMs: number
+  nowMs: number,
+  opts?: { bypassAgeGate?: boolean }
 ): boolean {
   if (!version?.id) return false;
   if (version.source !== "baseline") return false;
   if (!version.bike_id) return false;
+  if (opts?.bypassAgeGate) return true;
   return new Date(version.created_at).getTime() <= nowMs - TWELVE_HOURS_MS;
 }
 
