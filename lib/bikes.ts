@@ -151,12 +151,37 @@ export function catalogHasModel(makeRaw: string, modelRaw: string): boolean {
   return !!model && !!MODEL_KEY_BY_MAKE.get(make)?.has(canonKey(model));
 }
 
+/** Match a canonical make/model to the generation row whose [year_start,
+ *  year_end] range contains `year` (year_end null = ongoing). Newest generation
+ *  wins on any overlap. */
+async function matchGeneration(
+  make: string,
+  model: string,
+  year: number
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("bike_models")
+    .select("id")
+    .ilike("make", make)
+    .ilike("model", model)
+    .lte("year_start", year)
+    .or(`year_end.is.null,year_end.gte.${year}`)
+    .order("year_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !(data as any)?.id) return null;
+  return (data as any).id as string;
+}
+
 /**
- * Resolve bikes.model_id from a canonical make/model/year against bike_models.
- * Fail-open: returns null on any error or no match — never throws, never blocks a
- * bike save. Tries a year_start/year_end RANGE match first (survives the planned
- * migration to year ranges); if those columns don't exist yet the range query
- * errors (42703) and we fall through to the current exact-year match.
+ * Resolve bikes.model_id from a make/model/year against the bike_models
+ * generation table. Fail-open: returns null on any error or no match — never
+ * throws, never blocks a bike save.
+ *   1. Canonical: match make/model with year inside a generation's range.
+ *   2. Alias fallback: a normalized user-entered variant (bike_model_aliases,
+ *      stored lowercased) maps to a canonical model, then that model's
+ *      generation is re-resolved by year — aliases carry no year, so year
+ *      resolution lives here.
  */
 export async function resolveModelId(
   make: string,
@@ -169,31 +194,26 @@ export async function resolveModelId(
     return null;
   }
   try {
-    // Range match (post-migration schema).
-    const ranged = await supabase
-      .from("bike_models")
-      .select("id")
-      .ilike("make", mk)
-      .ilike("model", mo)
-      .lte("year_start", year)
-      .gte("year_end", year)
-      .limit(1)
-      .maybeSingle();
-    if (!ranged.error && (ranged.data as any)?.id) {
-      return (ranged.data as any).id as string;
-    }
+    const canon = await matchGeneration(mk, mo, year);
+    if (canon) return canon;
 
-    // Exact-year match (current schema).
-    const exact = await supabase
-      .from("bike_models")
-      .select("id")
-      .ilike("make", mk)
-      .ilike("model", mo)
-      .eq("year", year)
+    const { data: alias } = await supabase
+      .from("bike_model_aliases")
+      .select("model_id")
+      .eq("alias_make", mk.toLowerCase())
+      .eq("alias_model", mo.toLowerCase())
       .limit(1)
       .maybeSingle();
-    if (!exact.error && (exact.data as any)?.id) {
-      return (exact.data as any).id as string;
+    const aliasModelId = (alias as any)?.model_id as string | undefined;
+    if (aliasModelId) {
+      const { data: row } = await supabase
+        .from("bike_models")
+        .select("make, model")
+        .eq("id", aliasModelId)
+        .maybeSingle();
+      const cMake = (row as any)?.make as string | undefined;
+      const cModel = (row as any)?.model as string | undefined;
+      if (cMake && cModel) return await matchGeneration(cMake, cModel, year);
     }
     return null;
   } catch {
