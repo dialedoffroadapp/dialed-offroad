@@ -50,6 +50,9 @@ const FREE_BASELINE_LIMIT = 10;
 
 // ✅ Auth entry route (create account)
 const AUTH_ROUTE = "/signup" as const;
+// Locked-results reveal experiment tag — stamped on the funnel events so the
+// fork-compression reveal can be segmented post-hoc (no experiment framework).
+const LOCKED_VARIANT = "fork_comp_reveal_v1";
 
 type Mode = "balanced" | "comfort" | "precision";
 
@@ -428,6 +431,7 @@ export default function TuneResultScreen() {
           resume: ageMinutesSinceLastStep >= 5,
           age_minutes_since_last_step: ageMinutesSinceLastStep,
           source_route: "/tune-results",
+          variant: LOCKED_VARIANT,
         },
         { allowAnonymous: true, queueIfAnonymous: true }
       );
@@ -516,6 +520,10 @@ export default function TuneResultScreen() {
     wantsAir && result ? deriveAirBar(result, riderWeight) : undefined;
   const prevAirBar =
     wantsAir && previousTune ? deriveAirBar(previousTune, riderWeight) : undefined;
+
+  // Locked-results reveal (fork compression): count of clickers still hidden
+  // after the one reveal — 5, or 6 when an air fork adds AER pressure.
+  const lockedCount = 5 + (typeof airBar === "number" ? 1 : 0);
 
   // ---------- Build "what changed" rows (Tune Two only) ----------
   // ✅ MUST be above early returns (hook order)
@@ -728,6 +736,7 @@ export default function TuneResultScreen() {
           resume: ageMinutesSinceLastStep >= 5,
           age_minutes_since_last_step: ageMinutesSinceLastStep,
           source_route: "/tune-results",
+          variant: LOCKED_VARIANT,
         },
         { allowAnonymous: true, queueIfAnonymous: true }
       );
@@ -1185,19 +1194,54 @@ export default function TuneResultScreen() {
           </Text>
         </View>
 
-        {/* Fork card */}
-        <BlurCard enabled={shouldBlur} C={C} S={S} title="Fork">
-          <SettingRow
-            icon="settings-outline"
-            label="Compression"
-            hint="Clicks out from zero"
-            value={shouldBlur ? "•••" : String(num(result.fork.comp_clicks))}
-            unit="clicks"
-            onPress={shouldBlur ? undefined : () => router.push({
-              pathname: "/setting-detail",
-              params: { id: "fork_comp", value: String(num(result.fork.comp_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
-            } as any)}
-          />
+        {/* Fork card — fork compression is revealed (lifted into BlurCard's
+            always-clear slot) while locked, proving real per-bike output; every
+            other clicker stays redacted + blurred. */}
+        <BlurCard
+          enabled={shouldBlur}
+          C={C}
+          S={S}
+          title="Fork"
+          clear={
+            shouldBlur ? (
+              <>
+                <SettingRow
+                  icon="settings-outline"
+                  label="Compression"
+                  hint="Clicks out from zero"
+                  // Mode-stable source: read from `base`, not `result`, so the
+                  // revealed number is identical to what the guest sees after
+                  // signup (default balanced mode == base) and never shifts if
+                  // they toggle the mode control while locked.
+                  value={String(num(base?.fork.comp_clicks))}
+                  unit="clicks"
+                  onPress={() => router.push({
+                    pathname: "/setting-detail",
+                    params: { id: "fork_comp", value: String(num(base?.fork.comp_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+                  } as any)}
+                />
+                <Text style={S.revealTeaser}>
+                  {`Set for your ${bikeTitle !== "Custom Bike" ? bikeTitle : "bike"} — ${lockedCount} more settings locked`}
+                </Text>
+              </>
+            ) : null
+          }
+        >
+          {/* Fork compression renders here only when unlocked; while locked it
+              lives in the always-clear teaser slot above. */}
+          {!shouldBlur ? (
+            <SettingRow
+              icon="settings-outline"
+              label="Compression"
+              hint="Clicks out from zero"
+              value={String(num(result.fork.comp_clicks))}
+              unit="clicks"
+              onPress={() => router.push({
+                pathname: "/setting-detail",
+                params: { id: "fork_comp", value: String(num(result.fork.comp_clicks)), unit: "clicks", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
+              } as any)}
+            />
+          ) : null}
           <SettingRow
             icon="refresh-outline"
             label="Rebound"
@@ -1374,7 +1418,7 @@ export default function TuneResultScreen() {
           {shouldBlur ? (
             <Pressable onPress={onUnlock} style={[S.btnRefinePrimary, { flex: 1 }]}>
               <Ionicons name="lock-open-outline" size={18} color="#fff" />
-              <Text style={S.btnRefinePrimaryText}>Reveal Your Setup</Text>
+              <Text style={S.btnRefinePrimaryText}>{`Unlock the other ${lockedCount} settings`}</Text>
             </Pressable>
           ) : (
             <>
@@ -1493,12 +1537,16 @@ export default function TuneResultScreen() {
 function BlurCard({
   enabled,
   title,
+  clear,
   children,
   C,
   S,
 }: {
   enabled: boolean;
   title: string;
+  /** Optional always-clear teaser rendered above the blurred rows and never
+   *  covered by the blur (used to reveal one real value on the locked screen). */
+  clear?: React.ReactNode;
   children: React.ReactNode;
   C: any;
   S: any;
@@ -1515,15 +1563,19 @@ function BlurCard({
         ) : null}
       </View>
 
-      <View style={{ marginTop: 2 }}>{children}</View>
+      {clear ? <View>{clear}</View> : null}
 
-      {enabled ? (
-        // Light blur — shows structure is real, feels intentional not broken.
-        // Per-card overlay removed; single hero card above delivers the message.
-        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <BlurView intensity={30} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
-        </View>
-      ) : null}
+      {/* Blurred region — the overlay is scoped to just these rows, so a `clear`
+          teaser above stays sharp and tappable. */}
+      <View style={{ marginTop: 2 }}>
+        {children}
+        {enabled ? (
+          // Light blur — shows structure is real, feels intentional not broken.
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <BlurView intensity={30} tint={C.BG === "#FFFFFF" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -1712,6 +1764,14 @@ const makeStyles = (C: {
       textAlign: "center",
       lineHeight: 18,
       paddingHorizontal: 20,
+    },
+    revealTeaser: {
+      color: C.ACCENT,
+      fontSize: 13,
+      fontWeight: "600",
+      lineHeight: 17,
+      marginTop: 10,
+      marginBottom: 2,
     },
 
     // ── Summary chips ───────────────────────────────────────────────
