@@ -332,20 +332,22 @@ export default function HomeScreen() {
     };
   }, [isPaywallDecliner]);
 
-  const onDeclinerRevealCta = () => {
+  // One handler for both banner targets so every tap logs decliner_banner_tapped
+  // exactly once (target distinguishes the CTA pill from the banner body). Body
+  // and CTA are siblings (no nested Pressable), so this can't double-fire.
+  const onDeclinerTap = (target: "body" | "cta") => {
     void logEvent("decliner_banner_tapped", {
+      target,
       has_pending_tune: hasPendingTune,
     });
-    // /premium auto-presents the RevenueCat paywall — now reached only
-    // intentionally, exactly as before for the presentation itself.
-    router.push("/premium");
-  };
-
-  const onDeclinerBannerBody = () => {
-    // Body tap (not the CTA): back to the blurred results while the pending
-    // tune survives; tune-results already renders correctly for a signed-in
-    // non-pro at the trial step (it's where the funnel's own paywall-dismiss
-    // path lands), restoring the tune from pending storage with no params.
+    if (target === "cta") {
+      // /premium auto-presents the RevenueCat paywall.
+      router.push("/premium");
+      return;
+    }
+    // Body tap: back to the blurred results while the pending tune survives
+    // (tune-results renders correctly for a signed-in non-pro at the trial
+    // step); otherwise straight to the paywall.
     if (hasPendingTune) {
       router.push("/tune-results" as any);
     } else {
@@ -416,13 +418,13 @@ export default function HomeScreen() {
             dismissible. The single conversion surface for paywall decliners;
             disappears reactively the moment they convert. */}
         {isPaywallDecliner && (
-          <Pressable
-            onPress={onDeclinerBannerBody}
-            style={styles.declinerBanner}
-            accessibilityRole="button"
-            accessibilityLabel="Your tune is ready — start your free trial to reveal it"
-          >
-            <View style={styles.declinerRow}>
+          <View style={styles.declinerBanner}>
+            <Pressable
+              onPress={() => onDeclinerTap("body")}
+              style={styles.declinerRow}
+              accessibilityRole="button"
+              accessibilityLabel="Your tune is ready — start your free trial to reveal it"
+            >
               <View style={styles.declinerIconTile}>
                 <Ionicons name="lock-closed" size={19} color={t.ACCENT} />
               </View>
@@ -436,12 +438,15 @@ export default function HomeScreen() {
                   Start your free trial to reveal it
                 </Text>
               </View>
-            </View>
-            <Pressable onPress={onDeclinerRevealCta} style={styles.declinerCta}>
+            </Pressable>
+            <Pressable
+              onPress={() => onDeclinerTap("cta")}
+              style={styles.declinerCta}
+            >
               <Ionicons name="lock-open-outline" size={16} color="#fff" />
               <Text style={styles.declinerCtaText}>Reveal My Setup</Text>
             </Pressable>
-          </Pressable>
+          </View>
         )}
 
         {/* ── Header ── */}
