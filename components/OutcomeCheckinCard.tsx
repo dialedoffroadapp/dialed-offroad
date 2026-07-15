@@ -3,17 +3,23 @@
 //
 // "outcome" — post-refinement: "Last time you said X. Better on the new
 // setup?" → Better / Same / Worse feeds ride_feedback.outcome, which the
-// engine's adaptive step (last_outcome) builds on.
+// engine's adaptive step (last_outcome) builds on. Answering it then continues
+// into the picker for the rated setup — outcome → chips as one funnel.
 //
 // "first_ride" — post-baseline (the loop's most important prompt, previously
 // missing): the newest version is an uncritiqued baseline ≥12h old →
-// "How did the {bike} feel on v1?" → routes into the refine flow.
+// "How did the {bike} feel on v1?" → routes into the refine flow. Also the
+// landing for a post-ride reminder tap (lib/rideReminder.ts) once the outcome
+// is recorded or absent — including refinement versions the tap targets.
 //
-// Eligibility (checked on tab focus, fail-silent), outcome mode wins:
+// Eligibility (checked on tab focus, fail-silent). Outcome mode wins — it's the
+// label on every downstream row, so it fires first even on a reminder tap:
 // - outcome: newest ride_feedback for the signed-in user with a resulting
 //   refinement, no outcome yet, and at least 12h old (time to actually ride)
-// - first_ride: newest setup_versions row is source="baseline" with a bike,
-//   ≥12h old, and no ride_feedback critiques it yet
+// - first_ride: an uncritiqued setup_versions row with a bike — the newest
+//   baseline ≥12h old on organic focus, or the exact version a reminder tap
+//   named (baseline or refinement, age gate bypassed) when there's no outcome
+//   left to record
 // - not snoozed/dismissed: AsyncStorage checkin_dismissed_<id> = {count, until};
 //   skipped while `until` is in the future. "Haven't ridden yet" only snoozes
 //   (3 days, unlimited); the ✕ dismissal counts toward the 2-strike limit.
@@ -66,7 +72,16 @@ const dismissKey = (id: string) => `checkin_dismissed_${id}`;
 let shownThisSession = false;
 
 type CardState =
-  | { kind: "outcome"; feedbackId: string; title: string }
+  | {
+      kind: "outcome";
+      feedbackId: string;
+      title: string;
+      // The setup being rated (ride_feedback.resulting_version_id) + its bike,
+      // so answering can continue into the picker for it. Null when it can't
+      // be resolved — the card then just confirms and dismisses.
+      nextVersion: SetupVersionRow | null;
+      nextBikeTitle: string;
+    }
   | {
       kind: "first_ride";
       version: SetupVersionRow;
@@ -93,6 +108,36 @@ async function isSnoozedOrDismissed(id: string): Promise<boolean> {
     return isRecordBlocking(JSON.parse(raw) as DismissRecord, Date.now());
   } catch {
     return false; // unreadable record → treat as never dismissed
+  }
+}
+
+/** Load the setup an outcome card is rating (its resulting_version) and the
+ *  bike title, so answering can flow into the picker for it. Fail-soft: a null
+ *  version just means the card confirms-and-dismisses instead of routing. */
+async function loadNextForOutcome(
+  resultingVersionId: string | null
+): Promise<{ next: SetupVersionRow | null; bikeTitle: string }> {
+  if (!resultingVersionId) return { next: null, bikeTitle: "the bike" };
+  try {
+    const { data: rv } = await supabase
+      .from("setup_versions")
+      .select(VERSION_COLUMNS)
+      .eq("id", resultingVersionId)
+      .maybeSingle();
+    const next = (rv as unknown as SetupVersionRow) ?? null;
+    if (!next?.bike_id) return { next, bikeTitle: "the bike" };
+    const { data: bike } = await supabase
+      .from("bikes")
+      .select("make, model, year, nickname")
+      .eq("id", next.bike_id)
+      .maybeSingle();
+    const bikeTitle =
+      bike?.nickname ||
+      [bike?.make, bike?.model].filter(Boolean).join(" ") ||
+      "the bike";
+    return { next, bikeTitle };
+  } catch {
+    return { next: null, bikeTitle: "the bike" };
   }
 }
 
@@ -193,10 +238,18 @@ export function OutcomeCheckinCard({
 
           const cutoff = new Date(Date.now() - TWELVE_HOURS_MS).toISOString();
 
-          // ── Branch 1 (wins): outcome check-in on the last refinement ──
+          // Read-and-clear the ride-reminder tap flag once, up front. Branch 2
+          // uses it to bypass the 12h age gate and to load the exact version a
+          // reminder targeted; consuming here spends it on one attempt.
+          const arrival = await consumeReminderArrival();
+
+          // ── Branch 1 (wins): outcome check-in on the last refinement. The
+          //    outcome is the label on every downstream row, so it fires first
+          //    even on a reminder tap; answering it flows straight into the
+          //    picker for the setup just rated (outcome → chips, one funnel). ──
           const { data: row, error } = await supabase
             .from("ride_feedback")
-            .select("id, symptoms")
+            .select("id, symptoms, resulting_version_id")
             .eq("user_id", uid)
             .not("resulting_version_id", "is", null)
             .is("outcome", null)
@@ -208,35 +261,52 @@ export function OutcomeCheckinCard({
 
           if (!error && row?.id && !(await isSnoozedOrDismissed(row.id))) {
             if (cancelled) return;
+            const { next, bikeTitle } = await loadNextForOutcome(
+              row.resulting_version_id
+            );
+            if (cancelled) return;
             shownThisSession = true;
             visible = true;
             setCard({
               kind: "outcome",
               feedbackId: row.id,
               title: titleFromSymptoms(row.symptoms),
+              nextVersion: next,
+              nextBikeTitle: bikeTitle,
             });
             void logEvent("checkin_shown", { feedback_id: row.id, surface });
             return;
           }
 
-          // ── Branch 2: first ride on an uncritiqued baseline ──
-          const { data: v, error: vErr } = await supabase
-            .from("setup_versions")
-            .select(VERSION_COLUMNS)
-            .eq("user_id", uid)
-            .not("bike_id", "is", null)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          // ── Branch 2 (no outcome to record): give feedback on an
+          //    uncritiqued setup. A targeted reminder tap points at a specific
+          //    version (baseline OR the refinement it just produced) and lands
+          //    in the picker for it — e.g. a baseline first ride, or a
+          //    refinement whose outcome was already answered; organic focus
+          //    uses the newest version and only nudges baselines. ──
+          const { data: v, error: vErr } = arrival?.versionId
+            ? await supabase
+                .from("setup_versions")
+                .select(VERSION_COLUMNS)
+                .eq("user_id", uid)
+                .not("bike_id", "is", null)
+                .eq("id", arrival.versionId)
+                .maybeSingle()
+            : await supabase
+                .from("setup_versions")
+                .select(VERSION_COLUMNS)
+                .eq("user_id", uid)
+                .not("bike_id", "is", null)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
           if (cancelled || vErr) return;
 
           const version = (v as unknown as SetupVersionRow) ?? null;
 
-          // Reminder-tap arrival bypasses ONLY the 12h age gate (and only
-          // for the version the reminder was scheduled against, when known).
-          // Consuming here means the flag is spent even if a later exclusion
-          // blocks the card — the override never outlives one attempt.
-          const arrival = await consumeReminderArrival();
+          // arrival was consumed up front (see Branch 1). It bypasses the 12h
+          // age gate and, only for the version the reminder named, admits a
+          // refinement version so the tap can open the picker for it.
           const viaReminder =
             !!arrival &&
             (!arrival.versionId || arrival.versionId === version?.id);
@@ -245,6 +315,7 @@ export function OutcomeCheckinCard({
             !version ||
             !isFirstRideEligible(version, Date.now(), {
               bypassAgeGate: viaReminder,
+              allowRefinement: viaReminder,
             })
           ) {
             return;
@@ -303,14 +374,25 @@ export function OutcomeCheckinCard({
     if (!card || card.kind !== "outcome" || answering || confirmation) return;
     setAnswering(true);
     try {
+      // Record the outcome first — it's the label on the whole dataset and must
+      // never be skipped. Only continue into the picker once it's persisted.
       await updateFeedbackOutcome(card.feedbackId, outcome);
       void logEvent("checkin_answered", {
         feedback_id: card.feedbackId,
         outcome,
         surface,
       });
-      setConfirmation(CONFIRMATIONS[outcome]);
-      hideTimerRef.current = setTimeout(animateOut, CONFIRM_VISIBLE_MS);
+      if (card.nextVersion) {
+        // outcome → chips as one funnel: continue into the picker for the setup
+        // just rated so the rider gives full feedback → next refinement.
+        const params = buildRefineParams(card.nextVersion, card.nextBikeTitle);
+        animateOut();
+        router.push({ pathname: "/tune-feedback", params } as any);
+      } else {
+        // Couldn't resolve the rated setup — just confirm and dismiss.
+        setConfirmation(CONFIRMATIONS[outcome]);
+        hideTimerRef.current = setTimeout(animateOut, CONFIRM_VISIBLE_MS);
+      }
     } catch {
       // write failed — drop the card quietly; eligibility re-offers it later
       animateOut();

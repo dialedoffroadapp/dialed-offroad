@@ -27,7 +27,10 @@ import {
     ZeroTuneResult,
 } from "../lib/ai";
 import { enqueueFeedbackRetry } from "../lib/feedbackRetry";
-import { cancelRideReminderForVersion } from "../lib/rideReminder";
+import {
+  cancelRideReminderForVersion,
+  scheduleRideReminder,
+} from "../lib/rideReminder";
 import {
     createBaselineVersion,
     createFeedback,
@@ -652,6 +655,14 @@ export default function TuneFeedbackScreen() {
           });
           refinementSaved = true;
           refinementRowId = refinement.id;
+          // The refined setup is the next thing to ride — re-arm the 36h
+          // check-in for it. Replaces the reminder we just cancelled for the
+          // version we critiqued (scheduleRideReminder keeps one pending).
+          void scheduleRideReminder({
+            versionId: refinement.id,
+            versionNumber: refinement.version_number,
+            bikeName: bikeTitle,
+          });
         } catch (shadowErr: any) {
           shadowWriteFailed = true;
           console.error("setup_versions refinement shadow write failed", {
