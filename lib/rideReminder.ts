@@ -27,7 +27,12 @@ const REMINDER_KEY = "ride_reminder_v1";
 const PROMPT_DECLINED_AT_KEY = "notif_prompt_declined_at_v1";
 const PROMPT_SNOOZE_MS = 30 * 24 * 60 * 60 * 1000;
 const ANDROID_CHANNEL_ID = "ride-reminders";
-const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
+const THIRTY_SIX_HOURS_MS = 36 * 60 * 60 * 1000;
+// Civil send window: never buzz a rider before 9am or after 8pm local.
+const WINDOW_OPEN_HOUR = 9;
+const WINDOW_CLOSE_HOUR = 20;
+// Midweek (Mon–Thu) tunes fire the coming Saturday evening — after the ride.
+const SATURDAY_EVENING_HOUR = 19;
 
 type ReminderRecord = { versionId: string; notificationId: string };
 
@@ -109,26 +114,47 @@ export async function requestNotificationPermission(): Promise<boolean> {
   }
 }
 
+/** Nudge an instant into the same/next 9am–8pm local window: pull a pre-9am
+ *  time up to 9am today, push an 8pm-or-later time to 9am tomorrow. */
+function clampToDaytime(d: Date): Date {
+  const r = new Date(d);
+  const h = r.getHours();
+  if (h < WINDOW_OPEN_HOUR) {
+    r.setHours(WINDOW_OPEN_HOUR, 0, 0, 0);
+  } else if (h >= WINDOW_CLOSE_HOUR) {
+    r.setDate(r.getDate() + 1);
+    r.setHours(WINDOW_OPEN_HOUR, 0, 0, 0);
+  }
+  return r;
+}
+
+/** Next Saturday at `hour`:00 local, strictly after `now`. */
+function nextSaturday(now: Date, hour: number): Date {
+  const c = new Date(now);
+  const daysAhead = (6 - now.getDay() + 7) % 7; // 0 Sun … 6 Sat
+  c.setDate(now.getDate() + daysAhead);
+  c.setHours(hour, 0, 0, 0);
+  if (c.getTime() <= now.getTime()) c.setDate(c.getDate() + 7);
+  return c;
+}
+
 /**
- * min(next Saturday 9:00am local, now + 48h).
- * The min() matters: a rider who onboards Saturday afternoon must not wait
- * 7 days for first touch — they get the +48h slot instead.
+ * Post-ride check-in time.
+ *
+ * Mon–Thu tunes fire the coming Saturday 7pm — riders who tune midweek usually
+ * ride the weekend, so the reminder lands Saturday evening, AFTER the ride,
+ * rather than 36h later when they haven't ridden yet.
+ *
+ * Fri–Sun tunes fire 36h after the tune, nudged into a civil 9am–8pm window so
+ * they never buzz at 3am.
  */
 export function nextReminderDate(now: Date = new Date()): Date {
-  const saturday = new Date(now);
   const day = now.getDay(); // 0 Sun … 6 Sat
-  let daysAhead = (6 - day + 7) % 7; // days until Saturday (0 if today)
-  const candidate = new Date(now);
-  candidate.setDate(now.getDate() + daysAhead);
-  candidate.setHours(9, 0, 0, 0);
-  if (candidate.getTime() <= now.getTime()) {
-    // Saturday 9am already passed today → next week's Saturday.
-    candidate.setDate(candidate.getDate() + 7);
+  const isMidweek = day >= 1 && day <= 4;
+  if (isMidweek) {
+    return nextSaturday(now, SATURDAY_EVENING_HOUR);
   }
-  saturday.setTime(candidate.getTime());
-
-  const in48h = new Date(now.getTime() + FORTY_EIGHT_HOURS_MS);
-  return saturday.getTime() <= in48h.getTime() ? saturday : in48h;
+  return clampToDaytime(new Date(now.getTime() + THIRTY_SIX_HOURS_MS));
 }
 
 /**
