@@ -24,6 +24,7 @@ import {
   remapPendingTuneBikeId,
   useOnboarding,
 } from "../lib/onboarding";
+import { normalizeBikeStrings, resolveModelId } from "../lib/bikes";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -249,16 +250,26 @@ function SignupInner() {
             const metaObj = JSON.parse(decodeURIComponent(pending.meta));
             const bike = metaObj?.bike;
             if (bike?.make && bike?.model && bike?.year) {
+              const norm = normalizeBikeStrings(
+                String(bike.make),
+                String(bike.model)
+              );
               pendingBike = {
-                make: String(bike.make),
-                model: String(bike.model),
+                make: norm.make,
+                model: norm.model,
                 year: Number(bike.year),
               };
+              const model_id = await resolveModelId(
+                pendingBike.make,
+                pendingBike.model,
+                pendingBike.year
+              );
               const { data: insertedBike, error: bikeInsertErr } = await supabase
                 .from("bikes")
                 .insert({
                   user_id: signInData.user.id,
                   ...pendingBike,
+                  model_id,
                 })
                 .select("id")
                 .single();

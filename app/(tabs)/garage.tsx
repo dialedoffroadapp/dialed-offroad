@@ -28,6 +28,12 @@ import { isProfane } from "../../lib/profanity";
 import { useTheme } from "../../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 import { isUuid } from "../../lib/uuid";
+import { BIKE_BRANDS, BIKE_CATALOG } from "../../constants/bike-catalog";
+import {
+  catalogHasModel,
+  normalizeBikeStrings,
+  resolveModelId,
+} from "../../lib/bikes";
 
 const ICON = Platform.select({ ios: 20, android: 20, default: 20 })!;
 
@@ -41,155 +47,9 @@ const GUEST_DEFAULT_BIKE_KEY = "dialed_guest_default_bike_v1";
 /* -------------------------------------------------------------------------- */
 /*                              Inline Bike Catalog                           */
 /* -------------------------------------------------------------------------- */
-const MAKES = [
-  "KTM",
-  "Husqvarna",
-  "GasGas",
-  "Yamaha",
-  "Honda",
-  "Kawasaki",
-  "Suzuki",
-  "Beta",
-  "Sherco",
-  "TM Racing",
-  "Stark",
-] as const;
-
-const MODELS_BY_MAKE: Record<string, string[]> = {
-  KTM: [
-    "50 SX",
-    "65 SX",
-    "85 SX",
-    "85 SX Big Wheel",
-    "125 SX",
-    "150 SX",
-    "250 SX",
-    "250 SX-F",
-    "350 SX-F",
-    "450 SX-F",
-    "450 SX-F Factory",
-    "250 XC",
-    "300 XC",
-    "250 XC-F",
-    "350 XC-F",
-    "450 XC-F",
-    "250 EXC-F",
-    "300 EXC",
-    "350 EXC-F",
-    "450 EXC-F",
-    "500 EXC-F",
-  ],
-  Husqvarna: [
-    "TC 50",
-    "TC 65",
-    "TC 85",
-    "TC 85 Big Wheel",
-    "TC 125",
-    "TC 250",
-    "FC 250",
-    "FC 350",
-    "FC 450",
-    "TX 300",
-    "FX 350",
-    "FX 450",
-    "TE 300",
-    "FE 250",
-    "FE 350",
-    "FE 450",
-    "FE 501",
-  ],
-  GasGas: [
-    "MC 50",
-    "MC 65",
-    "MC 85",
-    "MC 85 Big Wheel",
-    "MC 125",
-    "MC 250",
-    "MC 250F",
-    "MC 350F",
-    "MC 450F",
-    "EX 250",
-    "EX 300",
-    "EX 250F",
-    "EX 350F",
-    "EX 450F",
-    "EC 250",
-    "EC 300",
-  ],
-  Yamaha: [
-    "YZ65",
-    "YZ85",
-    "YZ85LW",
-    "YZ85 Big Wheel",
-    "YZ125",
-    "YZ250",
-    "YZ250F",
-    "YZ450F",
-    "YZ125X",
-    "YZ250X",
-    "WR250F",
-    "WR450F",
-  ],
-  Honda: [
-    "CRF150R",
-    "CRF150RB",
-    "CR80R",
-    "CR85R",
-    "CR85RB",
-    "CRF125F",
-    "CRF125FB",
-    "CRF110F",
-    "CRF250R",
-    "CRF450R",
-    "CRF450RWE",
-    "CRF250RX",
-    "CRF450RX",
-    "CRF450X",
-  ],
-  Kawasaki: [
-    "KX65",
-    "KX85",
-    "KX85-II",
-    "KX100",
-    "KX250",
-    "KX450",
-    "KX250X",
-    "KX450X",
-    "KLX450R",
-  ],
-  Suzuki: ["RM85", "RM85L", "RM-Z250", "RM-Z450"],
-  Beta: [
-    "RR 2T 250",
-    "RR 2T 300",
-    "RR 4T 350",
-    "RR 4T 390",
-    "RR 4T 430",
-    "RR 4T 480",
-    "RR Race 250",
-    "RR Race 300",
-    "Xtrainer 250",
-    "Xtrainer 300",
-  ],
-  Sherco: [
-    "SE 250 Factory",
-    "SE 300 Factory",
-    "SEF 250 Factory",
-    "SEF 300 Factory",
-    "SEF 450 Factory",
-  ],
-  "TM Racing": [
-    "MX 125",
-    "MX 250",
-    "MX 250 4T",
-    "MX 450 4T",
-    "EN 250",
-    "EN 300",
-    "EN 250 4T",
-    "EN 300 4T",
-    "EN 450 4T",
-  ],
-  Stark: ["Varg MX", "Varg EX", "Varg SM"],
-};
+// MAKES / MODELS_BY_MAKE now live in constants/bike-catalog.ts as BIKE_BRANDS /
+// BIKE_CATALOG — the single source of truth shared with on-save canonicalization
+// (normalizeBikeStrings) and model_id resolution (resolveModelId) in lib/bikes.ts.
 
 /* ---------------------------- Brand accent color --------------------------- */
 const BRAND_ACCENTS: Record<string, string> = {
@@ -373,6 +233,7 @@ function PickerSheet({
   options,
   initialValue = "",
   onPick,
+  onFreeText,
   onClose,
   colors,
   styles,
@@ -382,6 +243,9 @@ function PickerSheet({
   options: string[];
   initialValue?: string;
   onPick: (value: string) => void;
+  /** Called (in addition to onPick) when the user commits the free-text "Use
+   *  '{query}'" fallback rather than a catalog row. */
+  onFreeText?: (value: string) => void;
   onClose: () => void;
   colors: ThemeTokens;
   styles: any;
@@ -442,6 +306,7 @@ function PickerSheet({
             <Pressable
               style={[styles.optionRow, { borderStyle: "dashed" as any }]}
               onPress={() => {
+                onFreeText?.(query.trim());
                 onPick(query.trim());
                 onClose();
               }}
@@ -573,7 +438,7 @@ export default function GarageScreen() {
   // pickers
   const [makeOpen, setMakeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const modelOptions = useMemo(() => MODELS_BY_MAKE[newBike.make] ?? [], [newBike.make]);
+  const modelOptions = useMemo(() => BIKE_CATALOG[newBike.make] ?? [], [newBike.make]);
 
   const ordered = useMemo(() => {
     const arr = [...bikes];
@@ -612,15 +477,23 @@ export default function GarageScreen() {
       if (guestBikes.length > 0) {
         try {
           const results = await Promise.all(
-            guestBikes.map((b) =>
-              supabase.from("bikes").insert({
+            guestBikes.map(async (b) => {
+              // Heal legacy guest strings + resolve model_id at sync time
+              // (guests can't reach the DB offline).
+              const { make, model } = normalizeBikeStrings(
+                b.make ?? "",
+                b.model ?? ""
+              );
+              const model_id = await resolveModelId(make, model, b.year);
+              return supabase.from("bikes").insert({
                 user_id: userId,
-                make: b.make,
-                model: b.model,
+                make,
+                model,
                 year: b.year,
                 nickname: b.nickname ?? null,
-              })
-            )
+                model_id,
+              });
+            })
           );
 
           const allSucceeded = results.every((r) => !r.error);
@@ -822,9 +695,12 @@ export default function GarageScreen() {
       return;
     }
 
+    // Canonicalize make/model against the catalog before saving so the picker
+    // and free-text paths both produce clean, matchable strings.
+    const { make, model } = normalizeBikeStrings(newBike.make, newBike.model);
     const payload = {
-      make: newBike.make.trim(),
-      model: newBike.model.trim(),
+      make,
+      model,
       year: y,
       nickname: newBike.nickname.trim() || null,
     };
@@ -849,11 +725,18 @@ export default function GarageScreen() {
 
     // Logged-in add (Supabase)
     try {
+      // Best-effort per-model link; null is fine and never blocks the save.
+      const model_id = await resolveModelId(
+        payload.make,
+        payload.model,
+        payload.year
+      );
       const { data, error } = await supabase
         .from("bikes")
         .insert({
           user_id: userId, // REQUIRED for RLS
           ...payload,
+          model_id,
         })
         .select("id, make, model, year, nickname")
         .single();
@@ -1298,7 +1181,7 @@ export default function GarageScreen() {
       <PickerSheet
         open={makeOpen}
         title="Select make"
-        options={MAKES as unknown as string[]}
+        options={BIKE_BRANDS}
         initialValue={newBike.make}
         onPick={(val) => setNewBike((nb) => ({ ...nb, make: val, model: "" }))}
         onClose={() => setMakeOpen(false)}
@@ -1311,6 +1194,18 @@ export default function GarageScreen() {
         options={newBike.make ? modelOptions : []}
         initialValue={newBike.model}
         onPick={(val) => setNewBike((nb) => ({ ...nb, model: val }))}
+        onFreeText={(q) => {
+          // Rider used the free-text fallback for a model not in the catalog —
+          // a coverage signal (suppressed when it's just a spacing/case variant
+          // that canonicalizes to a real model, e.g. "300 xcw" → "300 XC-W").
+          if (!catalogHasModel(newBike.make, q)) {
+            void logEvent(
+              "bike_search_no_result",
+              { query: q, make: newBike.make },
+              { allowAnonymous: true, queueIfAnonymous: true }
+            );
+          }
+        }}
         onClose={() => setModelOpen(false)}
         colors={colors}
         styles={styles}

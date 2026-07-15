@@ -14,6 +14,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { PENDING_GUEST_BIKE_SYNC_KEY, readPendingTune, remapPendingTuneBikeId } from "./onboarding";
+import { normalizeBikeStrings, resolveModelId } from "./bikes";
 import { supabase } from "./supabase";
 import { isUuid } from "./uuid";
 
@@ -48,17 +49,22 @@ async function ensureTableBike(
   bike: { make: string; model: string; year: number; nickname?: string | null },
   existing: TableBike[]
 ): Promise<string | null> {
-  const match = existing.find((e) => bikeKey(e) === bikeKey(bike));
+  const { make, model } = normalizeBikeStrings(bike.make, bike.model);
+  const match = existing.find(
+    (e) => bikeKey(e) === bikeKey({ make, model, year: bike.year })
+  );
   if (match) return match.id;
 
+  const model_id = await resolveModelId(make, model, bike.year);
   const { data, error } = await supabase
     .from("bikes")
     .insert({
       user_id: userId,
-      make: bike.make,
-      model: bike.model,
+      make,
+      model,
       year: bike.year,
       nickname: bike.nickname ?? null,
+      model_id,
     })
     .select("id, make, model, year")
     .single();
