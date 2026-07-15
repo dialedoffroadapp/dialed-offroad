@@ -47,6 +47,8 @@ import { RunningSetupRow } from "../../components/RunningSetupRow";
 import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
+import { computeSpringCheck, fetchModelSpecs } from "../../lib/modelSpecs";
+import { resolveSagBounds } from "../../lib/sagBounds";
 import {
   readPendingTune,
   useOnboarding,
@@ -999,9 +1001,21 @@ export default function TuneScreen() {
         wants_air_fork: wantsAirFork,
       };
 
+      // Per-model specs (verified bike_models row or null) drive the sag bounds
+      // sent in guardrails + the spring-rate check. Fail-open: null => DEFAULT_SAG
+      // and no spring card; never blocks generation.
+      const modelSpecs = await fetchModelSpecs({
+        id: selectedBikeId ?? null,
+        make: input.make ?? null,
+        model: input.model ?? null,
+        year: input.year ?? null,
+      });
+      const sagBounds = resolveSagBounds(modelSpecs);
+      const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
+
       const GENERATE_TIMEOUT_MS = 30_000;
       const s: ZeroTuneResult = await Promise.race([
-        generateTune(input),
+        generateTune(input, sagBounds),
         new Promise<never>((_resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error("This is taking longer than expected — try again")),
@@ -1014,6 +1028,9 @@ export default function TuneScreen() {
         }),
       ]);
       cancelGenerateRef.current = null;
+      // Carry the client-computed spring check on the result so it renders on
+      // tune-results and is captured in the setup_version context.
+      if (springCheck) s.spring_check = springCheck;
 
       // Persist rider profile after successful generation
       if (user?.id) {
@@ -1046,6 +1063,7 @@ export default function TuneScreen() {
         selectedBikeId,
         onboarding: isOnboarding ? 1 : 0,
         guest: !user?.id ? 1 : 0,
+        spring_check_status: springCheck?.status ?? "unknown",
       });
 
       const encodedResult = encodeURIComponent(JSON.stringify(s));
@@ -1066,6 +1084,14 @@ export default function TuneScreen() {
             rider_weight_lbs: weight ? Number(weight) : undefined,
             goals,
             issues: issues.trim() || undefined,
+          },
+          // Engine-context capture: the resolved model + sag inputs, carried to
+          // the setup_version's recommended_settings.context on save.
+          spec: {
+            model_id: modelSpecs?.id ?? null,
+            spec_verified: modelSpecs?.spec_verified ?? false,
+            sag_target_mm: sagBounds.target,
+            sag_bounds: [sagBounds.min, sagBounds.max],
           },
           onboarding: isOnboarding ? true : false,
           guest: !user?.id,
@@ -1102,6 +1128,7 @@ export default function TuneScreen() {
             resume: ageMinutesSinceLastStep >= 5,
             age_minutes_since_last_step: ageMinutesSinceLastStep,
             source_route: "/(tabs)/tune",
+            spring_check_status: springCheck?.status ?? "unknown",
           },
           { allowAnonymous: true, queueIfAnonymous: true }
         );

@@ -935,6 +935,22 @@ export default function TuneResultScreen() {
               ? metaObj.context.terrain[0] ?? null
               : metaObj?.context?.terrain ?? null,
             context: metaObj?.context ?? null,
+            // Engine-context capture (the training-data link): the resolved model
+            // + sag inputs + spring-check outcome, recorded with the tune.
+            recommendedContext: {
+              model_id: metaObj?.spec?.model_id ?? null,
+              spec_verified: !!metaObj?.spec?.spec_verified,
+              sag_target_mm: metaObj?.spec?.sag_target_mm ?? null,
+              sag_bounds: metaObj?.spec?.sag_bounds ?? null,
+              rider_weight_lbs: metaObj?.context?.rider_weight_lbs ?? null,
+              spring_check: base?.spring_check
+                ? {
+                    status: base.spring_check.status,
+                    direction: base.spring_check.direction,
+                  }
+                : null,
+              engine: "zero_baseline_v1",
+            },
           });
           baselineVersionIdRef.current = version.id;
           // A new saved setup supersedes any pending ride reminder — point
@@ -1184,6 +1200,51 @@ export default function TuneResultScreen() {
               : "Stiffer — better for speed and precision."}
           </Text>
         </View>
+
+        {/* Spring-rate legitimacy check — a credibility signal shown to guests
+            too (NOT blurred, NOT gated). "ok" is one quiet confidence line; a
+            mismatch is a warning card. Unknown / no specs renders nothing. */}
+        {base?.spring_check?.status === "ok" ? (
+          <View style={S.modeHelperRow}>
+            <Ionicons name="checkmark-circle-outline" size={14} color={C.MUTED} />
+            <Text style={S.modeHelperText}>
+              Stock springs suit your weight — dialed in below.
+            </Text>
+          </View>
+        ) : base?.spring_check &&
+          (base.spring_check.status === "marginal" ||
+            base.spring_check.status === "out_of_range") ? (
+          <View style={[S.lockHintBox, { marginTop: 12 }]}>
+            <Ionicons
+              name="warning-outline"
+              size={16}
+              color={(C as any).WARN ?? "#FFC36A"}
+            />
+            <Text style={S.lockHintText}>
+              {(() => {
+                const c = base.spring_check!;
+                const dir = c.direction ?? "different";
+                if (c.component === "both") {
+                  const rates = [
+                    typeof c.stock_fork_nmm === "number"
+                      ? `fork ${c.stock_fork_nmm}`
+                      : null,
+                    typeof c.stock_shock_nmm === "number"
+                      ? `shock ${c.stock_shock_nmm}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ");
+                  return `Your weight suggests ${dir} fork and shock springs than stock (${rates} N/mm) — a suspension shop can spec the exact rates.`;
+                }
+                const rate =
+                  c.component === "shock" ? c.stock_shock_nmm : c.stock_fork_nmm;
+                const rateStr = typeof rate === "number" ? ` (${rate} N/mm)` : "";
+                return `Your weight suggests a ${dir} ${c.component} spring than stock${rateStr} — a suspension shop can spec the exact rate.`;
+              })()}
+            </Text>
+          </View>
+        ) : null}
 
         {/* Fork card */}
         <BlurCard enabled={shouldBlur} C={C} S={S} title="Fork">

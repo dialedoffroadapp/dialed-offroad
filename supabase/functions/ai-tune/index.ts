@@ -47,6 +47,7 @@ type ZeroInput = {
       hsc_turns_max: number;
       sag_min_mm: number;
       sag_max_mm: number;
+      sag_target_mm?: number; // per-model sag target (lib/sagBounds); optional
       aer_pressure_bar_default?: number;
       aer_pressure_bar_per_10lb?: number;
     };
@@ -69,6 +70,9 @@ type ZeroResult = {
   };
   detected?: { has_air_fork?: boolean; fork_family?: string };
   notes: string[];
+  // Client-computed spring-rate check (lib/modelSpecs). The server never sets it,
+  // but safeShape passes it through if present so it's never silently dropped.
+  spring_check?: unknown;
 };
 
 type Discipline = "mx" | "enduro" | "mixed";
@@ -341,6 +345,19 @@ function baselineAirBar(
 
 // Sag baseline
 function baselineSagMm(z: ZeroInput["input"], discipline: Discipline): number {
+  const g = z.guardrails;
+  // Per-model path: when the client sends a resolved target (from a verified
+  // bike_models row via lib/sagBounds), honor it + the model's bounds. The
+  // model's stock sag is authoritative — sag is preload-set for the rider's
+  // weight to hit it — so no discipline literals or rider adjustment here.
+  if (g && typeof g.sag_target_mm === "number") {
+    const lo = typeof g.sag_min_mm === "number" ? g.sag_min_mm : 95;
+    const hi = typeof g.sag_max_mm === "number" ? g.sag_max_mm : 112;
+    return clampInt(g.sag_target_mm, lo, hi);
+  }
+
+  // v1 fallback — UNCHANGED, preserves the byte-identical regression. Only hit
+  // by clients that don't send sag_target_mm (pre-consolidation clients / tests).
   const wf = weightFactor(z);
   const intensity = intensityFactor(z);
 
@@ -484,6 +501,9 @@ export function safeShape(
       partial.fork.air_pressure_bar.toFixed(2)
     );
   }
+  // Pass through a client-computed spring_check if one ever rides in (whitelist
+  // reconstruction otherwise drops unknown fields).
+  if (partial.spring_check !== undefined) out.spring_check = partial.spring_check;
   return out;
 }
 
