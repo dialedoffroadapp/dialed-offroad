@@ -30,6 +30,23 @@ export type FeedbackProtection = {
 // consumers distinguish entries by the presence of the `protect` flag.
 export type FeedbackEntry = FeedbackSymptom | FeedbackProtection;
 
+// Flat, cohort-query-friendly view of a tune's settings. Shares its key
+// vocabulary with settings_delta (see migration 20260714120000) so
+// recommended_settings, applied_settings and settings_delta all read the same.
+export type SettingsSnapshot = {
+  fork_comp: number | null;
+  fork_reb: number | null;
+  fork_air: number | null;
+  shock_lsc: number | null;
+  shock_hsc: number | null;
+  shock_reb: number | null;
+  shock_sag: number | null;
+};
+
+// Per-circuit change vs the parent version. Computed server-side by a BEFORE
+// INSERT trigger (assign_setup_version_delta) — never written by the client.
+export type SettingsDelta = Partial<Record<keyof SettingsSnapshot, number>>;
+
 export type SetupVersionRow = {
   id: string;
   user_id: string;
@@ -48,6 +65,9 @@ export type SetupVersionRow = {
   notes: string[];
   terrain: string | null;
   context: Tune2Context | null;
+  recommended_settings: SettingsSnapshot | null;
+  applied_settings: SettingsSnapshot | null;
+  settings_delta: SettingsDelta | null;
   created_at: string;
 };
 
@@ -67,7 +87,7 @@ export const VERSION_COLUMNS =
   "id, user_id, bike_id, version_number, source, parent_version_id, " +
   "restored_from_version_id, fork_comp_clicks, fork_reb_clicks, fork_air_bar, " +
   "shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm, notes, terrain, " +
-  "context, created_at";
+  "context, recommended_settings, applied_settings, settings_delta, created_at";
 
 async function requireUserId(): Promise<string> {
   const { data } = await supabase.auth.getUser();
@@ -76,8 +96,25 @@ async function requireUserId(): Promise<string> {
   return id;
 }
 
+/** A tune's settings as a flat snapshot (same keys as settings_delta). */
+function settingsSnapshot(tune: ZeroTuneResult): SettingsSnapshot {
+  return {
+    fork_comp: tune.fork.comp_clicks,
+    fork_reb: tune.fork.reb_clicks,
+    fork_air:
+      typeof tune.fork.air_pressure_bar === "number"
+        ? tune.fork.air_pressure_bar
+        : null,
+    shock_lsc: tune.shock.lsc_clicks,
+    shock_hsc: tune.shock.hsc_turns,
+    shock_reb: tune.shock.reb_clicks,
+    shock_sag: tune.shock.sag_mm,
+  };
+}
+
 /** Flatten a ZeroTuneResult into setup_versions columns. */
 function tuneColumns(tune: ZeroTuneResult) {
+  const snapshot = settingsSnapshot(tune);
   return {
     fork_comp_clicks: tune.fork.comp_clicks,
     fork_reb_clicks: tune.fork.reb_clicks,
@@ -90,6 +127,11 @@ function tuneColumns(tune: ZeroTuneResult) {
     shock_reb_clicks: tune.shock.reb_clicks,
     sag_mm: tune.shock.sag_mm,
     notes: tune.notes ?? [],
+    // Engine proposal snapshot. applied == recommended until an override UI
+    // ships; kept distinct now so that day needs no migration. settings_delta
+    // is omitted here on purpose — the DB trigger computes it server-side.
+    recommended_settings: snapshot,
+    applied_settings: snapshot,
   };
 }
 
