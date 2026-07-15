@@ -136,7 +136,44 @@ join lateral (
   limit 1
 ) m on true;
 
--- ── 5) Drop the old exact `year` column (LAST, after reseed) ─────────────────
+-- ── 5) Rebuild the dependent view, then drop the old exact `year` column ─────
+-- public.v_bikes_with_stock is a prod-only view (consumed by
+-- components/TrialMomentCard.tsx, which reads make/model/nickname + stock_fork_comp
+-- by bike id). It joined bikes -> bike_models on m.year = b.year, which blocks
+-- dropping bike_models.year. Rebuild it to join on the canonical bikes.model_id
+-- link, falling back to make/model + year-range for bikes whose model_id hasn't
+-- resolved yet. Output columns/order/types are unchanged (create-or-replace keeps
+-- the same shape + existing grants); only the join changes.
+--
+-- Behavior note: the reseed intentionally carries no stock CLICKER values (the CSV
+-- has spring rates, not clicks), so m.stock_fork_comp/reb/shock_comp/reb are null
+-- on the new rows — the view's stock clicker columns read null (TrialMomentCard's
+-- stockDeltaClicks stat degrades to "no stat available", which it already handles)
+-- until those columns are seeded in a later pass. stock_sag_mm IS populated.
+create or replace view public.v_bikes_with_stock as
+select
+  b.id, b.user_id, b.make, b.model, b.year, b.tires, b.notes, b.is_primary,
+  b.created_at, b.nickname, b.updated_at,
+  b.current_fork_comp, b.current_fork_reb, b.current_shock_comp,
+  b.current_shock_reb, b.current_sag_mm,
+  b.fork_min, b.fork_max, b.shock_min, b.shock_max,
+  m.stock_fork_comp, m.stock_fork_reb, m.stock_shock_comp, m.stock_shock_reb,
+  m.stock_sag_mm,
+  coalesce(b.fork_min, m.fork_min)   as v_fork_min,
+  coalesce(b.fork_max, m.fork_max)   as v_fork_max,
+  coalesce(b.shock_min, m.shock_min) as v_shock_min,
+  coalesce(b.shock_max, m.shock_max) as v_shock_max
+from public.bikes b
+left join public.bike_models m on (
+  m.id = b.model_id
+  or (
+    b.model_id is null
+    and lower(m.make) = lower(b.make)
+    and lower(m.model) = lower(b.model)
+    and b.year >= m.year_start
+    and b.year <= coalesce(m.year_end, 9999)
+  )
+);
 
 alter table public.bike_models drop column if exists year;
 
