@@ -42,7 +42,7 @@ rec("bike_models authed SELECT allowed (public reference)", bmRead.status === 20
 const bmWrite = await rest("POST", "/rest/v1/bike_models", { jwt: A.jwt, body: { make: "x", model: "y", year: 2024 } });
 rec("bike_models authed INSERT blocked (no write policy)", bmWrite.status === 403 || bmWrite.body?.code === "42501", `status=${bmWrite.status} code=${bmWrite.body?.code}`);
 
-// blocked_words / bike_setups: no client usage; confirm not writable + read posture.
+// blocked_words: no client usage; confirm not writable + read posture.
 const bwRead = await rest("GET", "/rest/v1/blocked_words?limit=1", { jwt: A.jwt });
 rec("blocked_words authed SELECT", `${bwRead.status}`, `status=${bwRead.status} rows=${Array.isArray(bwRead.body) ? bwRead.body.length : "n/a"}`);
 const bwWrite = await rest("POST", "/rest/v1/blocked_words", { jwt: A.jwt, body: { word: "x" } });
