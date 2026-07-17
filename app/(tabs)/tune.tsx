@@ -74,6 +74,7 @@ type Bike = {
   year: number;
   nickname: string | null;
   is_primary: boolean | null;
+  model_id?: string | null;
 };
 
 type ProfileMeta = {
@@ -759,7 +760,7 @@ export default function TuneScreen() {
 
       const { data, error } = await supabase
         .from("bikes")
-        .select("id, make, model, year, nickname, is_primary")
+        .select("id, make, model, year, nickname, is_primary, model_id")
         .eq("user_id", user.id)
         .order("is_primary", { ascending: false })
         .order("updated_at", { ascending: false });
@@ -1006,6 +1007,7 @@ export default function TuneScreen() {
       // and no spring card; never blocks generation.
       const modelSpecs = await fetchModelSpecs({
         id: selectedBikeId ?? null,
+        model_id: bikes.find((b) => b.id === selectedBikeId)?.model_id ?? null,
         make: input.make ?? null,
         model: input.model ?? null,
         year: input.year ?? null,

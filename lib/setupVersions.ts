@@ -142,7 +142,11 @@ export function settingsFromRecommended(
   rec: RecommendedSettings | null | undefined
 ): SettingsSnapshot | null {
   if (!rec || typeof rec !== "object") return null;
-  if ("settings" in rec) return (rec as any).settings ?? null;
+  // Wrapper shape — detect by EITHER key, so a malformed row like
+  // {"context": null} (settings key dropped by a buggy writer; such rows exist
+  // in prod) reads as "no settings" instead of being misreturned as a bare
+  // snapshot. Bare snapshots only ever carry circuit keys (fork_comp, …).
+  if ("settings" in rec || "context" in rec) return (rec as any).settings ?? null;
   return rec as SettingsSnapshot;
 }
 

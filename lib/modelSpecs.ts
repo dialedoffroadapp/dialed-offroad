@@ -45,40 +45,82 @@ const cacheKey = (b: SpecBike) =>
   (b.id && isUuid(b.id) ? b.id : null) ?? `${b.make ?? ""}|${b.model ?? ""}|${b.year ?? ""}`;
 
 /**
- * The verified bike_models spec for a bike, or null. Uses bike.model_id when set,
- * else resolveModelId(make/model/year) — self-healing the bike row's model_id
- * when it resolves (only for a persisted uuid bike; guest-local ids aren't in
- * the DB). Gated on spec_verified. Cached per bike per session. Fail-open.
+ * The verified bike_models spec for a bike, or null. Primary path is the bike
+ * row's model_id (backfilled or self-healed) — looked up from the DB when the
+ * in-memory bike object doesn't carry it. Fallback: resolveModelId on
+ * make/model/year, self-healing the bike row when it resolves (only for a
+ * persisted uuid bike; guest-local ids aren't in the DB). Gated on
+ * spec_verified. Fail-open — but only DEFINITIVE outcomes are cached: a
+ * transient query error must not poison the session cache with null.
  */
 export async function fetchModelSpecs(bike: SpecBike): Promise<ModelSpecs | null> {
   const key = cacheKey(bike);
   if (cache.has(key)) return cache.get(key) ?? null;
 
   let specs: ModelSpecs | null = null;
+  let definitive = true;
   try {
     let modelId = bike.model_id ?? null;
+
+    // Primary path: the bike row's model_id. Callers rarely have it in memory
+    // (bike lists don't select it), so fetch it — otherwise a backfilled
+    // model_id is dead weight and everything falls through to name matching.
+    if (!modelId && bike.id && isUuid(bike.id)) {
+      const { data: row, error } = await supabase
+        .from("bikes")
+        .select("model_id")
+        .eq("id", bike.id)
+        .maybeSingle();
+      if (error) {
+        definitive = false;
+        console.warn("modelSpecs: bikes.model_id lookup failed", {
+          bike: key,
+          code: (error as any)?.code,
+          message: error.message,
+        });
+      }
+      modelId = (row as any)?.model_id ?? null;
+    }
+
     if (!modelId && bike.make && bike.model) {
       modelId = await resolveModelId(bike.make, bike.model, bike.year ?? undefined);
       if (modelId && bike.id && isUuid(bike.id)) {
         // Self-heal pre-backfill bikes (best-effort; never awaited into the flow).
         void supabase.from("bikes").update({ model_id: modelId }).eq("id", bike.id);
       }
+      // resolveModelId is itself fail-open (null for no-match AND for transient
+      // errors) — a null from it is not a definitive miss, so don't cache it.
+      if (!modelId) definitive = false;
     }
+
     if (modelId) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("bike_models")
         .select(SPEC_COLS)
         .eq("id", modelId)
         .maybeSingle();
+      if (error) {
+        definitive = false;
+        console.warn("modelSpecs: bike_models fetch failed", {
+          model_id: modelId,
+          code: (error as any)?.code,
+          message: error.message,
+        });
+      }
       const row = (data as unknown as ModelSpecs) ?? null;
       // GATE: only trust verified rows (future-proofs unverified batch additions).
       specs = row && row.spec_verified === true ? row : null;
     }
-  } catch {
+  } catch (err: any) {
     specs = null;
+    definitive = false;
+    console.warn("modelSpecs: fetchModelSpecs failed open", {
+      bike: key,
+      message: err?.message ?? String(err),
+    });
   }
 
-  cache.set(key, specs);
+  if (definitive) cache.set(key, specs);
   return specs;
 }
 

@@ -166,11 +166,29 @@ export async function autoCreateBaselineFromPendingTune(): Promise<AutoBaselineR
       ? meta.context.terrain[0] ?? null
       : meta?.context?.terrain ?? null;
 
+    // Engine-context capture: tune.tsx stores the resolved model + sag inputs
+    // in the pending meta (meta.spec) and the spring check on the tune itself —
+    // carry them into recommended_settings.context like the manual-save path.
+    const spec = meta?.spec ?? null;
     const version = await createBaselineVersion({
       bikeId,
       tune,
       terrain,
       context: meta?.context ?? null,
+      recommendedContext: {
+        model_id: spec?.model_id ?? null,
+        spec_verified: !!spec?.spec_verified,
+        sag_target_mm: spec?.sag_target_mm ?? null,
+        sag_bounds: spec?.sag_bounds ?? null,
+        rider_weight_lbs: meta?.context?.rider_weight_lbs ?? null,
+        spring_check: tune.spring_check
+          ? {
+              status: tune.spring_check.status,
+              direction: tune.spring_check.direction,
+            }
+          : null,
+        engine: "zero_baseline_v1",
+      },
     });
 
     const { data: bike } = await supabase
