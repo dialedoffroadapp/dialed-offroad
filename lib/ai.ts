@@ -4,6 +4,8 @@
 
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { SpringCheck } from "./modelSpecs";
+import { DEFAULT_SAG, SagBounds } from "./sagBounds";
 import { isUuid } from "./uuid";
 
 /**
@@ -81,6 +83,9 @@ export type ZeroTuneResult = {
     fork_family?: string;       // "WP XACT AER 48", "KYB coil", etc.
   };
   notes: string[];              // short guidance list
+  // Client-computed (lib/modelSpecs) but carried on the result so it persists
+  // with the tune and survives normalizeResult (see below).
+  spring_check?: SpringCheck;
 };
 
 /* ------------------------------------------------------------------ */
@@ -170,7 +175,14 @@ export type Tune2Context = {
  * Calls the 'ai-tune' Edge Function with a zero-based prompt contract.
  * The function should apply guardrails (clicker/sag clamps) and return structured JSON.
  */
-export async function generateTune(input: ZeroTuneInput): Promise<ZeroTuneResult> {
+export async function generateTune(
+  input: ZeroTuneInput,
+  sagBounds: SagBounds = DEFAULT_SAG,
+  // Spec-verified fork type (bike_models.has_air_fork). When boolean it is
+  // authoritative on the edge — the rider toggle and the model-name heuristic
+  // only decide for unmatched bikes.
+  hasAirFork?: boolean
+): Promise<ZeroTuneResult> {
   const payload = {
     mode: "zero_baseline_v1" as const,
     input: {
@@ -199,14 +211,14 @@ export async function generateTune(input: ZeroTuneInput): Promise<ZeroTuneResult
       wants_air_fork: input.wants_air_fork ?? undefined,
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
-      guardrails: defaultGuardrails(),
+      guardrails: defaultGuardrails(sagBounds, hasAirFork),
     },
   };
 
   const { data, error } = await supabase.functions.invoke("ai-tune", { body: payload });
   if (error) throw new Error(await edgeErrorMessage(error, "AI tune failed"));
 
-  return normalizeResult(data as Partial<ZeroTuneResult>);
+  return normalizeResult(data as Partial<ZeroTuneResult>, sagBounds);
 }
 
 /**
@@ -371,17 +383,24 @@ async function fetchLastOutcome(
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function defaultGuardrails() {
+function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
   return {
     clicks_min: 0,
     clicks_max: 30,
     hsc_turns_min: 0,
     hsc_turns_max: 3,
-    sag_min_mm: 95,
-    sag_max_mm: 112,
+    // Sag bounds + target come from lib/sagBounds (per-model or DEFAULT_SAG) —
+    // the edge (baselineSagMm/safeShape/prompt) and the client's final clamp all
+    // read these SAME values, so per-model sag is never clobbered.
+    sag_min_mm: sag.min,
+    sag_max_mm: sag.max,
+    sag_target_mm: sag.target,
     // Air fork defaults the backend can scale by weight if applicable:
     aer_pressure_bar_default: 10.6, // ≈154 psi baseline for ~185 lb
     aer_pressure_bar_per_10lb: 0.2, // ~+/-0.2 bar per 10 lb delta
+    // Spec-verified fork type — authoritative over toggle/heuristic on the
+    // edge; omitted entirely when the bike is unmatched.
+    ...(typeof hasAirFork === "boolean" ? { has_air_fork: hasAirFork } : {}),
   };
 }
 
@@ -437,13 +456,16 @@ function clampTenScale(v: any): number | undefined {
  *   even if the model forgot to set that flag, so the UI always sees it.
  * - Clickers, sag, and HSC are all clamped into safe rideable ranges.
  */
-function normalizeResult(result: Partial<ZeroTuneResult>): ZeroTuneResult {
+function normalizeResult(
+  result: Partial<ZeroTuneResult>,
+  bounds: SagBounds = DEFAULT_SAG
+): ZeroTuneResult {
   const forkComp = asInt(result?.fork?.comp_clicks, 12);
   const forkReb = asInt(result?.fork?.reb_clicks, 12);
   const shockLSC = asInt(result?.shock?.lsc_clicks, 12);
   const shockReb = asInt(result?.shock?.reb_clicks, 14);
   const shockHSC = asFloat(result?.shock?.hsc_turns, 1.5, 1);
-  const sag = asInt(result?.shock?.sag_mm, 105);
+  const sag = asInt(result?.shock?.sag_mm, bounds.target);
 
   // Respect any sane air value the backend produced.
   const airBarRaw = safeBar(result?.fork?.air_pressure_bar);
@@ -461,7 +483,8 @@ function normalizeResult(result: Partial<ZeroTuneResult>): ZeroTuneResult {
     lsc_clicks: clamp(shockLSC, 0, 30),
     hsc_turns: clamp(shockHSC, 0, 3),
     reb_clicks: clamp(shockReb, 0, 30),
-    sag_mm: clamp(sag, 90, 120),
+    // Same bounds sent in guardrails — never a wider hardcoded window.
+    sag_mm: clamp(sag, bounds.min, bounds.max),
   };
 
   const notesArray = Array.isArray(result?.notes)
@@ -476,5 +499,8 @@ function normalizeResult(result: Partial<ZeroTuneResult>): ZeroTuneResult {
       fork_family: result?.detected?.fork_family || undefined,
     },
     notes: notesArray,
+    // Preserve a client-attached spring_check through the rebuild (unknown fields
+    // are otherwise dropped here).
+    spring_check: result?.spring_check,
   };
 }

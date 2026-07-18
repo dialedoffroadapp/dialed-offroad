@@ -47,6 +47,8 @@ type ZeroInput = {
       hsc_turns_max: number;
       sag_min_mm: number;
       sag_max_mm: number;
+      sag_target_mm?: number; // per-model sag target (lib/sagBounds); optional
+      has_air_fork?: boolean; // spec-verified fork type — authoritative over toggle/heuristic when present
       aer_pressure_bar_default?: number;
       aer_pressure_bar_per_10lb?: number;
     };
@@ -69,6 +71,9 @@ type ZeroResult = {
   };
   detected?: { has_air_fork?: boolean; fork_family?: string };
   notes: string[];
+  // Client-computed spring-rate check (lib/modelSpecs). The server never sets it,
+  // but safeShape passes it through if present so it's never silently dropped.
+  spring_check?: unknown;
 };
 
 type Discipline = "mx" | "enduro" | "mixed";
@@ -341,6 +346,19 @@ function baselineAirBar(
 
 // Sag baseline
 function baselineSagMm(z: ZeroInput["input"], discipline: Discipline): number {
+  const g = z.guardrails;
+  // Per-model path: when the client sends a resolved target (from a verified
+  // bike_models row via lib/sagBounds), honor it + the model's bounds. The
+  // model's stock sag is authoritative — sag is preload-set for the rider's
+  // weight to hit it — so no discipline literals or rider adjustment here.
+  if (g && typeof g.sag_target_mm === "number") {
+    const lo = typeof g.sag_min_mm === "number" ? g.sag_min_mm : 95;
+    const hi = typeof g.sag_max_mm === "number" ? g.sag_max_mm : 112;
+    return clampInt(g.sag_target_mm, lo, hi);
+  }
+
+  // v1 fallback — UNCHANGED, preserves the byte-identical regression. Only hit
+  // by clients that don't send sag_target_mm (pre-consolidation clients / tests).
   const wf = weightFactor(z);
   const intensity = intensityFactor(z);
 
@@ -459,7 +477,7 @@ export function safeShape(
     hscMax
   );
   const sag = clamp(
-    Math.round(Number(partial.shock?.sag_mm ?? 105)),
+    Math.round(Number(partial.shock?.sag_mm ?? g?.sag_target_mm ?? 105)),
     sagMin,
     sagMax
   );
@@ -484,6 +502,18 @@ export function safeShape(
       partial.fork.air_pressure_bar.toFixed(2)
     );
   }
+  // Spec-verified fork type is authoritative: an AI-guessed air fork can never
+  // survive on a confirmed-coil bike (and a confirmed air fork is flagged even
+  // if the model forgot to).
+  if (g?.has_air_fork === false) {
+    delete out.fork.air_pressure_bar;
+    if (out.detected) out.detected.has_air_fork = false;
+  } else if (g?.has_air_fork === true && out.detected) {
+    out.detected.has_air_fork = true;
+  }
+  // Pass through a client-computed spring_check if one ever rides in (whitelist
+  // reconstruction otherwise drops unknown fields).
+  if (partial.spring_check !== undefined) out.spring_check = partial.spring_check;
   return out;
 }
 
@@ -496,6 +526,8 @@ function buildSystemPrompt(z: ZeroInput["input"]): string {
   const hscMax = z.guardrails?.hsc_turns_max ?? 3;
   const sagMin = z.guardrails?.sag_min_mm ?? 95;
   const sagMax = z.guardrails?.sag_max_mm ?? 112;
+  const sagTarget = z.guardrails?.sag_target_mm;
+  const airSpec = z.guardrails?.has_air_fork;
 
   const lines = [
     "You are a world-class off-road suspension tuner for modern MX and enduro bikes.",
@@ -522,10 +554,25 @@ function buildSystemPrompt(z: ZeroInput["input"]): string {
     `- Clamp all clickers between ${clicksMin} and ${clicksMax} clicks out.`,
     `- Clamp shock high-speed compression (hsc_turns) between ${hscMin} and ${hscMax} turns out.`,
     `- Clamp sag between ${sagMin} and ${sagMax} mm unless goals clearly require being slightly stiffer/softer.`,
+    // Per-model target (verified bike_models row). Without an explicit target
+    // the model tends to echo the generic 105 from the example output.
+    ...(typeof sagTarget === "number"
+      ? [
+          `- Target riding sag for THIS bike is ${sagTarget} mm. Set shock.sag_mm to ${sagTarget} unless the rider's goals/issues clearly justify a small deviation within the clamp range.`,
+        ]
+      : []),
     "",
     "Bike & fork rules:",
-    "- If the bike is likely to have WP AER/XACT air forks OR the user indicates they have an air fork, you may include fork.air_pressure_bar.",
-    "- If you are not confident it's an air fork and the user did not say it is, omit air_pressure_bar.",
+    ...(typeof airSpec === "boolean"
+      ? [
+          airSpec
+            ? "- This bike is confirmed to have a WP AER/XACT-style air fork — include fork.air_pressure_bar and set detected.has_air_fork to true."
+            : "- This bike is confirmed to have a COIL fork — do NOT include fork.air_pressure_bar and do not mark it as an air fork.",
+        ]
+      : [
+          "- If the bike is likely to have WP AER/XACT air forks OR the user indicates they have an air fork, you may include fork.air_pressure_bar.",
+          "- If you are not confident it's an air fork and the user did not say it is, omit air_pressure_bar.",
+        ]),
     "- Never suggest internal revalving, oil changes, or hardware modifications; only clicker changes, sag target, and (if applicable) air pressure guidance.",
     "",
     "Tuning priorities:",
@@ -757,9 +804,14 @@ function buildPersonalBaselineNotes(
 function buildFallback(z: ZeroInput["input"]): Partial<ZeroResult> {
   const discipline = inferDiscipline(z);
 
-  // Respect both the heuristic AND the user toggle
+  // Spec-verified fork type (guardrails) is authoritative; the user toggle
+  // and the model-name heuristic only decide for unmatched bikes.
+  const specAER = z.guardrails?.has_air_fork;
   const heuristicAER = isAERFork(z.make, z.model);
-  const hasAER = z.wants_air_fork === true || heuristicAER;
+  const hasAER =
+    typeof specAER === "boolean"
+      ? specAER
+      : z.wants_air_fork === true || heuristicAER;
 
   const forkClicks = baselineForkClicks(z, discipline);
   const shockClicks = baselineShock(z, discipline);

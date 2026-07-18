@@ -93,6 +93,63 @@ function tuneColumns(tune: ZeroTuneResult) {
   };
 }
 
+/** A tune's settings as a flat snapshot (recommended_settings.settings shape). */
+export type SettingsSnapshot = {
+  fork_comp: number | null;
+  fork_reb: number | null;
+  fork_air: number | null;
+  shock_lsc: number | null;
+  shock_hsc: number | null;
+  shock_reb: number | null;
+  shock_sag: number | null;
+};
+
+function settingsSnapshot(tune: ZeroTuneResult): SettingsSnapshot {
+  return {
+    fork_comp: tune.fork.comp_clicks,
+    fork_reb: tune.fork.reb_clicks,
+    fork_air:
+      typeof tune.fork.air_pressure_bar === "number"
+        ? tune.fork.air_pressure_bar
+        : null,
+    shock_lsc: tune.shock.lsc_clicks,
+    shock_hsc: tune.shock.hsc_turns,
+    shock_reb: tune.shock.reb_clicks,
+    shock_sag: tune.shock.sag_mm,
+  };
+}
+
+// The engine-context bundle recorded alongside the settings (the training link).
+export type RecommendedContext = {
+  model_id: string | null;
+  spec_verified: boolean;
+  sag_target_mm: number | null;
+  sag_bounds: [number, number] | null;
+  rider_weight_lbs: number | null;
+  spring_check: { status: string; direction?: string } | null;
+  engine: string;
+};
+
+// recommended_settings jsonb: canonical shape is { settings, context }, but prod
+// ALSO contains BARE SettingsSnapshot rows written by the 48h-old store build's
+// live clients until the next release ships. Readers MUST tolerate BOTH shapes.
+export type RecommendedSettings =
+  | SettingsSnapshot
+  | { settings: SettingsSnapshot; context?: RecommendedContext | null };
+
+/** Settings snapshot from either recommended_settings shape (dual-shape safe). */
+export function settingsFromRecommended(
+  rec: RecommendedSettings | null | undefined
+): SettingsSnapshot | null {
+  if (!rec || typeof rec !== "object") return null;
+  // Wrapper shape — detect by EITHER key, so a malformed row like
+  // {"context": null} (settings key dropped by a buggy writer; such rows exist
+  // in prod) reads as "no settings" instead of being misreturned as a bare
+  // snapshot. Bare snapshots only ever carry circuit keys (fork_comp, …).
+  if ("settings" in rec || "context" in rec) return (rec as any).settings ?? null;
+  return rec as SettingsSnapshot;
+}
+
 /**
  * createBaselineVersion
  * Insert a version row for a Tune One result. version_number is assigned by a
@@ -103,6 +160,8 @@ export async function createBaselineVersion(params: {
   tune: ZeroTuneResult;
   terrain?: string | null;
   context?: Tune2Context | null;
+  // Engine-context capture: recorded in recommended_settings.context.
+  recommendedContext?: RecommendedContext | null;
 }): Promise<SetupVersionRow> {
   const userId = await requireUserId();
 
@@ -120,6 +179,12 @@ export async function createBaselineVersion(params: {
       terrain: params.terrain ?? null,
       context: params.context ?? null,
       ...tuneColumns(params.tune),
+      // Canonical { settings, context } — the engine's inputs recorded alongside
+      // its outputs. (The delta trigger diffs the typed columns, not this jsonb.)
+      recommended_settings: {
+        settings: settingsSnapshot(params.tune),
+        context: params.recommendedContext ?? null,
+      },
     })
     .select(VERSION_COLUMNS)
     .single<SetupVersionRow>();

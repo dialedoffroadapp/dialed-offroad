@@ -33,6 +33,7 @@ export type UsageEvent =
   | "session_deleted"
   | "bike_created"
   | "bike_updated"
+  | "bike_search_no_result"
   | "preset_applied"
   | "sign_in"
   | "sign_up"

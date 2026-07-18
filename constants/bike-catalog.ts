@@ -1,71 +1,101 @@
 // constants/bike-catalog.ts
-// Tunable-suspension models (MX + XC/EXC/Enduro). Expand anytime.
+// Canonical make → model list. Single source of truth for BOTH the garage
+// picker AND on-save canonicalization / model_id resolution (see lib/bikes.ts:
+// normalizeBikeStrings / resolveModelId).
+//
+// Naming here is the CANONICAL spelling. On-save normalization maps
+// case/space/hyphen variants of the SAME model onto these strings and never
+// merges genuinely different models — KTM XC vs XC-W vs XC-F vs XCF-W are
+// different bikes and stay distinct. Expand anytime; keep spellings canonical.
 
 export const BIKE_CATALOG: Record<string, string[]> = {
   KTM: [
-    // MX (AER forks on SX-F/SX 125-450 MY ~2016+)
-    "125 SX", "150 SX",
-    "250 SX", "300 SX",
-    "250 SX-F", "350 SX-F", "450 SX-F",
-    "250 SX-F Factory", "450 SX-F Factory",
-    "250 XC-F", "350 XC-F", "450 XC-F",
+    // Minis
+    "50 SX", "65 SX", "85 SX", "85 SX Big Wheel",
+    // SX (2T MX)
+    "125 SX", "150 SX", "250 SX", "300 SX",
+    // SX-F (4T MX)
+    "250 SX-F", "350 SX-F", "450 SX-F", "250 SX-F Factory", "450 SX-F Factory",
+    // XC (2T cross-country)
     "125 XC", "250 XC", "300 XC",
-    // Enduro (mostly XPLOR coil)
-    "250 EXC-F", "350 EXC-F", "450 EXC-F", "500 EXC-F",
-    "250 EXC", "300 EXC", "300 EXC Hardenduro",
+    // XC-F (4T cross-country)
+    "250 XC-F", "350 XC-F", "450 XC-F",
+    // XC-W (2T off-road / enduro)
+    "150 XC-W", "250 XC-W", "300 XC-W",
+    // XCF-W (4T off-road / enduro)
     "250 XCF-W", "350 XCF-W", "500 XCF-W",
+    // EXC (2T enduro)
+    "250 EXC", "300 EXC", "300 EXC Hardenduro",
+    // EXC-F (4T enduro)
+    "250 EXC-F", "350 EXC-F", "450 EXC-F", "500 EXC-F",
   ],
 
   Husqvarna: [
-    // MX
+    // Minis
+    "TC 50", "TC 65", "TC 85", "TC 85 Big Wheel",
+    // TC (2T MX)
     "TC 125", "TC 250",
+    // FC (4T MX)
     "FC 250", "FC 350", "FC 450",
-    "FX 350", "FX 450",
-    // Enduro
+    // TX / FX (cross-country)
+    "TX 300", "FX 350", "FX 450",
+    // TE (2T enduro)
     "TE 150", "TE 250", "TE 300",
+    // FE (4T enduro)
     "FE 250", "FE 350", "FE 450", "FE 501",
   ],
 
   GasGas: [
-    // MX
+    // Minis
+    "MC 50", "MC 65", "MC 85", "MC 85 Big Wheel",
+    // MC (2T MX)
     "MC 125", "MC 250",
+    // MC-F (4T MX)
     "MC 250F", "MC 350F", "MC 450F",
-    "EX 250F", "EX 350F", "EX 450F",
-    // Enduro
-    "EC 250", "EC 300",
-    "EC 250F", "EC 350F",
+    // EX (cross-country)
+    "EX 250", "EX 300", "EX 250F", "EX 350F", "EX 450F",
+    // EC (enduro)
+    "EC 250", "EC 300", "EC 250F", "EC 350F",
   ],
 
   Yamaha: [
-    // MX
+    // Minis
+    "YZ65", "YZ85", "YZ85LW", "YZ85 Big Wheel",
+    // YZ (2T MX)
     "YZ125", "YZ250",
+    // YZ-F (4T MX)
     "YZ250F", "YZ450F",
-    // Cross-country / Enduro
-    "YZ250X", "YZ125X",
+    // Cross-country
+    "YZ125X", "YZ250X", "YZ250FX", "YZ450FX",
+    // Enduro
     "WR250F", "WR450F",
-    "YZ250FX", "YZ450FX",
   ],
 
   Honda: [
+    // Minis
+    "CRF110F", "CRF125F", "CRF125FB", "CRF150R", "CRF150RB",
+    "CR80R", "CR85R", "CR85RB",
     // MX
     "CRF250R", "CRF450R", "CRF450RWE",
     // Off-road / Enduro
-    "CRF250RX", "CRF450RX",
-    "CRF450X", "CRF450RL",
+    "CRF250RX", "CRF450RX", "CRF450X", "CRF450RL",
   ],
 
   Kawasaki: [
+    // Minis
+    "KX65", "KX85", "KX85-II", "KX100",
     // MX
     "KX250", "KX450",
     // XC / Enduro
-    "KX250X", "KX450X",
-    // (Optional) KLX450R (older enduro coil)
+    "KX250X", "KX450X", "KLX450R",
   ],
 
   Suzuki: [
+    // Minis
+    "RM85", "RM85L",
     // MX
     "RM-Z250", "RM-Z450",
-    // Off-road (older)
+    // Off-road
     "RMX450Z",
   ],
 
@@ -82,11 +112,12 @@ export const BIKE_CATALOG: Record<string, string[]> = {
   ],
 
   "TM Racing": [
-    "MX 125", "MX 250",
-    "MX 250 4T", "MX 300 4T", "MX 450 4T",
+    "MX 125", "MX 250", "MX 250 4T", "MX 300 4T", "MX 450 4T",
     "EN 250", "EN 300", "EN 250 4T", "EN 300 4T", "EN 450 4T",
   ],
+
+  Stark: ["Varg MX", "Varg EX", "Varg SM"],
 };
 
-// Optional brand order for UI
+// Brand order for the picker's make-selection list.
 export const BIKE_BRANDS = Object.keys(BIKE_CATALOG);

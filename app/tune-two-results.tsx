@@ -18,6 +18,7 @@ import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
 import { createBaselineVersion } from "../lib/setupVersions";
 import { ZeroTuneResult } from "../lib/ai";
+import { normalizeBikeStrings, resolveModelId } from "../lib/bikes";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import {
@@ -422,13 +423,23 @@ export default function TuneTwoResultScreen() {
       if (match) {
         newBikeId = match.id;
       } else {
+        const { make: canonMake, model: canonModel } = normalizeBikeStrings(
+          bikeInfo.make,
+          bikeInfo.model
+        );
+        const model_id = await resolveModelId(
+          canonMake,
+          canonModel,
+          bikeInfo.year
+        );
         const { data: inserted, error: insertErr } = await supabase
           .from("bikes")
           .insert({
             user_id: auth.user.id,
-            make: bikeInfo.make,
-            model: bikeInfo.model,
+            make: canonMake,
+            model: canonModel,
             year: bikeInfo.year,
+            model_id,
           })
           .select("id")
           .single();
