@@ -1015,9 +1015,23 @@ export default function TuneScreen() {
       const sagBounds = resolveSagBounds(modelSpecs);
       const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
 
+      // Verified spec is authoritative for fork type — a stale per-bike toggle
+      // or the model-name heuristic must never air-fork a coil bike (or vice
+      // versa). Toggle/heuristic still decide for unmatched bikes.
+      const specAirFork =
+        typeof modelSpecs?.has_air_fork === "boolean"
+          ? modelSpecs.has_air_fork
+          : undefined;
+      const effectiveAirFork = specAirFork ?? wantsAirFork;
+      if (specAirFork !== undefined) {
+        input.wants_air_fork = specAirFork;
+        // Heal the on-screen toggle so the next visit shows the true fork type.
+        if (specAirFork !== wantsAirFork) setWantsAirFork(specAirFork);
+      }
+
       const GENERATE_TIMEOUT_MS = 30_000;
       const s: ZeroTuneResult = await Promise.race([
-        generateTune(input, sagBounds),
+        generateTune(input, sagBounds, specAirFork),
         new Promise<never>((_resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error("This is taking longer than expected — try again")),
@@ -1033,6 +1047,13 @@ export default function TuneScreen() {
       // Carry the client-computed spring check on the result so it renders on
       // tune-results and is captured in the setup_version context.
       if (springCheck) s.spring_check = springCheck;
+      // Spec-confirmed coil bikes never carry an air-fork reading — enforce
+      // client-side too, so a stale edge deploy or an AI guess can't leak an
+      // AER chip onto a coil bike.
+      if (specAirFork === false) {
+        delete (s.fork as any).air_pressure_bar;
+        if (s.detected) s.detected.has_air_fork = false;
+      }
 
       // Persist rider profile after successful generation
       if (user?.id) {
@@ -1046,7 +1067,9 @@ export default function TuneScreen() {
       if (selectedBikeId && user?.id) {
         AsyncStorage.setItem(
           bikeSpecsKey(selectedBikeId),
-          JSON.stringify({ wantsAirFork, zeroed })
+          // effectiveAirFork, not the raw toggle: heals a stale persisted
+          // value once the bike resolves to a verified spec.
+          JSON.stringify({ wantsAirFork: effectiveAirFork, zeroed })
         ).catch(() => {});
       }
 
@@ -1058,7 +1081,7 @@ export default function TuneScreen() {
         rideStyle,
         goals,
         zeroed,
-        wantsAirFork,
+        wantsAirFork: effectiveAirFork,
         make: input.make,
         model: input.model,
         year: input.year,
@@ -1082,7 +1105,7 @@ export default function TuneScreen() {
             track: input.track,
             temp_f: input.temp_f,
             elev_ft: input.elev_ft,
-            wants_air_fork: wantsAirFork,
+            wants_air_fork: effectiveAirFork,
             rider_weight_lbs: weight ? Number(weight) : undefined,
             goals,
             issues: issues.trim() || undefined,

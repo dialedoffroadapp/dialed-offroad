@@ -177,7 +177,11 @@ export type Tune2Context = {
  */
 export async function generateTune(
   input: ZeroTuneInput,
-  sagBounds: SagBounds = DEFAULT_SAG
+  sagBounds: SagBounds = DEFAULT_SAG,
+  // Spec-verified fork type (bike_models.has_air_fork). When boolean it is
+  // authoritative on the edge — the rider toggle and the model-name heuristic
+  // only decide for unmatched bikes.
+  hasAirFork?: boolean
 ): Promise<ZeroTuneResult> {
   const payload = {
     mode: "zero_baseline_v1" as const,
@@ -207,7 +211,7 @@ export async function generateTune(
       wants_air_fork: input.wants_air_fork ?? undefined,
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
-      guardrails: defaultGuardrails(sagBounds),
+      guardrails: defaultGuardrails(sagBounds, hasAirFork),
     },
   };
 
@@ -379,7 +383,7 @@ async function fetchLastOutcome(
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function defaultGuardrails(sag: SagBounds = DEFAULT_SAG) {
+function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
   return {
     clicks_min: 0,
     clicks_max: 30,
@@ -394,6 +398,9 @@ function defaultGuardrails(sag: SagBounds = DEFAULT_SAG) {
     // Air fork defaults the backend can scale by weight if applicable:
     aer_pressure_bar_default: 10.6, // ≈154 psi baseline for ~185 lb
     aer_pressure_bar_per_10lb: 0.2, // ~+/-0.2 bar per 10 lb delta
+    // Spec-verified fork type — authoritative over toggle/heuristic on the
+    // edge; omitted entirely when the bike is unmatched.
+    ...(typeof hasAirFork === "boolean" ? { has_air_fork: hasAirFork } : {}),
   };
 }
 
