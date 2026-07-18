@@ -19,6 +19,7 @@ import { markReminderArrival } from "../lib/reminderArrival";
 import { hasPurchasedThisSession, initPurchases } from "../lib/purchases";
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
+import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 import { darkTheme } from "../constants/theme";
 import { ThemeProvider, useTheme } from "../lib/theme";
 
@@ -341,6 +342,22 @@ function RootInner() {
               // it as true on its first render — no explicit activation needed.)
               await markIntroSeen();
               await setStep("garage_locked");
+              // Fire-and-forget so it never delays the intro→garage transition;
+              // guests are session-less here, so it queues and flushes at signup
+              // (the same path onboarding_tune_generated already relies on).
+              void (async () => {
+                const funnelId = await getOrCreateFunnelId();
+                await logEvent(
+                  "onboarding_intro_completed",
+                  {
+                    funnel_id: funnelId,
+                    onboarding_step: state.onboardingStep,
+                    signed_in: false,
+                    source_route: "/",
+                  },
+                  { allowAnonymous: true, queueIfAnonymous: true }
+                );
+              })();
               // Navigate first, then remove the overlay — both are synchronous
               // calls after the awaits so React 18 batches them in one render.
               // This means the overlay never disappears before the new screen

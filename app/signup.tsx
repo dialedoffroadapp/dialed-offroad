@@ -117,7 +117,7 @@ function SignupInner() {
     setLoadingUp(true);
     try {
       // 1) Create the account
-      const { error: signUpErr } = await supabase.auth.signUp({
+      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
         email: email.trim(),
         password: password.trim(),
       });
@@ -298,13 +298,24 @@ function SignupInner() {
       toast.show("Account created. You’re signed in ✅", {
         kind: "success",
       });
-      await logEvent("sign_up");
+      // Enumeration protection (email confirmation disabled) can make signUp()
+      // return no error for an EXISTING email, with an empty identities[]. That
+      // is a sign-in, not a new account — so sign_up only fires when identities
+      // is non-empty (genuinely new); otherwise log sign_in.
+      const isNewAccount =
+        !Array.isArray(signUpData?.user?.identities) ||
+        (signUpData?.user?.identities?.length ?? 0) > 0;
+      await logEvent(isNewAccount ? "sign_up" : "sign_in");
 
-      if (state.onboardingStep === "signup") {
+      // Funnel completion for ANY new account created during active (incomplete)
+      // onboarding — previously gated on step === "signup", which missed signups
+      // routed in from the login screen, the guest-tune gate, cold-start resume,
+      // and the tune-results fallback. Routing below stays gated on "signup".
+      if (isNewAccount && !state.onboardingComplete) {
         const funnelId = await getOrCreateFunnelId();
         await logEvent("onboarding_signup_completed", {
           funnel_id: funnelId,
-          onboarding_step: "trial",
+          onboarding_step: state.onboardingStep,
           signed_in: true,
           account_created: true,
           trial_started: false,
@@ -314,6 +325,9 @@ function SignupInner() {
           age_minutes_since_last_step: ageMinutesSinceLastStep,
           source_route: "/signup",
         });
+      }
+
+      if (state.onboardingStep === "signup") {
         await markAccountCreated();
         await setStep("trial");
         router.replace("/premium");

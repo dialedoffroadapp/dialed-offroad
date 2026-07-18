@@ -716,6 +716,31 @@ export default function GarageScreen() {
       // ✅ onboarding: auto-select the newly added bike
       if (isGarageLocked) setDefaultBikeId(localBike.id);
 
+      // Guests are the primary onboarding path — log here (queued, flushed at
+      // signup). The signed-in branch below only covers the rarer
+      // signed-in-but-still-locked case; a single add hits exactly one branch,
+      // so this can't double-log with it.
+      if (isGarageLocked) {
+        const funnelId = await getOrCreateFunnelId();
+        const ageMinutesSinceLastStep = Math.round(
+          Math.max(0, Date.now() - Date.parse(state.lastUpdatedAt || "")) / 60000
+        );
+        await logEvent(
+          "onboarding_bike_added",
+          {
+            funnel_id: funnelId,
+            onboarding_step: state.onboardingStep,
+            signed_in: false,
+            bike_id: localBike.id,
+            pending_tune_exists: false,
+            resume: ageMinutesSinceLastStep >= 5,
+            age_minutes_since_last_step: ageMinutesSinceLastStep,
+            source_route: "/(tabs)/garage",
+          },
+          { allowAnonymous: true, queueIfAnonymous: true }
+        );
+      }
+
       setAdding(false);
       setNewBike({ make: "", model: "", year: "", nickname: "" });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
