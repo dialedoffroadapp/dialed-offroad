@@ -47,6 +47,37 @@ export type SettingsSnapshot = {
 // INSERT trigger (assign_setup_version_delta) — never written by the client.
 export type SettingsDelta = Partial<Record<keyof SettingsSnapshot, number>>;
 
+// The engine-context bundle recorded alongside the settings (the training link).
+export type RecommendedContext = {
+  model_id: string | null;
+  spec_verified: boolean;
+  sag_target_mm: number | null;
+  sag_bounds: [number, number] | null;
+  rider_weight_lbs: number | null;
+  spring_check: { status: string; direction?: string } | null;
+  engine: string;
+};
+
+// recommended_settings jsonb: canonical shape is { settings, context }, but prod
+// ALSO contains BARE SettingsSnapshot rows written by the 48h-old store build's
+// live clients until the next release ships. Readers MUST tolerate BOTH shapes.
+export type RecommendedSettings =
+  | SettingsSnapshot
+  | { settings: SettingsSnapshot; context?: RecommendedContext | null };
+
+/** Settings snapshot from either recommended_settings shape (dual-shape safe). */
+export function settingsFromRecommended(
+  rec: RecommendedSettings | null | undefined
+): SettingsSnapshot | null {
+  if (!rec || typeof rec !== "object") return null;
+  // Wrapper shape — detect by EITHER key, so a malformed row like
+  // {"context": null} (settings key dropped by a buggy writer; such rows exist
+  // in prod) reads as "no settings" instead of being misreturned as a bare
+  // snapshot. Bare snapshots only ever carry circuit keys (fork_comp, …).
+  if ("settings" in rec || "context" in rec) return (rec as any).settings ?? null;
+  return rec as SettingsSnapshot;
+}
+
 export type SetupVersionRow = {
   id: string;
   user_id: string;
@@ -65,7 +96,7 @@ export type SetupVersionRow = {
   notes: string[];
   terrain: string | null;
   context: Tune2Context | null;
-  recommended_settings: SettingsSnapshot | null;
+  recommended_settings: RecommendedSettings | null;
   applied_settings: SettingsSnapshot | null;
   settings_delta: SettingsDelta | null;
   created_at: string;
@@ -114,7 +145,6 @@ function settingsSnapshot(tune: ZeroTuneResult): SettingsSnapshot {
 
 /** Flatten a ZeroTuneResult into setup_versions columns. */
 function tuneColumns(tune: ZeroTuneResult) {
-  const snapshot = settingsSnapshot(tune);
   return {
     fork_comp_clicks: tune.fork.comp_clicks,
     fork_reb_clicks: tune.fork.reb_clicks,
@@ -127,11 +157,32 @@ function tuneColumns(tune: ZeroTuneResult) {
     shock_reb_clicks: tune.shock.reb_clicks,
     sag_mm: tune.shock.sag_mm,
     notes: tune.notes ?? [],
-    // Engine proposal snapshot. applied == recommended until an override UI
-    // ships; kept distinct now so that day needs no migration. settings_delta
-    // is omitted here on purpose — the DB trigger computes it server-side.
-    recommended_settings: snapshot,
-    applied_settings: snapshot,
+    // What the rider ran (== recommended until an override UI ships; kept
+    // distinct so that day needs no migration). recommended_settings is NOT
+    // written here — each writer builds the canonical { settings, context }
+    // wrapper itself. settings_delta is omitted on purpose — the DB trigger
+    // computes it server-side.
+    applied_settings: settingsSnapshot(tune),
+  };
+}
+
+/**
+ * Engine context from what this branch can know: no model-spec resolution
+ * exists here, so spec fields are null and only rider weight + the engine tag
+ * are populated. The spec-aware generation path fills the rest.
+ */
+function recommendedContextFor(
+  engine: string,
+  context?: Tune2Context | null
+): RecommendedContext {
+  return {
+    model_id: null,
+    spec_verified: false,
+    sag_target_mm: null,
+    sag_bounds: null,
+    rider_weight_lbs: context?.rider?.weight_lbs ?? null,
+    spring_check: null,
+    engine,
   };
 }
 
@@ -162,6 +213,12 @@ export async function createBaselineVersion(params: {
       terrain: params.terrain ?? null,
       context: params.context ?? null,
       ...tuneColumns(params.tune),
+      // Canonical { settings, context } — the engine's inputs recorded alongside
+      // its outputs. (The delta trigger diffs the typed columns, not this jsonb.)
+      recommended_settings: {
+        settings: settingsSnapshot(params.tune),
+        context: recommendedContextFor("zero_baseline_v1", params.context),
+      },
     })
     .select(VERSION_COLUMNS)
     .single<SetupVersionRow>();
@@ -202,6 +259,11 @@ export async function createRefinementVersion(params: {
       terrain: params.terrain ?? null,
       context: params.context ?? null,
       ...tuneColumns(params.tune),
+      // Same canonical { settings, context } wrapper as baselines.
+      recommended_settings: {
+        settings: settingsSnapshot(params.tune),
+        context: recommendedContextFor("tune2_v1", params.context),
+      },
     })
     .select(VERSION_COLUMNS)
     .single<SetupVersionRow>();
