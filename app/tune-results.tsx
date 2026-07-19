@@ -1408,7 +1408,7 @@ export default function TuneResultScreen() {
         {base?.notes?.length ? (
           shouldBlur ? (
             <BlurCard enabled C={C} S={S} title="Today's Test Plan">
-              <Text style={S.bodySmall}>Here's a quick starter plan while your full notes are locked:</Text>
+              <Text style={S.bodySmall}>Here&apos;s a quick starter plan while your full notes are locked:</Text>
               <View style={{ marginTop: 8 }}>
                 {teaserSteps.map((n, i) => (
                   <View key={`ts-${i}`} style={S.stepRow}>
