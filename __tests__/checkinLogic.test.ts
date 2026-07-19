@@ -35,15 +35,43 @@ describe("isFirstRideEligible (new baseline branch)", () => {
     expect(isFirstRideEligible(v, NOW)).toBe(false);
   });
 
-  test("refinement source → not eligible (outcome branch owns it)", () => {
+  test("refinement source → not eligible by default (outcome branch owns it)", () => {
     expect(
       isFirstRideEligible({ ...baseVersion, source: "refinement" }, NOW)
     ).toBe(false);
   });
 
-  test("restore source → not eligible", () => {
+  test("refinement + allowRefinement (36h reminder tap) → eligible", () => {
+    const refinement = { ...baseVersion, source: "refinement" as const };
+    // Reminder tap: age gate bypassed too.
+    expect(
+      isFirstRideEligible(refinement, NOW, {
+        allowRefinement: true,
+        bypassAgeGate: true,
+      })
+    ).toBe(true);
+    // allowRefinement alone still honors the 12h age gate.
+    expect(isFirstRideEligible(refinement, NOW, { allowRefinement: true })).toBe(
+      true
+    );
+    const young = {
+      ...refinement,
+      created_at: new Date(NOW - TWELVE_HOURS_MS + 60_000).toISOString(),
+    };
+    expect(isFirstRideEligible(young, NOW, { allowRefinement: true })).toBe(
+      false
+    );
+  });
+
+  test("restore source → not eligible even with allowRefinement", () => {
     expect(
       isFirstRideEligible({ ...baseVersion, source: "restore" }, NOW)
+    ).toBe(false);
+    expect(
+      isFirstRideEligible({ ...baseVersion, source: "restore" }, NOW, {
+        allowRefinement: true,
+        bypassAgeGate: true,
+      })
     ).toBe(false);
   });
 

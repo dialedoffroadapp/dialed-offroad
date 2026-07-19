@@ -30,70 +30,9 @@ export type FeedbackProtection = {
 // consumers distinguish entries by the presence of the `protect` flag.
 export type FeedbackEntry = FeedbackSymptom | FeedbackProtection;
 
-export type SetupVersionRow = {
-  id: string;
-  user_id: string;
-  bike_id: string | null;
-  version_number: number;
-  source: SetupSource;
-  parent_version_id: string | null;
-  restored_from_version_id: string | null;
-  fork_comp_clicks: number | null;
-  fork_reb_clicks: number | null;
-  fork_air_bar: number | null;
-  shock_lsc_clicks: number | null;
-  shock_hsc_turns: number | null;
-  shock_reb_clicks: number | null;
-  sag_mm: number | null;
-  notes: string[];
-  terrain: string | null;
-  context: Tune2Context | null;
-  created_at: string;
-};
-
-export type RideFeedbackRow = {
-  id: string;
-  user_id: string;
-  setup_version_id: string;
-  resulting_version_id: string | null;
-  overall_rating: number | null;
-  symptoms: FeedbackEntry[];
-  free_text: string | null;
-  outcome: FeedbackOutcome | null;
-  created_at: string;
-};
-
-export const VERSION_COLUMNS =
-  "id, user_id, bike_id, version_number, source, parent_version_id, " +
-  "restored_from_version_id, fork_comp_clicks, fork_reb_clicks, fork_air_bar, " +
-  "shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm, notes, terrain, " +
-  "context, created_at";
-
-async function requireUserId(): Promise<string> {
-  const { data } = await supabase.auth.getUser();
-  const id = data?.user?.id;
-  if (!id) throw new Error("Not signed in");
-  return id;
-}
-
-/** Flatten a ZeroTuneResult into setup_versions columns. */
-function tuneColumns(tune: ZeroTuneResult) {
-  return {
-    fork_comp_clicks: tune.fork.comp_clicks,
-    fork_reb_clicks: tune.fork.reb_clicks,
-    fork_air_bar:
-      typeof tune.fork.air_pressure_bar === "number"
-        ? tune.fork.air_pressure_bar
-        : null,
-    shock_lsc_clicks: tune.shock.lsc_clicks,
-    shock_hsc_turns: tune.shock.hsc_turns,
-    shock_reb_clicks: tune.shock.reb_clicks,
-    sag_mm: tune.shock.sag_mm,
-    notes: tune.notes ?? [],
-  };
-}
-
-/** A tune's settings as a flat snapshot (recommended_settings.settings shape). */
+// Flat, cohort-query-friendly view of a tune's settings. Shares its key
+// vocabulary with settings_delta (see migration 20260714120000) so
+// recommended_settings, applied_settings and settings_delta all read the same.
 export type SettingsSnapshot = {
   fork_comp: number | null;
   fork_reb: number | null;
@@ -104,20 +43,9 @@ export type SettingsSnapshot = {
   shock_sag: number | null;
 };
 
-function settingsSnapshot(tune: ZeroTuneResult): SettingsSnapshot {
-  return {
-    fork_comp: tune.fork.comp_clicks,
-    fork_reb: tune.fork.reb_clicks,
-    fork_air:
-      typeof tune.fork.air_pressure_bar === "number"
-        ? tune.fork.air_pressure_bar
-        : null,
-    shock_lsc: tune.shock.lsc_clicks,
-    shock_hsc: tune.shock.hsc_turns,
-    shock_reb: tune.shock.reb_clicks,
-    shock_sag: tune.shock.sag_mm,
-  };
-}
+// Per-circuit change vs the parent version. Computed server-side by a BEFORE
+// INSERT trigger (assign_setup_version_delta) — never written by the client.
+export type SettingsDelta = Partial<Record<keyof SettingsSnapshot, number>>;
 
 // The engine-context bundle recorded alongside the settings (the training link).
 export type RecommendedContext = {
@@ -148,6 +76,114 @@ export function settingsFromRecommended(
   // snapshot. Bare snapshots only ever carry circuit keys (fork_comp, …).
   if ("settings" in rec || "context" in rec) return (rec as any).settings ?? null;
   return rec as SettingsSnapshot;
+}
+
+export type SetupVersionRow = {
+  id: string;
+  user_id: string;
+  bike_id: string | null;
+  version_number: number;
+  source: SetupSource;
+  parent_version_id: string | null;
+  restored_from_version_id: string | null;
+  fork_comp_clicks: number | null;
+  fork_reb_clicks: number | null;
+  fork_air_bar: number | null;
+  shock_lsc_clicks: number | null;
+  shock_hsc_turns: number | null;
+  shock_reb_clicks: number | null;
+  sag_mm: number | null;
+  notes: string[];
+  terrain: string | null;
+  context: Tune2Context | null;
+  recommended_settings: RecommendedSettings | null;
+  applied_settings: SettingsSnapshot | null;
+  settings_delta: SettingsDelta | null;
+  created_at: string;
+};
+
+export type RideFeedbackRow = {
+  id: string;
+  user_id: string;
+  setup_version_id: string;
+  resulting_version_id: string | null;
+  overall_rating: number | null;
+  symptoms: FeedbackEntry[];
+  free_text: string | null;
+  outcome: FeedbackOutcome | null;
+  created_at: string;
+};
+
+export const VERSION_COLUMNS =
+  "id, user_id, bike_id, version_number, source, parent_version_id, " +
+  "restored_from_version_id, fork_comp_clicks, fork_reb_clicks, fork_air_bar, " +
+  "shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm, notes, terrain, " +
+  "context, recommended_settings, applied_settings, settings_delta, created_at";
+
+async function requireUserId(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  const id = data?.user?.id;
+  if (!id) throw new Error("Not signed in");
+  return id;
+}
+
+/** A tune's settings as a flat snapshot (same keys as settings_delta). */
+function settingsSnapshot(tune: ZeroTuneResult): SettingsSnapshot {
+  return {
+    fork_comp: tune.fork.comp_clicks,
+    fork_reb: tune.fork.reb_clicks,
+    fork_air:
+      typeof tune.fork.air_pressure_bar === "number"
+        ? tune.fork.air_pressure_bar
+        : null,
+    shock_lsc: tune.shock.lsc_clicks,
+    shock_hsc: tune.shock.hsc_turns,
+    shock_reb: tune.shock.reb_clicks,
+    shock_sag: tune.shock.sag_mm,
+  };
+}
+
+/** Flatten a ZeroTuneResult into setup_versions columns. */
+function tuneColumns(tune: ZeroTuneResult) {
+  return {
+    fork_comp_clicks: tune.fork.comp_clicks,
+    fork_reb_clicks: tune.fork.reb_clicks,
+    fork_air_bar:
+      typeof tune.fork.air_pressure_bar === "number"
+        ? tune.fork.air_pressure_bar
+        : null,
+    shock_lsc_clicks: tune.shock.lsc_clicks,
+    shock_hsc_turns: tune.shock.hsc_turns,
+    shock_reb_clicks: tune.shock.reb_clicks,
+    sag_mm: tune.shock.sag_mm,
+    notes: tune.notes ?? [],
+    // What the rider ran (== recommended until an override UI ships; kept
+    // distinct so that day needs no migration). recommended_settings is NOT
+    // written here — each writer builds the canonical { settings, context }
+    // wrapper itself. settings_delta is omitted on purpose — the DB trigger
+    // computes it server-side.
+    applied_settings: settingsSnapshot(tune),
+  };
+}
+
+/**
+ * Engine context from what this branch can know: no model-spec resolution
+ * exists here, so spec fields are null and only rider weight + the engine tag
+ * are populated. The spec-aware generation path fills the rest.
+ */
+function recommendedContextFor(
+  engine: string,
+  context?: Tune2Context | null
+): RecommendedContext {
+  return {
+    model_id: null,
+    spec_verified: false,
+    sag_target_mm: null,
+    sag_bounds: null,
+    rider_weight_lbs: context?.rider?.weight_lbs ?? null,
+    spring_check: null,
+    engine,
+  };
 }
 
 /**
@@ -183,7 +219,12 @@ export async function createBaselineVersion(params: {
       // its outputs. (The delta trigger diffs the typed columns, not this jsonb.)
       recommended_settings: {
         settings: settingsSnapshot(params.tune),
-        context: params.recommendedContext ?? null,
+        // Caller-supplied spec-aware context wins; the minimal builder is only
+        // the floor for callers with no generation context (engine tag + rider
+        // weight beat a null).
+        context:
+          params.recommendedContext ??
+          recommendedContextFor("zero_baseline_v1", params.context),
       },
     })
     .select(VERSION_COLUMNS)
@@ -225,6 +266,11 @@ export async function createRefinementVersion(params: {
       terrain: params.terrain ?? null,
       context: params.context ?? null,
       ...tuneColumns(params.tune),
+      // Same canonical { settings, context } wrapper as baselines.
+      recommended_settings: {
+        settings: settingsSnapshot(params.tune),
+        context: recommendedContextFor("tune2_v1", params.context),
+      },
     })
     .select(VERSION_COLUMNS)
     .single<SetupVersionRow>();

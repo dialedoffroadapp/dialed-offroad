@@ -42,22 +42,27 @@ export function applyDismiss(
   return { count: (rec?.count ?? 0) + 1, until: nowMs + THREE_DAYS_MS };
 }
 
-/** First-ride branch eligibility for a candidate NEWEST version row:
- *  an uncritiqued baseline with a real bike, at least 12h old. (The "no
- *  ride_feedback critiques it" and "newest" conditions are enforced by the
- *  caller's queries.) `bypassAgeGate` (a ride-reminder tap arrival,
- *  lib/reminderArrival.ts) skips ONLY the 12h age check — the baseline/bike
- *  requirements still hold. */
+/** "Give feedback" branch eligibility for a candidate version row: an
+ *  uncritiqued setup with a real bike, at least 12h old. (The "no ride_feedback
+ *  critiques it" and "newest/targeted" conditions are enforced by the caller's
+ *  queries.) `bypassAgeGate` (a ride-reminder tap arrival, lib/reminderArrival.ts)
+ *  skips ONLY the 12h age check. `allowRefinement` also admits refinement
+ *  versions — used when a 36h check-in reminder targets the refined setup, so
+ *  the tap lands in the picker for that version; organic focus stays
+ *  baseline-only (the outcome card owns organic post-refinement check-ins). */
 export function isFirstRideEligible(
   version:
     | Pick<SetupVersionRow, "id" | "source" | "bike_id" | "created_at">
     | null
     | undefined,
   nowMs: number,
-  opts?: { bypassAgeGate?: boolean }
+  opts?: { bypassAgeGate?: boolean; allowRefinement?: boolean }
 ): boolean {
   if (!version?.id) return false;
-  if (version.source !== "baseline") return false;
+  const okSource =
+    version.source === "baseline" ||
+    (opts?.allowRefinement === true && version.source === "refinement");
+  if (!okSource) return false;
   if (!version.bike_id) return false;
   if (opts?.bypassAgeGate) return true;
   return new Date(version.created_at).getTime() <= nowMs - TWELVE_HOURS_MS;
