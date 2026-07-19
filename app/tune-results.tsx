@@ -34,12 +34,7 @@ import {
 import { isProfane } from "../lib/profanity";
 import { deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
-import {
-  declineNotificationPrompt,
-  requestNotificationPermission,
-  scheduleRideReminder,
-  shouldOfferNotificationPrompt,
-} from "../lib/rideReminder";
+import { scheduleRideReminder } from "../lib/rideReminder";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -329,67 +324,10 @@ export default function TuneResultScreen() {
   const [whyExpanded, setWhyExpanded] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
-  // Inline notification rationale — the OS permission dialog is never shown
-  // cold. Offered once the UNBLURRED results render for an entitled user
-  // (the value moment), never during the funnel and never at app launch.
-  const [notifPromptVisible, setNotifPromptVisible] = useState(false);
-  const notifPromptCheckedRef = useRef(false);
-  useEffect(() => {
-    if (
-      notifPromptCheckedRef.current ||
-      !proResolved ||
-      shouldBlur ||
-      !hasActiveEntitlement ||
-      !base
-    ) {
-      return;
-    }
-    notifPromptCheckedRef.current = true;
-    let mounted = true;
-    (async () => {
-      const offer = await shouldOfferNotificationPrompt();
-      if (mounted && offer) setNotifPromptVisible(true);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [proResolved, shouldBlur, hasActiveEntitlement, base]);
-
-  const onEnableNotifs = async () => {
-    setNotifPromptVisible(false);
-    const granted = await requestNotificationPermission();
-    if (!granted) return;
-    toast.show("Ride reminder on — we'll nudge you after your next ride.", {
-      kind: "success",
-    });
-    // A baseline version may already exist (auto-created at onboarding
-    // completion, or manually saved) — schedule against it now. Otherwise
-    // the next Save Setup schedules it.
-    try {
-      if (!bikeId) return;
-      const { data: latest } = await supabase
-        .from("setup_versions")
-        .select("id, version_number")
-        .eq("bike_id", bikeId)
-        .order("version_number", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (latest?.id) {
-        void scheduleRideReminder({
-          versionId: latest.id,
-          versionNumber: latest.version_number ?? 1,
-          bikeName: bikeTitle,
-        });
-      }
-    } catch {
-      // non-critical — next save schedules it
-    }
-  };
-
-  const onDeclineNotifs = () => {
-    setNotifPromptVisible(false);
-    void declineNotificationPrompt();
-  };
+  // The notification permission ask used to live here (inline rationale on
+  // the unblurred results). It moved to feedback-submit success in
+  // app/tune-feedback.tsx — a stronger value moment, and the reminder it
+  // enables points at a setup the rider is actually about to ride.
 
   useEffect(() => {
     if (!base && restoreTried && !restored && !tuneExpired && isResultsLockedStep) {
@@ -1453,27 +1391,6 @@ export default function TuneResultScreen() {
           </View>
         ) : null}
 
-        {/* Ride-reminder rationale — inline ask before the OS dialog */}
-        {!shouldBlur && notifPromptVisible ? (
-          <View style={S.notifPromptRow}>
-            <Ionicons name="notifications-outline" size={16} color={C.ACCENT} />
-            <Text style={S.notifPromptText}>
-              Want a nudge to refine after your next ride?
-            </Text>
-            <Pressable onPress={onEnableNotifs} style={S.notifEnableBtn}>
-              <Text style={S.notifEnableText}>Enable</Text>
-            </Pressable>
-            <Pressable
-              onPress={onDeclineNotifs}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Not now"
-            >
-              <Ionicons name="close" size={16} color={C.MUTED} />
-            </Pressable>
-          </View>
-        ) : null}
-
         {/* Bottom action bar */}
         <View style={S.bottomActionBar}>
           {shouldBlur ? (
@@ -1944,34 +1861,6 @@ const makeStyles = (C: {
       lineHeight: 17,
       fontWeight: "600",
     },
-
-    // ── Ride-reminder inline ask ────────────────────────────────────
-    notifPromptRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      marginHorizontal: 16,
-      marginTop: 10,
-      padding: 12,
-      backgroundColor: C.CARD,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: C.BORDER,
-    },
-    notifPromptText: {
-      color: C.TEXT,
-      fontSize: 12,
-      flex: 1,
-      lineHeight: 17,
-      fontWeight: "600",
-    },
-    notifEnableBtn: {
-      backgroundColor: C.ACCENT,
-      borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-    },
-    notifEnableText: { color: "#fff", fontWeight: "800", fontSize: 12 },
 
     // ── Bottom action bar ───────────────────────────────────────────
     bottomActionBar: {

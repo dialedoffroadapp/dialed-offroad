@@ -32,6 +32,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
+  AppState,
   Easing,
   Pressable,
   StyleProp,
@@ -54,6 +55,7 @@ import {
   consumeReminderArrival,
   subscribeReminderArrival,
 } from "../lib/reminderArrival";
+import { cancelRideReminderForVersion } from "../lib/rideReminder";
 import {
   FeedbackOutcome,
   SetupVersionRow,
@@ -71,6 +73,12 @@ const dismissKey = (id: string) => `checkin_dismissed_${id}`;
 // Max one card per app session, across tab remounts and both host tabs.
 let shownThisSession = false;
 
+// Wall-clock when the app last entered the background (module-level: one
+// truth across both host-tab instances). A gap longer than SESSION_RESET_MS
+// is a new session for the one-card-per-session rule above.
+let backgroundedAtMs: number | null = null;
+const SESSION_RESET_MS = 60 * 60 * 1000;
+
 type CardState =
   | {
       kind: "outcome";
@@ -81,6 +89,9 @@ type CardState =
       // be resolved — the card then just confirms and dismisses.
       nextVersion: SetupVersionRow | null;
       nextBikeTitle: string;
+      // Kept separately from nextVersion (which is fail-soft null) so
+      // answering can always cancel the pending reminder aimed at this setup.
+      resultingVersionId: string | null;
     }
   | {
       kind: "first_ride";
@@ -173,6 +184,33 @@ export function OutcomeCheckinCard({
     () => subscribeReminderArrival(() => setArrivalTick((t) => t + 1)),
     []
   );
+
+  // Warm resume: useFocusEffect never re-fires when the app returns from the
+  // background onto an already-focused tab — the dominant way riders come
+  // back (including via the reminder's banner) — so without this, resuming
+  // never re-evaluates eligibility. Bump a tick on background→active so the
+  // focus-time check re-runs on the focused instance. Debounce: one bump per
+  // background episode (handledBackgroundRef), and iOS 'inactive' flaps
+  // (control center, notification shade) never set backgroundedAtMs, so they
+  // trigger nothing. A >1h background gap starts a new session for the
+  // one-card-per-session latch.
+  const [resumeTick, setResumeTick] = useState(0);
+  const handledBackgroundRef = useRef<number | null>(null);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "background") {
+        backgroundedAtMs = Date.now();
+        return;
+      }
+      if (next !== "active") return;
+      const at = backgroundedAtMs;
+      if (at == null || handledBackgroundRef.current === at) return;
+      handledBackgroundRef.current = at;
+      if (Date.now() - at > SESSION_RESET_MS) shownThisSession = false;
+      setResumeTick((t) => t + 1);
+    });
+    return () => sub.remove();
+  }, []);
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [answering, setAnswering] = useState(false);
 
@@ -220,9 +258,10 @@ export function OutcomeCheckinCard({
 
   useFocusEffect(
     useCallback(() => {
-      // arrivalTick is the re-run trigger for reminder-tap pings; reference
-      // it so exhaustive-deps counts it as used.
+      // arrivalTick/resumeTick are the re-run triggers for reminder-tap pings
+      // and warm resumes; reference them so exhaustive-deps counts them as used.
       void arrivalTick;
+      void resumeTick;
       let cancelled = false;
       (async () => {
         let visible = false;
@@ -273,6 +312,7 @@ export function OutcomeCheckinCard({
               title: titleFromSymptoms(row.symptoms),
               nextVersion: next,
               nextBikeTitle: bikeTitle,
+              resultingVersionId: row.resulting_version_id ?? null,
             });
             void logEvent("checkin_shown", { feedback_id: row.id, surface });
             return;
@@ -367,7 +407,7 @@ export function OutcomeCheckinCard({
       return () => {
         cancelled = true;
       };
-    }, [card, surface, arrivalTick])
+    }, [card, surface, arrivalTick, resumeTick])
   );
 
   const onAnswer = async (outcome: FeedbackOutcome) => {
@@ -377,6 +417,9 @@ export function OutcomeCheckinCard({
       // Record the outcome first — it's the label on the whole dataset and must
       // never be skipped. Only continue into the picker once it's persisted.
       await updateFeedbackOutcome(card.feedbackId, outcome);
+      // The outcome is answered — the pending "How did the new setup feel?"
+      // reminder aimed at this setup has nothing left to ask.
+      void cancelRideReminderForVersion(card.resultingVersionId);
       void logEvent("checkin_answered", {
         feedback_id: card.feedbackId,
         outcome,

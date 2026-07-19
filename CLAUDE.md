@@ -48,6 +48,19 @@ Persistence (v2): every tune is a row in `setup_versions`
 a row in `ride_feedback`. Retention: a 36h local reminder → outcome check-in
 card ("Better/Same/Worse") → funnels into the picker for the next refinement.
 The adaptive engine reads the last recorded outcome to reverse/enlarge its step.
+The reminder re-arms at every feedback submit for the new refinement ("How did
+the new setup feel?") and is cancelled when its outcome is answered; the
+notification permission ask lives at feedback-submit success in
+`tune-feedback.tsx` (NOT the results screen). Check-in eligibility runs on tab
+focus AND on warm resume (AppState background→active, one check per background
+episode; >1h backgrounded resets the one-card-per-session latch).
+
+**Check-in analytics counting rule:** a surfaced check-in card logs
+`checkin_shown` (outcome mode) **or** `preride_shown` (first-ride mode) —
+total check-in surfacing = the SUM of both. The notification-permission prompt
+logs its outcome in `heard_card_shown` meta (`surface: "notif_prompt"`,
+`outcome: granted|denied|declined`) — no dedicated event type (new types need
+a `usage_events_event_type_check` migration).
 
 ## Data model & Supabase
 
@@ -173,7 +186,8 @@ that change none of those skip it.)*
 - `ai-tune` edge function: deployed and verified live post-`57e7edc`
   (sag-target fallback + spec-authoritative fork type) as of 2026-07-18.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
-  notification path (needs a dev-client build).
+  notification path, warm-resume check-in surfacing, and the feedback-submit
+  permission alert (all need a dev-client build).
 
 ## Sprint focus (in order)
 

@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     Animated,
     Easing,
     KeyboardAvoidingView,
@@ -29,7 +30,10 @@ import {
 import { enqueueFeedbackRetry } from "../lib/feedbackRetry";
 import {
   cancelRideReminderForVersion,
+  declineNotificationPrompt,
+  requestNotificationPermission,
   scheduleRideReminder,
+  shouldOfferNotificationPrompt,
 } from "../lib/rideReminder";
 import {
     createBaselineVersion,
@@ -107,6 +111,71 @@ const PROTECT_OPTIONS = [
   "Landings",
   "Cornering",
 ];
+
+// The post-feedback reminder is about the refined setup the rider leaves
+// with, not the version they just critiqued — its tap lands on the outcome
+// check-in card (Better/Same/Worse), so the copy asks that question.
+const OUTCOME_REMINDER_TITLE = "How did the new setup feel?";
+
+/** Inline pre-prompt at feedback-submit success — the value moment: the rider
+ *  just turned ride notes into a refined setup, so the reminder offer lands
+ *  when its worth is obvious. Never shows the OS dialog cold; declining
+ *  snoozes the offer 30 days (lib/rideReminder.ts). The outcome is logged in
+ *  existing event meta only (heard_card_shown, surface "notif_prompt") — a
+ *  new event type would need a usage_events CHECK-constraint migration. */
+async function offerReminderPermission(params: {
+  versionId: string;
+  versionNumber: number;
+  bikeName: string;
+}): Promise<void> {
+  try {
+    if (!(await shouldOfferNotificationPrompt())) return;
+    Alert.alert(
+      "Want a reminder to log how it felt after your next ride?",
+      "One nudge after your next ride — takes 10 seconds to answer.",
+      [
+        {
+          text: "Not now",
+          style: "cancel",
+          onPress: () => {
+            void declineNotificationPrompt();
+            void logEvent("heard_card_shown", {
+              surface: "notif_prompt",
+              outcome: "declined",
+              version_id: params.versionId,
+            });
+          },
+        },
+        {
+          text: "Remind me",
+          onPress: () => {
+            void (async () => {
+              const granted = await requestNotificationPermission();
+              if (granted) {
+                // The re-arm at submit no-op'd while permission was still
+                // undetermined — schedule the same reminder now.
+                void scheduleRideReminder({
+                  versionId: params.versionId,
+                  versionNumber: params.versionNumber,
+                  bikeName: params.bikeName,
+                  title: OUTCOME_REMINDER_TITLE,
+                });
+              }
+              void logEvent("heard_card_shown", {
+                surface: "notif_prompt",
+                outcome: granted ? "granted" : "denied",
+                version_id: params.versionId,
+              });
+            })();
+          },
+        },
+      ],
+      { cancelable: true } // Android back-dismiss = no decision; offer again next submit
+    );
+  } catch {
+    // never block the results handoff on a permission offer
+  }
+}
 
 const OVERALL_LABELS: Record<number, string> = {
   1: "Rough day — we'll make real moves",
@@ -643,6 +712,7 @@ export default function TuneFeedbackScreen() {
       // link it back to the feedback row that produced it.
       let refinementSaved = false;
       let refinementRowId: string | null = null;
+      let refinementVersionNumber: number | null = null;
       if (critiquedVersionId) {
         try {
           const refinement = await createRefinementVersion({
@@ -655,6 +725,7 @@ export default function TuneFeedbackScreen() {
           });
           refinementSaved = true;
           refinementRowId = refinement.id;
+          refinementVersionNumber = refinement.version_number;
           // The refined setup is the next thing to ride — re-arm the 36h
           // check-in for it. Replaces the reminder we just cancelled for the
           // version we critiqued (scheduleRideReminder keeps one pending).
@@ -662,6 +733,7 @@ export default function TuneFeedbackScreen() {
             versionId: refinement.id,
             versionNumber: refinement.version_number,
             bikeName: bikeTitle,
+            title: OUTCOME_REMINDER_TITLE,
           });
         } catch (shadowErr: any) {
           shadowWriteFailed = true;
@@ -685,6 +757,17 @@ export default function TuneFeedbackScreen() {
           "Your refined tune is ready, but we couldn't save this ride's notes — we'll retry automatically.",
           { kind: "info", durationMs: 3500 }
         );
+      }
+
+      if (refinementSaved && refinementRowId) {
+        // Permission ask at the value moment (moved off the results screen).
+        // Fire-and-forget: the native alert overlays the results screen the
+        // router.replace below navigates to.
+        void offerReminderPermission({
+          versionId: refinementRowId,
+          versionNumber: refinementVersionNumber ?? 1,
+          bikeName: bikeTitle,
+        });
       }
 
       const mergedContext = {

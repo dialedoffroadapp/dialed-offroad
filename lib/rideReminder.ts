@@ -11,7 +11,8 @@
 // Invariants:
 // - max ONE pending reminder at a time (scheduling replaces any prior one)
 // - never schedules without OS permission already granted; the permission
-//   ask itself lives on the results screen (the value moment), not here
+//   ask itself lives at feedback-submit success in app/tune-feedback.tsx
+//   (the value moment — the rider just closed a loop), not here
 // - the inline pre-prompt is never re-shown within 30 days of a decline,
 //   and the OS dialog is never shown cold
 
@@ -166,6 +167,9 @@ export async function scheduleRideReminder(params: {
   versionId: string;
   versionNumber: number;
   bikeName: string;
+  /** Override the first-ride default — the post-feedback re-arm asks about
+   *  the new setup ("How did the new setup feel?") instead of naming v{N}. */
+  title?: string;
 }): Promise<void> {
   if (!supported()) return;
   try {
@@ -177,7 +181,9 @@ export async function scheduleRideReminder(params: {
     const date = nextReminderDate();
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
-        title: `How did the ${params.bikeName} feel on v${params.versionNumber}?`,
+        title:
+          params.title ??
+          `How did the ${params.bikeName} feel on v${params.versionNumber}?`,
         body: "Tell Dialed and get your refined setup — takes 30 seconds.",
         data: {
           kind: "ride_reminder",
