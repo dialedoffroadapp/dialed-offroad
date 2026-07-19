@@ -170,9 +170,8 @@ that change none of those skip it.)*
   schema + backfill, security hardening).
 - `release/v2.1.0`: build 34, was in App Review as of 2026-07-14 — contains
   NONE of the merged work above.
-- **`ai-tune` edge function has undeployed changes** (sag-target fallback +
-  spec-authoritative fork type, commit `57e7edc`) — deploy before exercising
-  the flow against prod.
+- `ai-tune` edge function: deployed and verified live post-`57e7edc`
+  (sag-target fallback + spec-authoritative fork type) as of 2026-07-18.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path (needs a dev-client build).
 
