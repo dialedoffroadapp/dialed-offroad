@@ -30,7 +30,7 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Symptom picker (post-ride debrief) | `app/tune-feedback.tsx` |
 | Tune results | `app/tune-two-results.tsx` (baseline: `app/tune-results.tsx`) |
 | Post-ride check-in card | `components/OutcomeCheckinCard.tsx`, `lib/checkinLogic.ts` |
-| Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts` |
+| Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts`, `lib/guestRecovery.ts` (30h guest-abandon nudge — armed when a guest backgrounds off locked results, cancelled on any auth session; NEVER prompts for permission; analytics-dark until a `usage_events` CHECK migration adds `guest_recovery_*` types) |
 | Paywall / Pro / IAP | `app/premium.tsx`, `lib/purchases.ts`, `hooks/usePro.ts`, `supabase/functions/revenuecat-webhook` (`verify_jwt = false` — it's a public webhook) |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
@@ -186,8 +186,9 @@ that change none of those skip it.)*
 - `ai-tune` edge function: deployed and verified live post-`57e7edc`
   (sag-target fallback + spec-authoritative fork type) as of 2026-07-18.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
-  notification path, warm-resume check-in surfacing, and the feedback-submit
-  permission alert (all need a dev-client build).
+  notification path, warm-resume check-in surfacing, the feedback-submit
+  permission alert, and the guest-recovery 30h nudge (all need a dev-client
+  build).
 
 ## Sprint focus (in order)
 

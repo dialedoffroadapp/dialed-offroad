@@ -116,8 +116,10 @@ export async function requestNotificationPermission(): Promise<boolean> {
 }
 
 /** Nudge an instant into the same/next 9am–8pm local window: pull a pre-9am
- *  time up to 9am today, push an 8pm-or-later time to 9am tomorrow. */
-function clampToDaytime(d: Date): Date {
+ *  time up to 9am today, push an 8pm-or-later time to 9am tomorrow.
+ *  (Exported for the other local-notification schedulers — every notification
+ *  in the app respects the same civil window.) */
+export function clampToDaytime(d: Date): Date {
   const r = new Date(d);
   const h = r.getHours();
   if (h < WINDOW_OPEN_HOUR) {

@@ -5,6 +5,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Keyboard,
   Modal,
   Platform,
@@ -23,6 +24,7 @@ import { useToast } from "../components/Toast";
 import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
 import { ZeroTuneResult } from "../lib/ai";
 import { versionMatchesTune } from "../lib/autoBaseline";
+import { scheduleGuestRecoveryReminder } from "../lib/guestRecovery";
 import { createBaselineVersion } from "../lib/setupVersions";
 import {
   clearPendingTune,
@@ -386,6 +388,27 @@ export default function TuneResultScreen() {
     state.onboardingStep,
     state.trialStarted,
   ]);
+
+  // Guest abandon → recovery nudge: a guest (no session) backgrounding off the
+  // locked results is the churn moment — arm the 30h recovery notification
+  // (lib/guestRecovery.ts; silent no-op without an existing permission grant,
+  // by design). Re-backgrounding just restarts the timer; any sign-in/signup
+  // cancels it via the auth listener in app/_layout.tsx. Mount-scoped: leaving
+  // this screen (back → tune) unmounts the listener. Signed-in riders parked
+  // at the trial unlock step are NOT abandoned guests — excluded.
+  useEffect(() => {
+    // proResolved: don't arm during the pre-auth-check frame — a signed-in
+    // rider backgrounding in that window must not look like a guest.
+    if (!proResolved || !shouldBlur || isSignedIn) return;
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next !== "background") return;
+      void scheduleGuestRecoveryReminder({
+        make: metaObj?.bike?.make ?? metaObj?.bike_hint?.make ?? null,
+        model: metaObj?.bike?.model ?? metaObj?.bike_hint?.model ?? null,
+      });
+    });
+    return () => sub.remove();
+  }, [proResolved, shouldBlur, isSignedIn, metaObj]);
 
   // ---------- meta-derived values (NO early returns above this point) ----------
   const terrainVal = Array.isArray(metaObj?.context?.terrain)

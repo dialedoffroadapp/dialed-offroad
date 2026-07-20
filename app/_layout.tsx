@@ -14,6 +14,7 @@ import TrialPromptModal, {
   TRIAL_MODAL_MAX_DISMISSALS,
 } from "../components/TrialPromptModal";
 import { flushFeedbackRetryQueue } from "../lib/feedbackRetry";
+import { cancelGuestRecoveryReminder } from "../lib/guestRecovery";
 import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
 import { markReminderArrival } from "../lib/reminderArrival";
 import { hasPurchasedThisSession, initPurchases } from "../lib/purchases";
@@ -314,6 +315,9 @@ function RootInner() {
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         const userId = session?.user?.id ?? undefined;
+        // Any session means they're not an abandoned guest — the recovery
+        // nudge (lib/guestRecovery.ts) has nothing left to recover.
+        if (userId) void cancelGuestRecoveryReminder();
         initPurchases(userId).catch((e) => {
           console.warn("[RC] initPurchases error (auth change):", e);
         });
