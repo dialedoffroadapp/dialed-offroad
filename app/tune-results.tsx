@@ -25,6 +25,7 @@ import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
 import { ZeroTuneResult } from "../lib/ai";
 import { versionMatchesTune } from "../lib/autoBaseline";
 import { scheduleGuestRecoveryReminder } from "../lib/guestRecovery";
+import type { SpringCheck } from "../lib/modelSpecs";
 import { createBaselineVersion } from "../lib/setupVersions";
 import {
   clearPendingTune,
@@ -47,9 +48,12 @@ const FREE_BASELINE_LIMIT = 10;
 
 // ✅ Auth entry route (create account)
 const AUTH_ROUTE = "/signup" as const;
-// Locked-results reveal experiment tag — stamped on the funnel events so the
-// fork-compression reveal can be segmented post-hoc (no experiment framework).
-const LOCKED_VARIANT = "fork_comp_reveal_v1";
+// Locked-results reveal experiment tag — stamped on the funnel events so each
+// locked-screen composition can be segmented post-hoc (no experiment
+// framework). value_stack_v1 = spring card full → fork-comp reveal teaser →
+// blurred settings → "Why this setup?" partial teaser (replaced the generic
+// starter-plan teaser of fork_comp_reveal_v1).
+const LOCKED_VARIANT = "value_stack_v1";
 
 type Mode = "balanced" | "comfort" | "precision";
 
@@ -417,6 +421,37 @@ export default function TuneResultScreen() {
 
   const trackName = metaObj?.context?.track ?? metaObj?.track_name ?? null;
 
+  // Verified-spec display fields (meta.spec is display-only plumbing from
+  // tune.tsx — the persisted recommended_settings.context picks its fields
+  // explicitly in the save path and does NOT carry these). fetchModelSpecs
+  // returns null for unverified rows, so a present fork/shock type implies a
+  // verified spec; sag provenance is additionally gated on spec_verified so
+  // the DEFAULT_SAG fallback window is never dressed up as factory data.
+  const forkTypeLabel: string | undefined =
+    typeof metaObj?.spec?.fork_type === "string" && metaObj.spec.fork_type
+      ? metaObj.spec.fork_type
+      : undefined;
+  const shockTypeLabel: string | undefined =
+    typeof metaObj?.spec?.shock_type === "string" && metaObj.spec.shock_type
+      ? metaObj.spec.shock_type
+      : undefined;
+  const sagProvenance = useMemo(() => {
+    const spec = metaObj?.spec;
+    if (!spec?.spec_verified) return null;
+    const target = spec.sag_target_mm;
+    const bounds = spec.sag_bounds;
+    if (
+      typeof target !== "number" ||
+      !Array.isArray(bounds) ||
+      typeof bounds[0] !== "number" ||
+      typeof bounds[1] !== "number" ||
+      bounds[1] <= bounds[0]
+    ) {
+      return null;
+    }
+    return { target, min: bounds[0], max: bounds[1] };
+  }, [metaObj]);
+
   const goalsForMeta: string[] = Array.isArray(metaObj?.context?.goals)
     ? metaObj.context.goals
     : [];
@@ -591,22 +626,6 @@ export default function TuneResultScreen() {
 
     return rows;
   }, [isTuneTwo, previousTune, result, wantsAir, airBar, prevAirBar]);
-
-  // Teaser steps for guest
-  // ✅ MUST be above early returns (hook order)
-  const teaserSteps = useMemo(() => {
-    const surface = terrainVal ? cap(terrainVal) : "today's terrain";
-    const goals = goalsForMeta.length
-      ? goalsForMeta.slice(0, 2).map(cap).join(" + ")
-      : null;
-
-    return [
-      `Set sag to the target range and verify free sag. (Surface: ${surface})`,
-      `Ride 5–10 minutes and note: front vs rear balance (too harsh / too soft / deflecting).`,
-      `Make changes 2 clicks at a time (or 0.1–0.2 bar), then re-test.`,
-      goals ? `Focus your test on: ${goals}.` : null,
-    ].filter(Boolean) as string[];
-  }, [terrainVal, goalsForMeta]);
 
   // ✅ EARLY RETURNS MUST BE AFTER ALL HOOKS ABOVE
   if (!restoreTried) {
@@ -1171,49 +1190,12 @@ export default function TuneResultScreen() {
           </Text>
         </View>
 
-        {/* Spring-rate legitimacy check — a credibility signal shown to guests
-            too (NOT blurred, NOT gated). "ok" is one quiet confidence line; a
-            mismatch is a warning card. Unknown / no specs renders nothing. */}
-        {base?.spring_check?.status === "ok" ? (
-          <View style={S.modeHelperRow}>
-            <Ionicons name="checkmark-circle-outline" size={14} color={C.MUTED} />
-            <Text style={S.modeHelperText}>
-              Stock springs suit your weight — dialed in below.
-            </Text>
-          </View>
-        ) : base?.spring_check &&
-          (base.spring_check.status === "marginal" ||
-            base.spring_check.status === "out_of_range") ? (
-          <View style={[S.lockHintBox, { marginTop: 12 }]}>
-            <Ionicons
-              name="warning-outline"
-              size={16}
-              color={(C as any).WARN ?? "#FFC36A"}
-            />
-            <Text style={S.lockHintText}>
-              {(() => {
-                const c = base.spring_check!;
-                const dir = c.direction ?? "different";
-                if (c.component === "both") {
-                  const rates = [
-                    typeof c.stock_fork_nmm === "number"
-                      ? `fork ${c.stock_fork_nmm}`
-                      : null,
-                    typeof c.stock_shock_nmm === "number"
-                      ? `shock ${c.stock_shock_nmm}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(", ");
-                  return `Your weight suggests ${dir} fork and shock springs than stock (${rates} N/mm) — a suspension shop can spec the exact rates.`;
-                }
-                const rate =
-                  c.component === "shock" ? c.stock_shock_nmm : c.stock_fork_nmm;
-                const rateStr = typeof rate === "number" ? ` (${rate} N/mm)` : "";
-                return `Your weight suggests a ${dir} ${c.component} spring than stock${rateStr} — a suspension shop can spec the exact rate.`;
-              })()}
-            </Text>
-          </View>
+        {/* Spring-rate legitimacy check — a per-model credibility signal, so
+            it renders FULL for guests too (never blurred, never gated): it
+            proves the tune knows their exact bike and weight before they've
+            paid. Three severities; unknown / no specs renders nothing. */}
+        {base?.spring_check && base.spring_check.status !== "unknown" ? (
+          <SpringCheckCard check={base.spring_check} C={C} S={S} />
         ) : null}
 
         {/* Fork card — fork compression is revealed (lifted into BlurCard's
@@ -1224,6 +1206,7 @@ export default function TuneResultScreen() {
           C={C}
           S={S}
           title="Fork"
+          sub={forkTypeLabel}
           clear={
             shouldBlur ? (
               <>
@@ -1291,7 +1274,7 @@ export default function TuneResultScreen() {
         </BlurCard>
 
         {/* Shock card */}
-        <BlurCard enabled={shouldBlur} C={C} S={S} title="Shock">
+        <BlurCard enabled={shouldBlur} C={C} S={S} title="Shock" sub={shockTypeLabel}>
           <SettingRow
             icon="settings-outline"
             label="Low-Speed Comp"
@@ -1336,6 +1319,22 @@ export default function TuneResultScreen() {
               params: { id: "shock_sag", value: String(num(result.shock.sag_mm)), unit: "mm", notes: encodeURIComponent(JSON.stringify(base?.notes ?? [])), bikeTitle },
             } as any)}
           />
+          {/* Sag provenance — verified factory window with the recommendation
+              placed inside it (tracks the mode control, same as the row above).
+              Sits in the blurred region while locked, like every other row. */}
+          {sagProvenance && typeof result.shock.sag_mm === "number" ? (
+            <SagRangeBar
+              value={num(result.shock.sag_mm)}
+              target={sagProvenance.target}
+              min={sagProvenance.min}
+              max={sagProvenance.max}
+              caption={`${sagProvenance.target} mm — factory target for your ${
+                bikeTitle !== "Custom Bike" ? bikeTitle : "bike"
+              }`}
+              C={C}
+              S={S}
+            />
+          ) : null}
         </BlurCard>
 
         {/* Why this setup? — collapsible (unlocked only) */}
@@ -1365,43 +1364,62 @@ export default function TuneResultScreen() {
           </View>
         ) : null}
 
-        {/* Today's Test Plan */}
-        {base?.notes?.length ? (
-          shouldBlur ? (
-            <BlurCard enabled C={C} S={S} title="Today's Test Plan">
-              <Text style={S.bodySmall}>Here&apos;s a quick starter plan while your full notes are locked:</Text>
-              <View style={{ marginTop: 8 }}>
-                {teaserSteps.map((n, i) => (
-                  <View key={`ts-${i}`} style={S.stepRow}>
-                    <View style={S.stepBadge}>
-                      <Text style={S.stepBadgeText}>{i + 1}</Text>
-                    </View>
-                    <Text style={S.stepText}>{n}</Text>
+        {/* Locked: "Why this setup?" partial teaser — the first REAL engine
+            reason in the clear (personalized reasoning is the proof of value,
+            same philosophy as the fork-comp reveal above), the rest redacted.
+            The redacted rows are skeleton bars, NOT the real note text — a
+            weak blur must have nothing underneath to leak. Replaces the old
+            generic "starter plan" teaser card (variant: value_stack_v1). */}
+        {shouldBlur && base?.notes?.length ? (
+          <BlurCard
+            enabled
+            C={C}
+            S={S}
+            title="Why this setup?"
+            clear={
+              <>
+                <View style={[S.stepRow, { marginTop: 4 }]}>
+                  <View style={S.stepBadge}>
+                    <Text style={S.stepBadgeText}>1</Text>
                   </View>
-                ))}
-              </View>
-              <View style={[S.lockHintBox, { marginTop: 10 }]}>
-                <Ionicons name="lock-closed" size={16} color={(C as any).WARN ?? "#FFC36A"} />
-                <Text style={S.lockHintText}>
-                  Unlock to see exact clickers + your personalized notes based on your goals/issues.
+                  <Text style={S.stepText}>{base.notes[0]}</Text>
+                </View>
+                <Text style={S.revealTeaser}>
+                  {base.notes.length > 1
+                    ? `${base.notes.length - 1} more reason${
+                        base.notes.length > 2 ? "s" : ""
+                      } + your test plan locked`
+                    : "Your test plan is locked"}
                 </Text>
+              </>
+            }
+          >
+            {(base.notes.length > 1 ? base.notes.slice(1, 5) : [""]).map((_, i) => (
+              <View key={`whylock-${i}`} style={S.stepRow}>
+                <View style={S.stepBadge}>
+                  <Text style={S.stepBadgeText}>{i + 2}</Text>
+                </View>
+                <View style={[S.skelLine, { width: `${86 - i * 13}%` }]} />
               </View>
-            </BlurCard>
-          ) : (
-            <View style={S.card}>
-              <Text style={S.h1}>{isTuneTwo ? "Refined test plan" : "Today's Test Plan"}</Text>
-              <View style={{ marginTop: 4 }}>
-                {base.notes.map((n, i) => (
-                  <View key={`tp-${i}`} style={S.stepRow}>
-                    <View style={S.stepBadge}>
-                      <Text style={S.stepBadgeText}>{i + 1}</Text>
-                    </View>
-                    <Text style={S.stepText}>{n}</Text>
+            ))}
+          </BlurCard>
+        ) : null}
+
+        {/* Today's Test Plan (unlocked only) */}
+        {!shouldBlur && base?.notes?.length ? (
+          <View style={S.card}>
+            <Text style={S.h1}>{isTuneTwo ? "Refined test plan" : "Today's Test Plan"}</Text>
+            <View style={{ marginTop: 4 }}>
+              {base.notes.map((n, i) => (
+                <View key={`tp-${i}`} style={S.stepRow}>
+                  <View style={S.stepBadge}>
+                    <Text style={S.stepBadgeText}>{i + 1}</Text>
                   </View>
-                ))}
-              </View>
+                  <Text style={S.stepText}>{n}</Text>
+                </View>
+              ))}
             </View>
-          )
+          </View>
         ) : null}
 
         {/* Pro tip */}
@@ -1534,10 +1552,163 @@ export default function TuneResultScreen() {
   );
 }
 
+/* -------------------- Sag range bar -------------------- */
+// The verified factory sag window as a track, the factory target as a tick,
+// and the recommended value as the accent dot. Provenance, not a control —
+// no gestures. Only rendered for spec_verified models (the caller gates), so
+// "factory" is never claimed for the DEFAULT_SAG fallback window.
+function SagRangeBar({
+  value,
+  target,
+  min,
+  max,
+  caption,
+  C,
+  S,
+}: {
+  value: number;
+  target: number;
+  min: number;
+  max: number;
+  /** Provenance line above the track, e.g. "107 mm — factory target for your 2024 KTM 250 SX-F". */
+  caption?: string;
+  C: any;
+  S: any;
+}) {
+  const pct = (v: number): `${number}%` =>
+    `${Math.round(clamp((v - min) / (max - min), 0, 1) * 1000) / 10}%`;
+  return (
+    <View style={S.sagProvWrap}>
+      {caption ? <Text style={S.sagProvCaption}>{caption}</Text> : null}
+      <View style={S.sagProvTrack}>
+        <View style={[S.sagProvTick, { left: pct(target) }]} />
+        <View style={[S.sagProvDot, { left: pct(value) }]} />
+      </View>
+      <View style={S.sagProvLabels}>
+        <Text style={S.sagProvLabel}>{min} mm</Text>
+        <Text style={S.sagProvLabel}>{max} mm</Text>
+      </View>
+    </View>
+  );
+}
+
+/* -------------------- Spring check card -------------------- */
+// One card, three severities: ok = compact shield + PASS chip, marginal =
+// amber with the overage stated, out_of_range = red "clickers can't fix
+// this". Deliberately NO exact rate recommendation (flagging a mismatch is
+// far lower liability than speccing a spring — computeSpringCheck's contract).
+function SpringCheckCard({
+  check,
+  C,
+  S,
+}: {
+  check: SpringCheck;
+  C: any;
+  S: any;
+}) {
+  const WARN = C.WARN ?? "#FFC36A";
+  const RED = C.ERROR ?? "#F05252";
+  const GREEN = C.SUCCESS ?? "#22C55E";
+  const dir = check.direction ?? "different";
+  // The check crossed the wire as JSON (client → edge whitelist → back), so
+  // interpolated fields are treated as untrusted despite the TS type.
+  const [wMin, wMax] = Array.isArray(check.weight_range)
+    ? check.weight_range
+    : [null, null];
+  const w =
+    typeof check.rider_weight_lbs === "number" ? check.rider_weight_lbs : null;
+
+  if (check.status === "ok") {
+    // Compact single-row confirmation. Quotes the shock rate; a fork-only
+    // check (no shock spring data) falls back to the fork rate.
+    const rateStr =
+      typeof check.stock_shock_nmm === "number"
+        ? ` (shock ${check.stock_shock_nmm} N/mm)`
+        : typeof check.stock_fork_nmm === "number"
+        ? ` (fork ${check.stock_fork_nmm} N/mm)`
+        : "";
+    const rangeStr =
+      typeof wMin === "number" && typeof wMax === "number"
+        ? ` — factory range ${wMin}–${wMax} lb`
+        : "";
+    return (
+      <View style={[S.card, S.lift, { borderColor: GREEN + "44" }]}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <View style={[S.springIconChip, { backgroundColor: GREEN + "18" }]}>
+            <Ionicons name="shield-checkmark-outline" size={16} color={GREEN} />
+          </View>
+          <Text style={[S.springBody, { flex: 1, marginTop: 0 }]}>
+            {`Stock springs${rateStr} suit ${
+              w != null ? `your ${w} lb` : "your weight"
+            }${rangeStr}`}
+          </Text>
+          <View style={[S.springPassChip, { borderColor: GREEN + "66" }]}>
+            <Text style={[S.springPassText, { color: GREEN }]}>PASS</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  let icon: string;
+  let tint: string;
+  let title: string;
+  let body: string;
+
+  if (check.status === "marginal") {
+    icon = "alert-circle-outline";
+    tint = WARN;
+    title = "Springs: right at the edge";
+    if (typeof wMin === "number" && typeof wMax === "number" && w != null) {
+      const outBy = Math.round(w > wMax ? w - wMax : wMin - w);
+      const side = w > wMax ? "over" : "under";
+      body = `${w} lb is ${outBy} lb ${side} the factory range (${wMin}–${wMax} lb). Stock rates still work — expect to ride the ${dir} end of the clickers.`;
+    } else {
+      body = `Your weight is just outside the factory spring range. Stock rates still work — expect to ride the ${dir} end of the clickers.`;
+    }
+  } else {
+    icon = "warning-outline";
+    tint = RED;
+    title = `${cap(dir)} ${
+      check.component === "both" ? "springs" : `${check.component} spring`
+    } needed`;
+    if (check.component === "both") {
+      const rates = [
+        typeof check.stock_fork_nmm === "number" ? `fork ${check.stock_fork_nmm}` : null,
+        typeof check.stock_shock_nmm === "number" ? `shock ${check.stock_shock_nmm}` : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      const ratesStr = rates ? ` (stock ${rates} N/mm)` : "";
+      body = `Clickers can't fix this — you'll want ${dir} fork and shock springs${ratesStr}. A suspension shop can spec the exact rates.`;
+    } else {
+      const rate =
+        check.component === "shock" ? check.stock_shock_nmm : check.stock_fork_nmm;
+      const rateStr = typeof rate === "number" ? ` (stock ${rate} N/mm)` : "";
+      body = `Clickers can't fix this — you'll want a ${dir} ${check.component} spring${rateStr}. A suspension shop can spec the exact rate.`;
+    }
+  }
+
+  return (
+    <View style={[S.card, S.lift, { borderColor: tint + "44" }]}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+        <View style={[S.springIconChip, { backgroundColor: tint + "18" }]}>
+          <Ionicons name={icon as any} size={16} color={tint} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={S.springTitle}>{title}</Text>
+          <Text style={S.springBody}>{body}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 /* -------------------- Guest blur wrapper -------------------- */
 function BlurCard({
   enabled,
   title,
+  sub,
   clear,
   children,
   C,
@@ -1545,6 +1716,8 @@ function BlurCard({
 }: {
   enabled: boolean;
   title: string;
+  /** Muted suffix after the title (e.g. the verified fork/shock type). */
+  sub?: string;
   /** Optional always-clear teaser rendered above the blurred rows and never
    *  covered by the blur (used to reveal one real value on the locked screen). */
   clear?: React.ReactNode;
@@ -1555,7 +1728,10 @@ function BlurCard({
   return (
     <View style={[S.card, S.lift, { overflow: "hidden" }]}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={S.h1}>{title}</Text>
+        <Text style={[S.h1, { flexShrink: 1, marginRight: 8 }]} numberOfLines={1}>
+          {title}
+          {sub ? <Text style={S.h1Sub}>{`  ·  ${sub}`}</Text> : null}
+        </Text>
         {enabled ? (
           <View style={S.lockPill}>
             <Ionicons name="lock-closed" size={12} color="#fff" />
@@ -1677,6 +1853,7 @@ const makeStyles = (C: {
   WARN?: string;
   ACCENT_2?: string;
   INPUT_BG?: string;
+  CHIP_BG?: string;
 }) =>
   StyleSheet.create({
     // ── Empty / loading states ──────────────────────────────────────
@@ -1806,7 +1983,74 @@ const makeStyles = (C: {
     },
     lift: {},
     h1: { fontSize: 15, fontWeight: "900", color: C.TEXT, marginBottom: 8 },
+    h1Sub: { color: C.MUTED, fontSize: 13, fontWeight: "700" },
     bodySmall: { color: C.MUTED, fontSize: 12, lineHeight: 17, marginTop: 2 },
+
+    // ── Spring check card ───────────────────────────────────────────
+    springIconChip: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    },
+    springTitle: { color: C.TEXT, fontSize: 14, fontWeight: "800" },
+    springBody: { color: C.MUTED, fontSize: 12, lineHeight: 17, marginTop: 3 },
+    springPassChip: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexShrink: 0,
+    },
+    springPassText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+
+    // ── Sag provenance bar ──────────────────────────────────────────
+    sagProvWrap: { paddingTop: 10, paddingBottom: 2 },
+    sagProvCaption: {
+      color: C.MUTED,
+      fontSize: 11,
+      lineHeight: 15,
+      marginBottom: 8,
+    },
+    sagProvTrack: {
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: C.CHIP_BG ?? "rgba(255,255,255,0.06)",
+    },
+    sagProvTick: {
+      position: "absolute",
+      top: -3,
+      width: 2,
+      height: 10,
+      borderRadius: 1,
+      marginLeft: -1,
+      backgroundColor: C.MUTED,
+    },
+    sagProvDot: {
+      position: "absolute",
+      top: -3,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      marginLeft: -5,
+      backgroundColor: C.ACCENT,
+    },
+    sagProvLabels: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginTop: 6,
+    },
+    sagProvLabel: { color: C.MUTED, fontSize: 11 },
+
+    // ── Locked why-teaser redacted rows ─────────────────────────────
+    skelLine: {
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: C.CHIP_BG ?? "rgba(255,255,255,0.06)",
+      marginTop: 4,
+    },
 
     // ── BlurCard lock pill ──────────────────────────────────────────
     lockPill: {

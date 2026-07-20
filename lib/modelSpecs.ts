@@ -20,6 +20,7 @@ export type ModelSpecs = {
   rider_weight_min_lbs: number | null;
   rider_weight_max_lbs: number | null;
   fork_type: string | null;
+  shock_type: string | null;
   has_air_fork: boolean | null;
   spec_verified: boolean | null;
 };
@@ -27,7 +28,7 @@ export type ModelSpecs = {
 const SPEC_COLS =
   "id, make, model, stock_sag_mm, sag_min, sag_max, stock_fork_spring_nmm, " +
   "stock_shock_spring_nmm, rider_weight_min_lbs, rider_weight_max_lbs, " +
-  "fork_type, has_air_fork, spec_verified";
+  "fork_type, shock_type, has_air_fork, spec_verified";
 
 // Per-bike, per-session cache (bikes barely change mid-session; keyed by uuid or
 // the make|model|year identity for guest-local bikes).

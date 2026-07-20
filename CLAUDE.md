@@ -185,10 +185,20 @@ that change none of those skip it.)*
   NONE of the merged work above.
 - `ai-tune` edge function: deployed and verified live post-`57e7edc`
   (sag-target fallback + spec-authoritative fork type) as of 2026-07-18.
+- Results/input value pass (2026-07-19, sprint items 1+2): spring-check card
+  (ok/marginal/out_of_range, above the Fork card, NEVER blurred), sag
+  provenance caption + range bar (`spec_verified` only), "Fork · {type}" /
+  "Shock · {type}" headers, temp chips replacing the drag slider (same single
+  `temp_f` wire number), and the locked-screen value stack —
+  `LOCKED_VARIANT` in `app/tune-results.tsx` is now `"value_stack_v1"`
+  (was `fork_comp_reveal_v1`). `meta.spec` carries display-only
+  `fork_type`/`shock_type`; the persisted `recommended_settings.context`
+  shape is unchanged.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
-  permission alert, and the guest-recovery 30h nudge (all need a dev-client
-  build).
+  permission alert, and the guest-recovery 30h nudge (need a dev-client
+  build); on-device visual pass of the new results cards, locked value
+  stack, and temp chips (existing dev client is fine — pure JS).
 
 ## Sprint focus (in order)
 

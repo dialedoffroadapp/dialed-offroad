@@ -28,7 +28,6 @@ import {
   Easing,
   Keyboard,
   KeyboardAvoidingView,
-  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -115,8 +114,20 @@ const riskKeyForUser = (uid: string) => `riskConsent:${uid}`;
 const riderProfileKey = (uid: string) => `rider_profile_v1_${uid}`;
 const bikeSpecsKey = (bikeId: string) => `bike_specifics_v1_${bikeId}`;
 const customGoalsKey = (uid: string) => `custom_goals_v1_${uid}`;
-const TEMP_MIN = 30;
-const TEMP_MAX = 115;
+
+// Temperature chips: canonical temp_f per band. Same wire shape as the old
+// drag slider — a single °F number (lib/ai.ts temp_f) — no payload change.
+// Band membership (not equality) drives selection, so a restored/prefilled
+// arbitrary value like 62 still highlights its chip.
+const TEMP_CHIPS = [
+  { label: "Cold · <50°", value: 40, min: -Infinity, max: 50 },
+  { label: "Cool · 50–70°", value: 60, min: 50, max: 70 },
+  { label: "Warm · 70–90°", value: 80, min: 70, max: 90 },
+  { label: "Hot · 90°+", value: 95, min: 90, max: Infinity },
+] as const;
+
+const tempChipFor = (v: number | null) =>
+  v == null ? null : TEMP_CHIPS.find((c) => v >= c.min && v < c.max) ?? null;
 
 type StoredRisk = {
   version: string;
@@ -236,146 +247,6 @@ function BikePickerSheet({
         >
           <Text style={S.btnSmallText}>Close</Text>
         </Pressable>
-      </View>
-    </View>
-  );
-}
-
-/* ------------------------------- TempSlider ------------------------------- */
-function TempSlider({
-  value,
-  onChange,
-  C,
-}: {
-  value: number | null;
-  onChange: (v: number) => void;
-  C: ReturnType<typeof useTheme>["colors"];
-}) {
-  const [trackW, setTrackW] = useState(0);
-  const trackWidthRef = useRef(0);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-  const isDraggingRef = useRef(false);
-
-  const updateFromX = (x: number) => {
-    const clamped = Math.max(0, Math.min(trackWidthRef.current, x));
-    const pct = trackWidthRef.current > 0 ? clamped / trackWidthRef.current : 0;
-    onChangeRef.current(Math.round(TEMP_MIN + pct * (TEMP_MAX - TEMP_MIN)));
-  };
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gs) =>
-        Math.abs(gs.dx) > Math.abs(gs.dy) && Math.abs(gs.dx) > 4,
-      onPanResponderGrant: (e) => {
-        isDraggingRef.current = true;
-        updateFromX(e.nativeEvent.locationX);
-      },
-      onPanResponderMove: (e) => updateFromX(e.nativeEvent.locationX),
-      // Don't let ScrollView steal the gesture mid-drag
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderRelease: () => { isDraggingRef.current = false; },
-      onPanResponderTerminate: () => { isDraggingRef.current = false; },
-    })
-  ).current;
-
-  const thumbLeft =
-    trackW > 0 && value != null
-      ? Math.max(
-          0,
-          Math.min(
-            trackW - 24,
-            ((value - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * trackW - 12
-          )
-        )
-      : 0;
-  const celsius = value != null ? Math.round(((value - 32) * 5) / 9) : null;
-
-  return (
-    <View>
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 8,
-        }}
-      >
-        <Text style={{ color: C.MUTED, fontSize: 12, fontWeight: "700" }}>
-          Temperature (optional)
-        </Text>
-        {value != null ? (
-          <Text style={{ color: C.TEXT, fontSize: 14, fontWeight: "800" }}>
-            {value}°F · {celsius}°C
-          </Text>
-        ) : (
-          <Text style={{ color: C.MUTED, fontSize: 12 }}>Drag to set</Text>
-        )}
-      </View>
-      <View
-        style={{ height: 44, justifyContent: "center" }}
-        onLayout={(e) => {
-          const w = e.nativeEvent.layout.width;
-          trackWidthRef.current = w;
-          setTrackW(w);
-        }}
-        onTouchEnd={(e) => {
-          // Tap-to-set only — skip if we just finished a drag so the thumb
-          // doesn't jump on release.
-          if (isDraggingRef.current) return;
-          updateFromX(e.nativeEvent.locationX);
-        }}
-        {...panResponder.panHandlers}
-      >
-        {/* Track background */}
-        <View
-          style={{
-            height: 6,
-            borderRadius: 3,
-            backgroundColor: "rgba(255,255,255,0.08)",
-          }}
-        >
-          {/* Fill */}
-          {value != null && trackW > 0 && (
-            <View
-              style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: ((value - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * trackW,
-                backgroundColor: C.ACCENT,
-                borderRadius: 3,
-              }}
-            />
-          )}
-        </View>
-        {/* Thumb */}
-        {value != null && trackW > 0 && (
-          <View
-            style={{
-              position: "absolute",
-              left: thumbLeft,
-              width: 24,
-              height: 24,
-              borderRadius: 12,
-              backgroundColor: C.ACCENT,
-              top: 10,
-              shadowColor: "#000",
-              shadowOpacity: 0.3,
-              shadowRadius: 4,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: 4,
-            }}
-          />
-        )}
-      </View>
-      <View
-        style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}
-      >
-        <Text style={{ color: C.MUTED, fontSize: 11 }}>{TEMP_MIN}°F</Text>
-        <Text style={{ color: C.MUTED, fontSize: 11 }}>{TEMP_MAX}°F</Text>
       </View>
     </View>
   );
@@ -1117,6 +988,11 @@ export default function TuneScreen() {
             spec_verified: modelSpecs?.spec_verified ?? false,
             sag_target_mm: sagBounds.target,
             sag_bounds: [sagBounds.min, sagBounds.max],
+            // Display-only (results headers + sag provenance) — NOT part of
+            // the persisted recommended_settings.context, whose save path
+            // picks its fields explicitly (app/tune-results.tsx).
+            fork_type: modelSpecs?.fork_type ?? null,
+            shock_type: modelSpecs?.shock_type ?? null,
           },
           onboarding: isOnboarding ? true : false,
           guest: !user?.id,
@@ -1669,7 +1545,26 @@ export default function TuneScreen() {
             onSubmitEditing={Keyboard.dismiss}
           />
 
-          <TempSlider value={tempFahr} onChange={setTempFahr} C={C} />
+          <Text style={[S.label, { marginTop: 12 }]}>Temperature (optional)</Text>
+          <View style={S.rowWrap}>
+            {TEMP_CHIPS.map((chip) => {
+              const on = tempChipFor(tempFahr)?.value === chip.value;
+              return (
+                <Pressable
+                  key={chip.value}
+                  onPress={() => {
+                    setTempFahr(on ? null : chip.value);
+                    Haptics.selectionAsync();
+                  }}
+                  style={[S.pill, on && S.pillActive]}
+                >
+                  <Text style={[S.pillText, on && S.pillTextActive]}>
+                    {chip.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
           <Text style={[S.label, { marginTop: 12 }]}>Elevation (optional)</Text>
           <View style={S.rowWrap}>
