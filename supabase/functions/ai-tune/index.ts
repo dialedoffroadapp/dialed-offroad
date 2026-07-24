@@ -19,6 +19,11 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "
 
 type ZeroInput = {
   mode?: "zero_baseline_v1" | "tune2_v1";
+  // Pre-auth attribution (Workstream C): a client-minted random uuid sent
+  // only by signed-out baseline callers. Stamped onto the anon tune_calls
+  // row so claim_anon_tune_calls can attribute it after signup. Ignored for
+  // authenticated callers (their user_id is already correct).
+  anon_id?: string;
   input: {
     // baseline context
     make?: string;
@@ -1660,7 +1665,14 @@ export type HandlerDeps = {
   /** Count this caller's ai-tune calls in the last hour. null = infra failure (fail-open). */
   countRecentCalls: (key: { userId?: string; ip?: string }) => Promise<number | null>;
   /** Record this call for future rate-limit windows. Must never throw. */
-  recordCall: (row: { userId: string | null; ip: string | null; mode: string }) => Promise<void>;
+  recordCall: (row: {
+    userId: string | null;
+    ip: string | null;
+    mode: string;
+    // Optional so pre-existing test fakes keep compiling; null for
+    // authenticated callers and for anon callers that sent no/garbage id.
+    anonId?: string | null;
+  }) => Promise<void>;
   /** Parse free-text feedback (Change 2). null = skip (fail-open). */
   parseFreeText: (text: string) => Promise<unknown | null>;
 };
@@ -1723,12 +1735,13 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
-  recordCall: async ({ userId, ip, mode }) => {
+  recordCall: async ({ userId, ip, mode, anonId }) => {
     try {
       const { error } = await getServiceClient().from("tune_calls").insert({
         user_id: userId,
         ip,
         mode,
+        anon_id: anonId ?? null,
       });
       if (error) throw error;
     } catch (e) {
@@ -1845,6 +1858,20 @@ function callerIp(req: Request): string {
   );
 }
 
+// Strict uuid gate for the client-supplied anon_id — anything else (including
+// the app's legacy "1783553470201_…" local ids) must never reach the uuid
+// column.
+const ANON_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function anonIdFrom(body: ZeroInput, userId: string | null): string | null {
+  if (userId) return null; // authenticated rows are already attributed
+  const raw = body.anon_id;
+  return typeof raw === "string" && ANON_ID_RE.test(raw)
+    ? raw.toLowerCase()
+    : null;
+}
+
 /* ------------------------------ Handler ------------------------------ */
 
 export function makeHandler(deps: HandlerDeps = defaultDeps) {
@@ -1888,6 +1915,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         userId: userId ?? null,
         ip: userId ? null : ip,
         mode,
+        anonId: anonIdFrom(body, userId),
       });
 
       // ------------------------ MODE: Tune Two (feedback refinement) ------------------------

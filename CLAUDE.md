@@ -86,6 +86,14 @@ a `usage_events_event_type_check` migration).
   prod.** Pushing from a branch missing an applied migration diverges history.
   `release/v2.2.0` satisfies this (it merged `feat/bike-entry-canonicalization`
   first, which carries all applied prod migrations — through `20260715150000`).
+- **v2.3.0 batched push — HOLD until release assembly.** `20260724090000`
+  (oauth event types, Workstream A) and `20260724110000` (tune_calls anon
+  claim, Workstream C) push TOGETHER from the release branch cut off `main`
+  after A, B, and C have all merged — one branch satisfies the superset rule
+  in one shot. Never push either from a feature branch. Order within
+  assembly: migration first, THEN the `ai-tune` edge redeploy — the new edge
+  inserts `anon_id`, which fails (and silently drops rate-limit rows) if the
+  column doesn't exist yet. Old edge + new migration is harmless.
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
