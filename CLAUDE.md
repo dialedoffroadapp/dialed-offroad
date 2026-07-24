@@ -223,10 +223,16 @@ that change none of those skip it.)*
   mount) and `hook_ride_armed` are in the union but analytics-dark until the
   assembly CHECK migration (see checklist + landmine). Adopted WS-B's
   component-test infra verbatim (react-test-renderer, .test.tsx testMatch,
-  extended react-native stub) so the merge is byte-identical. **Onboarding
-  Slide 2 update is HELD un-edited pending copy approval** (fork 1/3):
-  planned change swaps the static clicker card for `<LoopPreview />` +
-  headline revision; the onboarding state machine is untouched either way.
+  extended react-native stub) so the merge is byte-identical. **Slide 2
+  shipped (fork 1/3 approved 2026-07-24):** headline "Three steps. / Then it
+  learns every ride."; the static clicker card (and its ClickerRow + 3
+  icons + styles) replaced by `<LoopPreview />` with a fixed dark palette
+  (the overlay ignores app theme) and `marginHorizontal: 0` (slide root
+  already pads 28). State machine untouched. **Copy decisions in force:**
+  entries live ONLY in `DEFAULT_LOOP_PREVIEW_ENTRIES`; no em dashes in
+  loop-preview copy; v3 reads in **bar, not psi** (user preferred psi but
+  every in-product air display is bar; consistency rule won) — if the app
+  ever switches air display to psi, update v3 in the same commit.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client

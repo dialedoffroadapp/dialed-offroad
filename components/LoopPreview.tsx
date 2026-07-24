@@ -15,7 +15,7 @@
 // No em dashes in any user-facing string (copy rule).
 
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { useTheme } from "../lib/theme";
 
 export type LoopPreviewEntry = {
@@ -25,24 +25,44 @@ export type LoopPreviewEntry = {
   text: string;
 };
 
+// Approved copy (WS-D fork 1/3, 2026-07-24). v3 stays in bar, not psi: every
+// user-facing air-pressure surface (results rows, summary chips, deltas,
+// Slide 2) displays bar, and in-product consistency won over psi preference.
+// 0.2 bar sits inside the engine's real ±0.3 bar per-step clamp.
 export const DEFAULT_LOOP_PREVIEW_ENTRIES: LoopPreviewEntry[] = [
   { version: "v1", text: "Baseline set for your weight and bike" },
-  { version: "v2", text: "Softened compression 2 clicks after braking chatter" },
-  { version: "v3", text: "Sag dialed in for 4,800 ft elevation" },
+  { version: "v2", text: "You said: harsh on braking bumps. Fork comp out 2 clicks" },
+  { version: "v3", text: "Air pressure down 0.2 bar for 4,800 ft elevation" },
 ];
+
+export type LoopPreviewPalette = {
+  CARD: string;
+  TEXT: string;
+  MUTED: string;
+  ACCENT: string;
+  BORDER: string;
+};
 
 export function LoopPreview({
   title = "It learns every time you ride",
   entries = DEFAULT_LOOP_PREVIEW_ENTRIES,
+  palette,
+  style,
 }: {
   title?: string;
   entries?: LoopPreviewEntry[];
+  /** Fixed-palette contexts (the onboarding overlay is hard-dark regardless
+   *  of app theme) pass their own colors; default is the app theme. */
+  palette?: LoopPreviewPalette;
+  /** Layout override for hosts with their own horizontal padding. */
+  style?: StyleProp<ViewStyle>;
 }) {
-  const { colors: C } = useTheme();
+  const { colors: themeColors } = useTheme();
+  const C = palette ?? themeColors;
   const S = React.useMemo(() => makeStyles(C), [C]);
 
   return (
-    <View style={S.card}>
+    <View style={[S.card, style]}>
       <View style={S.headerRow}>
         <Text style={S.title}>{title}</Text>
         <View style={S.previewTag}>

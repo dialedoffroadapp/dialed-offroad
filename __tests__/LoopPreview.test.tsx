@@ -58,11 +58,13 @@ test("renders the default title, PREVIEW tag, and all three approved entries", (
   }
 });
 
-test("default entry set is the approved working copy (single source for both surfaces)", () => {
+test("default entry set is the approved final copy (single source for both surfaces)", () => {
+  // WS-D fork 1/3 approved set. v3 in bar, not psi: matches every in-product
+  // air-pressure display, and 0.2 bar is inside the engine's ±0.3 bar clamp.
   expect(DEFAULT_LOOP_PREVIEW_ENTRIES).toEqual([
     { version: "v1", text: "Baseline set for your weight and bike" },
-    { version: "v2", text: "Softened compression 2 clicks after braking chatter" },
-    { version: "v3", text: "Sag dialed in for 4,800 ft elevation" },
+    { version: "v2", text: "You said: harsh on braking bumps. Fork comp out 2 clicks" },
+    { version: "v3", text: "Air pressure down 0.2 bar for 4,800 ft elevation" },
   ]);
   // Copy rule: no em dashes anywhere in user-facing preview strings.
   for (const entry of DEFAULT_LOOP_PREVIEW_ENTRIES) {
