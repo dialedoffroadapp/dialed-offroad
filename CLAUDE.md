@@ -62,6 +62,25 @@ logs its outcome in `heard_card_shown` meta (`surface: "notif_prompt"`,
 `outcome: granted|denied|declined`) — no dedicated event type (new types need
 a `usage_events_event_type_check` migration).
 
+**Fleet fingerprint (v2.3.0+):** every event's meta carries `app_version`,
+stamped in `logEvent` at generation time — queued pre-auth events keep their
+origin version through the flush, so absence of `app_version` means a
+pre-v2.3.0 generator, not a pre-auth event. Prefer it as the general
+version gate.
+
+**Pre-v2.3.0 tune-attribution correction (Workstream C audit, 2026-07-24):**
+before v2.3.0, pre-auth onboarding tunes exist in `tune_calls` only as
+`user_id IS NULL` ip-only rows — attributed rows therefore massively
+undercount "generated a tune" for signups (July 2026: 25% attributed vs ~91%
+add-a-bike). For historical windows, estimate the tune-before-signup rate as
+`min(1, anon zero_baseline_v1 rows / signups)` over the same window.
+Assumptions: ~1 pre-auth tune per onboarding device (measured 1.07 =
+930 rows / 872 distinct IPs, Jul 7–24) and anon rows ≈ onboarding guests
+(direct-API abuse is bounded by the 10/hr per-IP limit). **Never row-link
+historical anon rows to users:** auth audit logs store no IPs, and time-window
+matching is ambiguous (only 8 of 292 July guest-tune signups had a unique
+candidate in a 2h window).
+
 ## Data model & Supabase
 
 - **Two parallel data models — know which you're touching:** legacy **`sessions`**
@@ -160,6 +179,12 @@ a `usage_events_event_type_check` migration).
 - **Shadow writes are non-fatal by design.** `setupVersions` helpers throw;
   callers catch and fall back to `lib/feedbackRetry.ts`. Don't let them block the
   tune/refine flow.
+- **Usage-event queue limits (known, accepted 2026-07-24):** the pre-auth
+  AsyncStorage queue keeps only the LAST 25 events (older silently dropped)
+  and the flush discards each event's `queued_at` — flushed rows get
+  signup-time `created_at`. Generation time is unrecoverable; only
+  `meta.app_version` reflects the generating binary. Don't "fix" these in
+  passing — changing either alters analytics semantics.
 
 ## How to work here
 

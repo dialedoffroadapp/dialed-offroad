@@ -1,5 +1,6 @@
 // lib/usage.ts
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import { supabase } from "./supabase";
 
 const FUNNEL_ID_KEY = "dialed_onboarding_funnel_id_v1";
@@ -113,6 +114,21 @@ function newId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// v2.3.0+ fleet fingerprint: every event's meta carries the version of the
+// binary that GENERATED it. Stamped once in logEvent (before queue/insert
+// forks), so queued pre-auth events keep their origin version even when a
+// later binary flushes them — absence of app_version means a pre-v2.3.0
+// generator. Never overrides a caller-provided value.
+const APP_VERSION: string | null =
+  (Constants as any)?.expoConfig?.version ?? null;
+
+function withAppVersion(meta: Record<string, any>): Record<string, any> {
+  if (APP_VERSION && meta.app_version === undefined) {
+    return { ...meta, app_version: APP_VERSION };
+  }
+  return meta;
+}
+
 async function readQueuedUsageEvents(): Promise<QueuedUsageEvent[]> {
   try {
     const raw = await AsyncStorage.getItem(USAGE_QUEUE_KEY);
@@ -205,7 +221,7 @@ export async function logEvent(
   options?: LogEventOptions
 ): Promise<void> {
   try {
-    const cleaned = meta ? (pruneMeta(meta) as any) : {};
+    const cleaned = withAppVersion((meta ? (pruneMeta(meta) as any) : {}) ?? {});
     const { data: auth } = await supabase.auth.getUser();
     if (!auth?.user?.id) {
       if (options?.allowAnonymous && options?.queueIfAnonymous) {
