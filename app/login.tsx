@@ -28,6 +28,7 @@ import {
 import { deriveIsPro } from "../lib/proUtils";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { claimAnonTuneCalls } from "../lib/tuneAttribution";
 import { logEvent } from "../lib/usage";
 
 function isOnboardingStep(value: unknown): value is OnboardingStep {
@@ -88,6 +89,10 @@ function LoginInner() {
       if (error) throw error;
 
       toast.show("Signed in ✅", { kind: "success" });
+      // Attribute pre-auth tune_calls made on this device (guest tune → "I
+      // already have an account" → sign-in lands here, not signup.tsx).
+      // TODO(feat/social-auth merge): fold into completeAuthSuccess.
+      await claimAnonTuneCalls();
       await logEvent("sign_in");
 
       // Record locally that this device's user has an account — downstream

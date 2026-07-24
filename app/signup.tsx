@@ -27,6 +27,7 @@ import {
 import { normalizeBikeStrings, resolveModelId } from "../lib/bikes";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { claimAnonTuneCalls } from "../lib/tuneAttribution";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 function SignupInner() {
@@ -305,6 +306,13 @@ function SignupInner() {
       const isNewAccount =
         !Array.isArray(signUpData?.user?.identities) ||
         (signUpData?.user?.identities?.length ?? 0) > 0;
+      // Attribute this device's pre-auth tune_calls rows to the new session —
+      // same trigger point as the pre-auth analytics flush (logEvent's first
+      // authenticated call, right below). Fail-silent, server-enforced.
+      // TODO(feat/social-auth merge): move this single call into
+      // completeAuthSuccess so email + Apple/Google all claim through the one
+      // post-auth path.
+      await claimAnonTuneCalls();
       await logEvent(isNewAccount ? "sign_up" : "sign_in");
 
       // Funnel completion for ANY new account created during active (incomplete)

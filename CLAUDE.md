@@ -202,11 +202,29 @@ that change none of those skip it.)*
   (was `fork_comp_reveal_v1`). `meta.spec` carries display-only
   `fork_type`/`shock_type`; the persisted `recommended_settings.context`
   shape is unchanged.
+- **`feat/tune-attribution` (v2.3.0 Workstream C, 2026-07-24, off `main`):**
+  pre-auth onboarding tune attribution. Client mints one random `anon_id`
+  uuid (`lib/tuneAttribution.ts`, AsyncStorage); signed-out `generateTune`
+  sends it top-level in the wire payload; the `ai-tune` edge stamps it on
+  anon `tune_calls` rows only. `claim_anon_tune_calls(p_anon_id)` RPC
+  (migration `20260724110000` — STAGED, NOT PUSHED; see batched-push rule)
+  attributes rows server-side: exact anon_id + `user_id IS NULL` one-shot
+  guard + 48h window; table stays deny-all. Claim fires at auth success in
+  `signup.tsx` and `login.tsx` next to the analytics flush, then rotates the
+  stored id — TODO markers in both files: fold into `completeAuthSuccess`
+  when `feat/social-auth` merges. Historical row-level backfill ruled out;
+  use the aggregate correction factor (see counting rule). Ride-along:
+  `meta.app_version` on all events. Edge NOT redeployed (assembly-time, after
+  the migration). Known pre-existing red: engine_test #10's authenticated leg
+  fails offline on `main` too (`enforceBaselineCredit`'s service client isn't
+  dep-injected) — not introduced by this branch.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
   build); on-device visual pass of the new results cards, locked value
-  stack, and temp chips (existing dev client is fine — pure JS).
+  stack, and temp chips (existing dev client is fine — pure JS); on-device
+  E2E of the pre-auth tune → signup → claim flow against a pushed migration
+  (unit/handler suites cover each hop, not the live RPC).
 
 ## Sprint focus (in order)
 

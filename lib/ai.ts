@@ -6,6 +6,7 @@ import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { SpringCheck } from "./modelSpecs";
 import { DEFAULT_SAG, SagBounds } from "./sagBounds";
+import { getOrCreateAnonTuneId } from "./tuneAttribution";
 import { isUuid } from "./uuid";
 
 /**
@@ -183,8 +184,21 @@ export async function generateTune(
   // only decide for unmatched bikes.
   hasAirFork?: boolean
 ): Promise<ZeroTuneResult> {
+  // Pre-auth attribution (Workstream C): signed-out callers send the device's
+  // anon id so the server-side tune_calls row can be claimed after signup.
+  // getSession is local (no network); authenticated callers send nothing —
+  // their row is user_id-stamped by the edge function already.
+  let anonId: string | null = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (!data?.session?.user?.id) anonId = await getOrCreateAnonTuneId();
+  } catch {
+    // attribution is best-effort; the tune request goes out regardless
+  }
+
   const payload = {
     mode: "zero_baseline_v1" as const,
+    ...(anonId ? { anon_id: anonId } : {}),
     input: {
       make: input.make?.trim() || undefined,
       model: input.model?.trim() || undefined,
