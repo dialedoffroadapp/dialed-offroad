@@ -164,10 +164,12 @@ a `usage_events_event_type_check` migration).
 
 ## How to work here
 
-- **Branch discipline:** default branch is `main`; release work on `release/*`;
-  features on `feat/*`. **Don't commit or push unless asked. Ask before pushing
-  to the prod DB or acting on a release branch.** Keep commits scoped to one
-  logical change.
+- **Branch discipline (convention set 2026-07-24):** `main` tracks the shipped
+  release — it was fast-forwarded to `release/v2.2.0` (build 35, the live
+  binaries) and stays the source of truth. Feature branches come off `main`;
+  release branches are cut from `main`. **Don't commit or push unless asked.
+  Ask before pushing to the prod DB or acting on a release branch.** Keep
+  commits scoped to one logical change.
 - **Audit before building.** Much of this app already exists under other names
   (e.g. `setup_versions`/`ride_feedback` already cover "sessions/refinements").
   Search first; extend rather than rebuild.
@@ -214,9 +216,9 @@ that change none of those skip it.)*
   surfacing logic is sound (4/4 returning-eligible users got the card); the
   gaps were split-event undercounting, below-fold placement (11 impressions,
   0 answers), and the dead notification arm. Meta-only — no migration.
-  **`main` is stale (pre-v2.1.0, no release ever merged back)** — this branch
-  is off `release/v2.2.0` for that reason; do not branch feature work off
-  `main` until a release branch is merged into it.
+  Based on `release/v2.2.0`'s tip = `main`'s tip since the 2026-07-24
+  fast-forward, so it merges onto `main` clean (verified; so does
+  `feat/social-auth`, and the two merge clean with each other).
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
