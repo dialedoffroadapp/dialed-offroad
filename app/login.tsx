@@ -2,7 +2,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
+import { completeAuthSuccess } from "../lib/authSuccess";
 import type { OnboardingStep } from "../lib/onboarding";
 import {
   readLocalOnboardingState,
@@ -26,6 +27,13 @@ import {
   useOnboarding,
 } from "../lib/onboarding";
 import { deriveIsPro } from "../lib/proUtils";
+import {
+  isAppleSignInAvailable,
+  isGoogleSignInAvailable,
+  signInWithApple,
+  signInWithGoogle,
+  type SocialProvider,
+} from "../lib/socialAuth";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { logEvent } from "../lib/usage";
@@ -47,7 +55,7 @@ function LoginInner() {
   const toast = useToast();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { markAccountCreated, setStep } = useOnboarding();
+  const { state, markAccountCreated, setStep } = useOnboarding();
   const params = useLocalSearchParams<{ email?: string }>();
 
   const [email, setEmail] = useState(
@@ -62,11 +70,36 @@ function LoginInner() {
   const [loadingIn, setLoadingIn] = useState(false);
   const [loadingReset, setLoadingReset] = useState(false);
 
+  // Provider buttons render ONLY when the native module is in this binary —
+  // same gating as app/signup.tsx (lib/socialAuth.ts guards).
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  const [googleAvailable] = useState(() => isGoogleSignInAvailable());
+  const [providerLoading, setProviderLoading] = useState<SocialProvider | null>(
+    null
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    isAppleSignInAvailable()
+      .then((ok) => {
+        if (mounted) setAppleAvailable(ok);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const emailValid = useMemo(
     () => /^\S+@\S+\.\S+$/.test(email.trim()),
     [email]
   );
   const canSubmitPw = emailValid && password.length > 0;
+  const ageMinutesSinceLastStep = useMemo(() => {
+    const parsed = Date.parse(state.lastUpdatedAt);
+    const ageMs = Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
+    return Math.round(ageMs / 60000);
+  }, [state.lastUpdatedAt]);
 
   const onSignIn = async () => {
     setEmailErr("");
@@ -196,6 +229,57 @@ function LoginInner() {
     }
   };
 
+  const onProviderSignIn = async (provider: SocialProvider) => {
+    setProviderLoading(provider);
+    try {
+      const result =
+        provider === "apple"
+          ? await signInWithApple()
+          : await signInWithGoogle();
+
+      // Sheet dismissed — stay on login, nothing was touched.
+      if (result.status === "cancelled") return;
+      if (result.status === "failed") {
+        toast.show(result.message, { kind: "error" });
+        return;
+      }
+
+      // Same-email accounts auto-link in Supabase, so an email/password user
+      // tapping a provider lands in their existing account (isNewAccount
+      // false). Record accountCreated like onSignIn does — downstream auth
+      // routing (results CTA) uses it to route to /login, not /signup.
+      await markAccountCreated();
+
+      // mode "login": returning users get email login's heal-only profile
+      // write — never a downgrade of their onboarding columns.
+      await completeAuthSuccess({
+        userId: result.userId,
+        isNewAccount: result.isNewAccount,
+        method: provider,
+        displayName: result.displayName,
+        mode: "login",
+        onboardingStep: state.onboardingStep,
+        onboardingComplete: state.onboardingComplete,
+        ageMinutesSinceLastStep,
+        notify: () =>
+          toast.show(
+            result.isNewAccount
+              ? "Account created. You’re signed in ✅"
+              : "Signed in ✅",
+            { kind: "success" }
+          ),
+        markAccountCreated,
+        setStep,
+        replace: (route) => router.replace(route as never),
+        returnTo: "/(tabs)",
+      });
+    } catch (e: any) {
+      toast.show(e?.message ?? "Sign-in failed", { kind: "error" });
+    } finally {
+      setProviderLoading(null);
+    }
+  };
+
   const onResetPassword = async () => {
     const emailClean = email.trim();
 
@@ -255,6 +339,64 @@ function LoginInner() {
           <Text style={styles.subtitle}>
             Dial in your bike faster with zero-based tunes.
           </Text>
+
+          {/* Provider sign-in (feature-gated; Apple first on iOS, Google only
+              on Android — same behavior as app/signup.tsx, no hint line). */}
+          {(appleAvailable || googleAvailable) && (
+            <View style={styles.providerBlock}>
+              {appleAvailable && (
+                <Pressable
+                  onPress={() => onProviderSignIn("apple")}
+                  disabled={providerLoading !== null || loadingIn}
+                  style={({ pressed }) => [
+                    styles.providerBtn,
+                    pressed && { opacity: 0.9 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Apple"
+                >
+                  {providerLoading === "apple" ? (
+                    <ActivityIndicator color="#000" />
+                  ) : (
+                    <>
+                      <Ionicons name="logo-apple" size={18} color="#000" />
+                      <Text style={styles.providerBtnText}>
+                        Continue with Apple
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              )}
+              {googleAvailable && (
+                <Pressable
+                  onPress={() => onProviderSignIn("google")}
+                  disabled={providerLoading !== null || loadingIn}
+                  style={({ pressed }) => [
+                    styles.providerBtn,
+                    pressed && { opacity: 0.9 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Google"
+                >
+                  {providerLoading === "google" ? (
+                    <ActivityIndicator color="#000" />
+                  ) : (
+                    <>
+                      <Ionicons name="logo-google" size={18} color="#3c4043" />
+                      <Text style={styles.providerBtnText}>
+                        Continue with Google
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              )}
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+            </View>
+          )}
 
           {/* Form */}
           <View style={styles.form}>
@@ -430,6 +572,42 @@ const makeStyles = (C: ThemeTokens) =>
       fontSize: 15,
       lineHeight: 21,
       marginBottom: 28,
+    },
+
+    providerBlock: {
+      marginBottom: 18,
+    },
+    providerBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      backgroundColor: "#fff",
+      borderRadius: 12,
+      paddingVertical: 14,
+      minHeight: 50,
+      marginBottom: 10,
+    },
+    providerBtnText: {
+      color: "#000",
+      fontWeight: "700",
+      fontSize: 15,
+    },
+    dividerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginTop: 4,
+    },
+    dividerLine: {
+      flex: 1,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: C.BORDER,
+    },
+    dividerText: {
+      color: "rgba(255,255,255,0.35)",
+      fontSize: 12,
+      fontWeight: "600",
     },
 
     form: {

@@ -56,7 +56,13 @@ export type UsageEvent =
   | "trial_value_card_shown"
   | "trial_value_card_dismissed"
   | "winback_screen_shown"
-  | "winback_cta_tapped";
+  | "winback_cta_tapped"
+  // ⚠️ ANALYTICS-DARK until 20260724090000_usage_events_oauth_event_types.sql
+  // is pushed: the live CHECK constraint rejects these inserts. Never log them
+  // with queueIfAnonymous before that migration applies — one queued unknown
+  // type fails the whole pre-auth flush batch and drops the funnel events.
+  | "oauth_started"
+  | "oauth_failed";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see
