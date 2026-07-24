@@ -1,10 +1,14 @@
-// Minimal jest for pure lib logic — node env, ts-jest, no react-native
-// preset and no native modules. Native/Expo imports that the lib modules
-// pull in transitively are stubbed via moduleNameMapper.
+// Minimal jest — node env, ts-jest, no react-native preset and no native
+// modules. Native/Expo imports that the lib modules pull in transitively are
+// stubbed via moduleNameMapper. Component tests (*.test.tsx) render with
+// react-test-renderer against the same stubs — see stubs/react-native.js.
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  testMatch: ["<rootDir>/__tests__/**/*.test.ts"],
+  testMatch: [
+    "<rootDir>/__tests__/**/*.test.ts",
+    "<rootDir>/__tests__/**/*.test.tsx",
+  ],
   setupFiles: ["<rootDir>/__tests__/stubs/jest-setup.js"],
   moduleNameMapper: {
     "^@react-native-async-storage/async-storage$":
