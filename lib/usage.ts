@@ -56,7 +56,13 @@ export type UsageEvent =
   | "trial_value_card_shown"
   | "trial_value_card_dismissed"
   | "winback_screen_shown"
-  | "winback_cta_tapped";
+  | "winback_cta_tapped"
+  // WS-D loop surfacing. NOT whitelisted in prod yet: the CHECK migration is
+  // authored at v2.3.0 release assembly (after WS-A's 20260724090000 merges —
+  // see CLAUDE.md). loop_preview_shown queues pre-auth, so no store build may
+  // ship these events before that migration lands (queue-poison hazard).
+  | "loop_preview_shown"
+  | "hook_ride_armed";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

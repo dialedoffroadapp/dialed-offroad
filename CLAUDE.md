@@ -86,6 +86,16 @@ a `usage_events_event_type_check` migration).
   prod.** Pushing from a branch missing an applied migration diverges history.
   `release/v2.2.0` satisfies this (it merged `feat/bike-entry-canonicalization`
   first, which carries all applied prod migrations — through `20260715150000`).
+- **v2.3.0 release-assembly checklist item (Workstream D, DO NOT FORGET):**
+  after A, B, C, D merge and the release branch is cut, author a NEW
+  `usage_events_event_type_check` migration ON THE RELEASE BRANCH, sequenced
+  after WS-A's `20260724090000`, re-adding the constraint with A's full oauth
+  list PLUS `loop_preview_shown` and `hook_ride_armed`. It must land in the
+  batched push BEFORE any store build ships from the release branch —
+  `loop_preview_shown` queues pre-auth, and one unwhitelisted queued type
+  rejects the ENTIRE flush batch (the oauth queue-poison failure mode). D
+  deliberately ships no migration file on its own branch: the re-added
+  constraint list needs A's merged migration to be visible first.
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
@@ -152,6 +162,12 @@ a `usage_events_event_type_check` migration).
 - **Shadow writes are non-fatal by design.** `setupVersions` helpers throw;
   callers catch and fall back to `lib/feedbackRetry.ts`. Don't let them block the
   tune/refine flow.
+- **`loop_preview_shown` / `hook_ride_armed` are unwhitelisted until the
+  assembly migration** (see checklist item in Data model). Guest sessions on
+  dev/TestFlight builds of `feat/loop-surfacing` will queue
+  `loop_preview_shown` pre-auth — if such a build's user signs up BEFORE the
+  migration lands in prod, the whole queued funnel batch is rejected at
+  flush. Accepted for dev; the store build must ship after the migration.
 
 ## How to work here
 
@@ -194,11 +210,30 @@ that change none of those skip it.)*
   (was `fork_comp_reveal_v1`). `meta.spec` carries display-only
   `fork_type`/`shock_type`; the persisted `recommended_settings.context`
   shape is unchanged.
+- **`feat/loop-surfacing` (v2.3.0 Workstream D, 2026-07-24, off `main`):**
+  Ride & Refine loop surfaced pre-paywall. `components/LoopPreview.tsx` —
+  faux 3-entry timeline (PREVIEW-tagged, faded rail, hardcoded entries in
+  `DEFAULT_LOOP_PREVIEW_ENTRIES`, the single copy source for all surfaces) —
+  renders on locked tune-results between the why-teaser and the unlock CTA,
+  never blurred. `components/RideItHook.tsx` — post-reveal line + quiet
+  button under the Shock card (unlocked, non-TuneTwo) — arms the ride
+  check-in via the save flow's idempotent version-ensure +
+  `scheduleRideReminder`; NO permission prompt (ask stays at
+  feedback-submit). Events `loop_preview_shown` (queued pre-auth, once per
+  mount) and `hook_ride_armed` are in the union but analytics-dark until the
+  assembly CHECK migration (see checklist + landmine). Adopted WS-B's
+  component-test infra verbatim (react-test-renderer, .test.tsx testMatch,
+  extended react-native stub) so the merge is byte-identical. **Onboarding
+  Slide 2 update is HELD un-edited pending copy approval** (fork 1/3):
+  planned change swaps the static clicker card for `<LoopPreview />` +
+  headline revision; the onboarding state machine is untouched either way.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
   build); on-device visual pass of the new results cards, locked value
-  stack, and temp chips (existing dev client is fine — pure JS).
+  stack, and temp chips (existing dev client is fine — pure JS); on-device
+  visual pass of the locked-screen LoopPreview (~200pt budget) and the
+  post-reveal hook, plus the hook's reminder arming end-to-end.
 
 ## Sprint focus (in order)
 
