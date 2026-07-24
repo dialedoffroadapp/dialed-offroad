@@ -525,6 +525,20 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* ── Ride check-in ── outcome or first-ride prompt; Home is the
+            initial tab, so this is the loop's primary surface. First content
+            block, above the presets rail: 11 impressions produced 0 answers
+            while it sat below the fold. Renders only when eligible (max one
+            instance per session across Home + Tune). Paywall decliners are
+            excluded — they have no revealed setup to ride on, and the unlock
+            banner owns their Home real estate. */}
+        {!isPaywallDecliner && (
+          <OutcomeCheckinCard
+            surface="home"
+            style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
+          />
+        )}
+
         {/* ── My Presets ── */}
         <View style={styles.card}>
           <SectionHeader
@@ -626,18 +640,6 @@ export default function HomeScreen() {
             </ScrollView>
           )}
         </View>
-
-        {/* ── Ride check-in ── outcome or first-ride prompt; Home is the
-            initial tab, so this is the loop's primary surface. Renders only
-            when eligible (max one instance per session across Home + Tune).
-            Paywall decliners are excluded — they have no revealed setup to
-            ride on, and the unlock banner owns their Home real estate. */}
-        {!isPaywallDecliner && (
-          <OutcomeCheckinCard
-            surface="home"
-            style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
-          />
-        )}
 
         {/* ── Trial moments ── day-5 countdown recap or day-2 value card;
             pickTrialCard guarantees at most one renders. */}
