@@ -57,7 +57,12 @@ episode; >1h backgrounded resets the one-card-per-session latch).
 
 **Check-in analytics counting rule:** a surfaced check-in card logs
 `checkin_shown` (outcome mode) **or** `preride_shown` (first-ride mode) —
-total check-in surfacing = the SUM of both. The notification-permission prompt
+total check-in surfacing = the SUM of both. Both carry `checkin_source` meta
+(`home_mount | warm_resume | notification | tune_focus`), threaded through the
+card's refine params so `feedback_submitted` meta has `checkin_source` exactly
+when the submission started from a card (absent = results-screen / garage /
+Bike Home entries — most submissions, by design). The key's presence also
+fingerprints v2.3.0+ clients. The notification-permission prompt
 logs its outcome in `heard_card_shown` meta (`surface: "notif_prompt"`,
 `outcome: granted|denied|declined`) — no dedicated event type (new types need
 a `usage_events_event_type_check` migration).

@@ -39,6 +39,9 @@ export type PendingFeedbackRetry = {
     overallRating: number | null;
     symptoms: FeedbackEntry[];
     freeText: string | null;
+    /** Card attribution to keep on the replayed feedback_submitted event.
+     *  Optional — entries queued by older builds predate it. */
+    checkinSource?: string | null;
   } | null;
   /** ride_feedback id when that row was created before a later step failed. */
   feedbackId: string | null;
@@ -110,6 +113,7 @@ async function replay(
         overallRating: e.feedback.overallRating,
         symptoms: e.feedback.symptoms,
         freeText: e.feedback.freeText,
+        checkinSource: e.feedback.checkinSource ?? null,
       });
       e.feedbackId = fb.id;
       e.feedback = null;

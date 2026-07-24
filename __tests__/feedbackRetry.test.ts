@@ -110,6 +110,8 @@ describe("flush", () => {
       overallRating: 6,
       symptoms: [{ id: "dead_feel", severity: 5 }],
       freeText: "felt dead",
+      // entries queued by builds that predate checkin_source replay as null
+      checkinSource: null,
     });
     expect(await readQueue()).toHaveLength(0);
   });

@@ -68,6 +68,20 @@ import { logEvent } from "../lib/usage";
 
 const CONFIRM_VISIBLE_MS = 2500;
 
+/** What put this card on screen. Attribution only — never gates eligibility.
+ *  Carried on checkin_shown/preride_shown meta and threaded through the
+ *  refine-flow router params so feedback_submitted can attribute card-origin
+ *  submissions (lib/setupVersions.ts createFeedback). */
+export type CheckinSource =
+  | "home_mount"
+  | "warm_resume"
+  | "notification"
+  | "tune_focus";
+
+/** A warm-resume marker older than this labels nothing: an unfocused tab's
+ *  marker must not tag a much-later manual tab visit as a resume. */
+const RESUME_ATTRIBUTION_MS = 30 * 1000;
+
 const dismissKey = (id: string) => `checkin_dismissed_${id}`;
 
 // Max one card per app session, across tab remounts and both host tabs.
@@ -83,6 +97,7 @@ type CardState =
   | {
       kind: "outcome";
       feedbackId: string;
+      source: CheckinSource;
       title: string;
       // The setup being rated (ride_feedback.resulting_version_id) + its bike,
       // so answering can continue into the picker for it. Null when it can't
@@ -96,6 +111,7 @@ type CardState =
   | {
       kind: "first_ride";
       version: SetupVersionRow;
+      source: CheckinSource;
       bikeTitle: string;
       title: string;
     };
@@ -196,6 +212,9 @@ export function OutcomeCheckinCard({
   // one-card-per-session latch.
   const [resumeTick, setResumeTick] = useState(0);
   const handledBackgroundRef = useRef<number | null>(null);
+  // Set when this instance's resume bump fires; the eligibility run reads and
+  // clears it to attribute the render (fresh marker → "warm_resume").
+  const resumeMarkerRef = useRef<number | null>(null);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (next) => {
       if (next === "background") {
@@ -207,6 +226,7 @@ export function OutcomeCheckinCard({
       if (at == null || handledBackgroundRef.current === at) return;
       handledBackgroundRef.current = at;
       if (Date.now() - at > SESSION_RESET_MS) shownThisSession = false;
+      resumeMarkerRef.current = Date.now();
       setResumeTick((t) => t + 1);
     });
     return () => sub.remove();
@@ -282,6 +302,20 @@ export function OutcomeCheckinCard({
           // reminder targeted; consuming here spends it on one attempt.
           const arrival = await consumeReminderArrival();
 
+          // Attribute this evaluation: a reminder-tap arrival wins (the tap
+          // also warm-resumes the app), then a fresh resume marker, else a
+          // plain host-tab focus.
+          const resumedAt = resumeMarkerRef.current;
+          resumeMarkerRef.current = null;
+          const source: CheckinSource = arrival
+            ? "notification"
+            : resumedAt != null &&
+                Date.now() - resumedAt <= RESUME_ATTRIBUTION_MS
+              ? "warm_resume"
+              : surface === "home"
+                ? "home_mount"
+                : "tune_focus";
+
           // ── Branch 1 (wins): outcome check-in on the last refinement. The
           //    outcome is the label on every downstream row, so it fires first
           //    even on a reminder tap; answering it flows straight into the
@@ -309,12 +343,17 @@ export function OutcomeCheckinCard({
             setCard({
               kind: "outcome",
               feedbackId: row.id,
+              source,
               title: titleFromSymptoms(row.symptoms),
               nextVersion: next,
               nextBikeTitle: bikeTitle,
               resultingVersionId: row.resulting_version_id ?? null,
             });
-            void logEvent("checkin_shown", { feedback_id: row.id, surface });
+            void logEvent("checkin_shown", {
+              feedback_id: row.id,
+              surface,
+              checkin_source: source,
+            });
             return;
           }
 
@@ -389,6 +428,7 @@ export function OutcomeCheckinCard({
           setCard({
             kind: "first_ride",
             version,
+            source,
             bikeTitle,
             title: `How did the ${bikeTitle} feel on v${version.version_number}?`,
           });
@@ -397,6 +437,7 @@ export function OutcomeCheckinCard({
             bike_id: version.bike_id,
             surface,
             shown_via_reminder: viaReminder,
+            checkin_source: source,
           });
         } catch {
           // fail-silent: the check-in must never disturb the host tab
@@ -428,7 +469,10 @@ export function OutcomeCheckinCard({
       if (card.nextVersion) {
         // outcome → chips as one funnel: continue into the picker for the setup
         // just rated so the rider gives full feedback → next refinement.
-        const params = buildRefineParams(card.nextVersion, card.nextBikeTitle);
+        const params = {
+          ...buildRefineParams(card.nextVersion, card.nextBikeTitle),
+          checkinSource: card.source,
+        };
         animateOut();
         router.push({ pathname: "/tune-feedback", params } as any);
       } else {
@@ -446,7 +490,10 @@ export function OutcomeCheckinCard({
 
   const onFirstRideCta = () => {
     if (!card || card.kind !== "first_ride") return;
-    const params = buildRefineParams(card.version, card.bikeTitle);
+    const params = {
+      ...buildRefineParams(card.version, card.bikeTitle),
+      checkinSource: card.source,
+    };
     animateOut();
     router.push({ pathname: "/tune-feedback", params } as any);
   };
