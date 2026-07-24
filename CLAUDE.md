@@ -10,7 +10,11 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 - **Run:** `npx expo start` — this is a **dev-client** app (custom native
   modules); **Expo Go will not run it**. iOS build: `npx expo run:ios`.
 - **App tests:** `npx jest` (config `jest.config.js`, ts-jest; native modules
-  stubbed in `__tests__/stubs/`).
+  stubbed in `__tests__/stubs/`). Component tests are `*.test.tsx` rendered
+  with `react-test-renderer` against the same stubs (no RN jest preset);
+  `stubs/react-native.js` drives AppState via `__emit` and completes Animated
+  synchronously. See `__tests__/OutcomeCheckinCard.test.tsx` for the
+  fresh-registry pattern components with module-level state need.
 - **Typecheck:** no script — run `npx tsc --noEmit`.
 - **Engine tests are separate (Deno, not Jest):**
   `AI_TUNE_TEST=1 deno test --allow-env supabase/functions/ai-tune/tests/`
@@ -199,11 +203,26 @@ that change none of those skip it.)*
   (was `fork_comp_reveal_v1`). `meta.spec` carries display-only
   `fork_type`/`shock_type`; the persisted `recommended_settings.context`
   shape is unchanged.
+- **v2.2.0 is LIVE** (iOS 2026-07-22, Android 2026-07-24) — but fleet adoption
+  lags: prod events still look v2.1.0-shaped (zero `notif_prompt` outcomes,
+  ~zero reminder arrivals). Gate check-in analysis on `checkin_source` presence
+  (v2.3.0+ clients) or by date once adoption is confirmed in the store consoles.
+- **`feat/checkin-instrumentation` (v2.3.0 Workstream B, 2026-07-24, off
+  `release/v2.2.0`):** checkin_source attribution (see counting rule above),
+  check-in card moved above the presets rail on Home (first content block),
+  and the OutcomeCheckinCard render-path test suite. Audit verdict behind it:
+  surfacing logic is sound (4/4 returning-eligible users got the card); the
+  gaps were split-event undercounting, below-fold placement (11 impressions,
+  0 answers), and the dead notification arm. Meta-only — no migration.
+  **`main` is stale (pre-v2.1.0, no release ever merged back)** — this branch
+  is off `release/v2.2.0` for that reason; do not branch feature work off
+  `main` until a release branch is merged into it.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
   build); on-device visual pass of the new results cards, locked value
-  stack, and temp chips (existing dev client is fine — pure JS).
+  stack, and temp chips (existing dev client is fine — pure JS) — plus the
+  relocated Home check-in card position.
 
 ## Sprint focus (in order)
 
