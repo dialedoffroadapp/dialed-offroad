@@ -926,7 +926,7 @@ export default function TuneResultScreen() {
           typeof airBar === "number" ? `AER pressure: ${airBar.toFixed(2)} bar` : null,
         ]
           .filter(Boolean)
-          .join(" — "),
+          .join(" · "),
       };
 
       const { error } = await supabase.from("sessions").insert(insert);
@@ -1202,9 +1202,9 @@ export default function TuneResultScreen() {
     state.onboardingStep === "trial" ? "Your tune is ready" : "Your setup is ready";
   const onboardingResumeBody =
     state.onboardingStep === "trial"
-      ? "Your tune is ready — start your free trial to unlock it."
+      ? "Your tune is ready. Start your free trial to unlock it."
       : state.hasSeenIntro
-        ? "Your setup is still waiting — start your free trial to reveal it."
+        ? "Your setup is still waiting. Start your free trial to reveal it."
         : "Your first tune is ready. Create your account to reveal the exact clickers and notes.";
 
   return (
@@ -1300,8 +1300,8 @@ export default function TuneResultScreen() {
             {mode === "balanced"
               ? "Factory-balanced for most conditions."
               : mode === "comfort"
-              ? "Softer — better for rough, physical terrain."
-              : "Stiffer — better for speed and precision."}
+              ? "Softer: better for rough, physical terrain."
+              : "Stiffer: better for speed and precision."}
           </Text>
         </View>
 
@@ -1341,7 +1341,7 @@ export default function TuneResultScreen() {
                   } as any)}
                 />
                 <Text style={S.revealTeaser}>
-                  {`Set for your ${bikeTitle !== "Custom Bike" ? bikeTitle : "bike"} — ${lockedCount} more settings locked`}
+                  {`Set for your ${bikeTitle !== "Custom Bike" ? bikeTitle : "bike"} . ${lockedCount} more settings locked`}
                 </Text>
               </>
             ) : null
@@ -1443,7 +1443,7 @@ export default function TuneResultScreen() {
               target={sagProvenance.target}
               min={sagProvenance.min}
               max={sagProvenance.max}
-              caption={`${sagProvenance.target} mm — factory target for your ${
+              caption={`${sagProvenance.target} mm: factory target for your ${
                 bikeTitle !== "Custom Bike" ? bikeTitle : "bike"
               }`}
               C={C}
@@ -1549,7 +1549,7 @@ export default function TuneResultScreen() {
           <View style={S.proTipRow}>
             <Ionicons name="bulb-outline" size={16} color={(C as any).WARN ?? "#FFC36A"} />
             <Text style={S.proTipText}>
-              Only adjust one setting at a time — then ride before changing anything else.
+              Only adjust one setting at a time. Then ride before changing anything else.
             </Text>
           </View>
         ) : null}
@@ -1757,7 +1757,7 @@ function SpringCheckCard({
         : "";
     const rangeStr =
       typeof wMin === "number" && typeof wMax === "number"
-        ? ` — factory range ${wMin}–${wMax} lb`
+        ? `: factory range ${wMin}–${wMax} lb`
         : "";
     return (
       <View style={[S.card, S.lift, { borderColor: GREEN + "44" }]}>
@@ -1790,9 +1790,9 @@ function SpringCheckCard({
     if (typeof wMin === "number" && typeof wMax === "number" && w != null) {
       const outBy = Math.round(w > wMax ? w - wMax : wMin - w);
       const side = w > wMax ? "over" : "under";
-      body = `${w} lb is ${outBy} lb ${side} the factory range (${wMin}–${wMax} lb). Stock rates still work — expect to ride the ${dir} end of the clickers.`;
+      body = `${w} lb is ${outBy} lb ${side} the factory range (${wMin}–${wMax} lb). Stock rates still work. Expect to ride the ${dir} end of the clickers.`;
     } else {
-      body = `Your weight is just outside the factory spring range. Stock rates still work — expect to ride the ${dir} end of the clickers.`;
+      body = `Your weight is just outside the factory spring range. Stock rates still work. Expect to ride the ${dir} end of the clickers.`;
     }
   } else {
     icon = "warning-outline";
@@ -1808,12 +1808,12 @@ function SpringCheckCard({
         .filter(Boolean)
         .join(", ");
       const ratesStr = rates ? ` (stock ${rates} N/mm)` : "";
-      body = `Clickers can't fix this — you'll want ${dir} fork and shock springs${ratesStr}. A suspension shop can spec the exact rates.`;
+      body = `Clickers can't fix this. You'll want ${dir} fork and shock springs${ratesStr}. A suspension shop can spec the exact rates.`;
     } else {
       const rate =
         check.component === "shock" ? check.stock_shock_nmm : check.stock_fork_nmm;
       const rateStr = typeof rate === "number" ? ` (stock ${rate} N/mm)` : "";
-      body = `Clickers can't fix this — you'll want a ${dir} ${check.component} spring${rateStr}. A suspension shop can spec the exact rate.`;
+      body = `Clickers can't fix this. You'll want a ${dir} ${check.component} spring${rateStr}. A suspension shop can spec the exact rate.`;
     }
   }
 

@@ -177,7 +177,7 @@ export default function BikeHomeScreen() {
     if (!current) return;
     try {
       await Clipboard.setStringAsync(
-        `${bikeTitle} — v${current.version_number}: ${formatValuesLine(current)}`
+        `${bikeTitle} · v${current.version_number}: ${formatValuesLine(current)}`
       );
       toast.show("Setup copied", { kind: "success" });
       void logEvent("preride_copied", { bike_id: bikeId, source: "bike_home" });
@@ -329,7 +329,7 @@ export default function BikeHomeScreen() {
               <Ionicons name="speedometer-outline" size={34} color={C.MUTED} />
               <Text style={S.emptyTitle}>No setup yet</Text>
               <Text style={S.emptyBody}>
-                Generate a tune for this bike and it becomes your v1 — every
+                Generate a tune for this bike and it becomes your v1. Every
                 refinement after that builds the history.
               </Text>
               <Pressable onPress={onNewTune} style={[S.btnPrimary, { marginTop: 18 }]}>

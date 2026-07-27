@@ -185,7 +185,7 @@ export function ActiveSetupCard({
   const onCopy = async () => {
     try {
       await Clipboard.setStringAsync(
-        `${bikeTitle} — v${version.version_number}: ${formatValuesLine(version)}`
+        `${bikeTitle} · v${version.version_number}: ${formatValuesLine(version)}`
       );
       toast.show("Setup copied", { kind: "success" });
       void logEvent("preride_copied", {

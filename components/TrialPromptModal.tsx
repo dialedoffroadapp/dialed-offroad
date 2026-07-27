@@ -80,7 +80,7 @@ export default function TrialPromptModal({
           {/* Title */}
           <Text style={[styles.title, { color: C.TEXT }]} numberOfLines={2}>
             {lapsed
-              ? "Welcome back — pick up where your setup left off"
+              ? "Welcome back. Pick up where your setup left off"
               : `${bikeTitle} is ready to get dialed`}
           </Text>
 

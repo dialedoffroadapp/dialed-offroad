@@ -46,7 +46,7 @@ const SETTING_DEFS: Record<SettingId, SettingDef> = {
     ],
     range: { min: 0, max: 30, softerLabel: "Softer / open", firmerLabel: "Firmer / closed" },
     howToAdjust:
-      "Turn the adjuster clockwise (CW) all the way in gently — that's zero. Count clicks OUT (counter-clockwise) to your target. Most WP/KYB forks use the top cap adjuster.",
+      "Turn the adjuster clockwise (CW) all the way in gently. That's zero. Count clicks OUT (counter-clockwise) to your target. Most WP/KYB forks use the top cap adjuster.",
     educationalWhy:
       "Compression controls how fast the fork collapses under impact. More clicks open = softer initial stroke = better for braking bumps and chop. Fewer clicks = stiffer = better for whoops and high-speed stability.",
   },
@@ -62,7 +62,7 @@ const SETTING_DEFS: Record<SettingId, SettingDef> = {
     ],
     range: { min: 0, max: 30, softerLabel: "Faster rebound", firmerLabel: "Slower rebound" },
     howToAdjust:
-      "The rebound adjuster is typically at the bottom of the right fork leg. Turn CW all the way in gently — that's zero. Count clicks OUT for your target.",
+      "The rebound adjuster is typically at the bottom of the right fork leg. Turn CW all the way in gently. That's zero. Count clicks OUT for your target.",
     educationalWhy:
       "Rebound controls recovery speed. Too fast = kicks or deflects on successive hits. Too slow = forks pack down and feel stiff. Your target is full recovery between hits.",
   },
@@ -78,7 +78,7 @@ const SETTING_DEFS: Record<SettingId, SettingDef> = {
     ],
     range: { min: 7, max: 14, softerLabel: "Lower pressure / softer", firmerLabel: "Higher pressure / firmer" },
     howToAdjust:
-      "Use a WP AER air fork pump. Remove the cap from the left fork leg air valve. Pump up or bleed air to reach the target pressure. Check cold — temperature affects pressure.",
+      "Use a WP AER air fork pump. Remove the cap from the left fork leg air valve. Pump up or bleed air to reach the target pressure. Check cold: temperature affects pressure.",
     educationalWhy:
       "Air pressure is the spring in your WP AER fork. Higher pressure = stiffer spring = less sag and more bottom-out resistance. Your target is set to your weight and riding style.",
   },
@@ -94,7 +94,7 @@ const SETTING_DEFS: Record<SettingId, SettingDef> = {
     ],
     range: { min: 0, max: 30, softerLabel: "Softer / open", firmerLabel: "Firmer / closed" },
     howToAdjust:
-      "The LSC adjuster is the smaller screw on the shock body (usually with a flat screwdriver slot). Turn CW all the way in gently — that's zero. Count clicks OUT.",
+      "The LSC adjuster is the smaller screw on the shock body (usually with a flat screwdriver slot). Turn CW all the way in gently. That's zero. Count clicks OUT.",
     educationalWhy:
       "Low-speed comp controls body-motion damping. Too firm = harsh, abrupt feel. Too soft = excessive body roll and diving. This is the primary tuning knob for overall shock feel.",
   },
@@ -110,7 +110,7 @@ const SETTING_DEFS: Record<SettingId, SettingDef> = {
     ],
     range: { min: 0, max: 3, softerLabel: "Fewer turns / softer", firmerLabel: "More turns / firmer" },
     howToAdjust:
-      "The HSC adjuster is the large hex nut on the shock (requires a wrench or large flat). Turn CW to increase resistance. Adjust in 0.25-turn increments — it's sensitive.",
+      "The HSC adjuster is the large hex nut on the shock (requires a wrench or large flat). Turn CW to increase resistance. Adjust in 0.25-turn increments. It's sensitive.",
     educationalWhy:
       "High-speed comp controls damping for fast impacts. Too firm = kicks and harshness on big hits. Too soft = bottoming out. Most riders run this fairly conservative and tune LSC first.",
   },
@@ -126,7 +126,7 @@ const SETTING_DEFS: Record<SettingId, SettingDef> = {
     ],
     range: { min: 0, max: 30, softerLabel: "Faster rebound", firmerLabel: "Slower rebound" },
     howToAdjust:
-      "The rebound adjuster is at the bottom of the shock shaft (small screwdriver slot). Turn CW all the way in gently — zero. Count clicks OUT to your target.",
+      "The rebound adjuster is at the bottom of the shock shaft (small screwdriver slot). Turn CW all the way in gently. That's zero. Count clicks OUT to your target.",
     educationalWhy:
       "Shock rebound controls how fast the rear wheel returns to the ground. Too fast = kicks and instability. Too slow = packs down in whoops. Match rebound to your terrain and spring rate.",
   },

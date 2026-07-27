@@ -147,7 +147,7 @@ async function offerReminderPermission(params: {
     if (!(await shouldOfferNotificationPrompt())) return;
     Alert.alert(
       "Want a reminder to log how it felt after your next ride?",
-      "One nudge after your next ride — takes 10 seconds to answer.",
+      "One nudge after your next ride. Takes 10 seconds to answer.",
       [
         {
           text: "Not now",
@@ -193,90 +193,90 @@ async function offerReminderPermission(params: {
 }
 
 const OVERALL_LABELS: Record<number, string> = {
-  1: "Rough day — we'll make real moves",
-  2: "Needs work — bigger corrections",
-  3: "Decent base — targeted changes",
+  1: "Rough day. We'll make real moves",
+  2: "Needs work: bigger corrections",
+  3: "Decent base: targeted changes",
   4: "Pretty good, small stuff to fix",
-  5: "Dialed — micro adjustments only",
+  5: "Dialed: micro adjustments only",
 };
 
 /* ---------------- Tuner voice (sticky bar reactions) ---------------- */
 
-const IDLE_LINE = "Waiting on you — how'd it ride?";
+const IDLE_LINE = "Waiting on you. How'd it ride?";
 const FREETEXT_FOCUS_LINE = "Go ahead, say it how you'd say it.";
 const CLEARED_LINE = "Cleared. What else?";
 
 const OVERALL_REACTIONS: Record<number, string> = {
   1: "Alright, rough one. Let's make real changes.",
   2: "Heard. We'll take bigger swings this round.",
-  3: "Solid base — let's sharpen it.",
+  3: "Solid base. Let's sharpen it.",
   4: "Close. Small, targeted moves.",
-  5: "Nearly perfect — I'll barely touch it.",
+  5: "Nearly perfect. I'll barely touch it.",
 };
 
 const ISSUE_ACKS: Record<Tune2SymptomId, { mild: string; bad: string }> = {
   harsh_braking_bumps: {
-    mild: "Harsh, noted — we'll soften it up.",
+    mild: "Harsh, noted. We'll soften it up.",
     bad: "Really beating you up. On it.",
   },
   rear_kicks_accel: {
-    mild: "Rear kicking — got it.",
+    mild: "Rear kicking, got it.",
     bad: "Rear kicking hard. On it.",
   },
   front_knifes: {
-    mild: "Front tucking — noted.",
+    mild: "Front tucking, noted.",
     bad: "Front's washing on you. Big one.",
   },
   bottoms_landings: {
-    mild: "Bottoming a bit — okay.",
+    mild: "Bottoming a bit, okay.",
     bad: "Slamming through the stroke. Fixing that.",
   },
   dead_feel: {
-    mild: "Feels dead — we'll wake it up.",
+    mild: "Feels dead. We'll wake it up.",
     bad: "No life at all. We'll get the pop back.",
   },
   unstable_whoops: {
-    mild: "A little nervous in the fast stuff — noted.",
+    mild: "A little nervous in the fast stuff, noted.",
     bad: "Sketchy at speed. Priority one.",
   },
   packs_whoops: {
-    mild: "Packing up — got it.",
+    mild: "Packing up, got it.",
     bad: "Packing down bad. We'll free it up.",
   },
   harsh_square_edge: {
-    mild: "Square edges biting — noted.",
+    mild: "Square edges biting, noted.",
     bad: "Roots and rocks are hammering you. On it.",
   },
   // Not exposed as chips, but keep the map total for safety.
   deflects_in_chop: {
-    mild: "Front deflecting — noted.",
+    mild: "Front deflecting, noted.",
     bad: "Front's pinballing. On it.",
   },
   headshake: {
-    mild: "Bit of headshake — noted.",
+    mild: "Bit of headshake, noted.",
     bad: "Headshake at speed. On it.",
   },
   general_harsh: {
-    mild: "Generally harsh — noted.",
+    mild: "Generally harsh, noted.",
     bad: "Harsh everywhere. We'll calm it down.",
   },
 };
 
 const PROTECT_ACKS: Record<string, { on: string; off: string }> = {
   "Rear traction": {
-    on: "Rear's hooked up — not touching it.",
+    on: "Rear's hooked up. Not touching it.",
     off: "Okay, rear's fair game again.",
   },
   "Front planted": {
-    on: "Front's planted — leaving it alone.",
+    on: "Front's planted. Leaving it alone.",
     off: "Okay, front's fair game again.",
   },
   "Landings": {
-    on: "Landings are money — hands off.",
+    on: "Landings are money. Hands off.",
     off: "Okay, landings are fair game again.",
   },
   "Cornering": {
-    on: "Corners are working — not touching those.",
+    on: "Corners are working. Not touching those.",
     off: "Okay, corners are fair game again.",
   },
 };
@@ -515,7 +515,7 @@ export default function TuneFeedbackScreen() {
     );
     if (!active) {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      react(PROTECT_ACKS[area]?.on ?? "Locked in — not touching it.");
+      react(PROTECT_ACKS[area]?.on ?? "Locked in. Not touching it.");
     } else {
       // deselect: no haptic
       react(PROTECT_ACKS[area]?.off ?? "Okay, fair game again.");
@@ -571,7 +571,7 @@ export default function TuneFeedbackScreen() {
 
     parts.push(
       overall >= 4
-        ? "Base is close — small, targeted moves."
+        ? "Base is close. Small, targeted moves."
         : "I'll make bigger corrections this round."
     );
 
@@ -773,7 +773,7 @@ export default function TuneFeedbackScreen() {
           resultingVersionId: feedbackId ? null : refinementRowId,
         });
         toast.show(
-          "Your refined tune is ready, but we couldn't save this ride's notes — we'll retry automatically.",
+          "Your refined tune is ready, but we couldn't save this ride's notes. We'll retry automatically.",
           { kind: "info", durationMs: 3500 }
         );
       }

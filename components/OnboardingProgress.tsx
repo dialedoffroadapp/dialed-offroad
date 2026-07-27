@@ -27,7 +27,7 @@ export function OnboardingProgress() {
     <View style={styles.row}>
       <View style={[styles.dot, { backgroundColor: C.ACCENT }]} />
       <Text style={[styles.label, { color: C.ACCENT }]}>
-        Step {entry.step} of {TOTAL} — {entry.label}
+        Step {entry.step} of {TOTAL}: {entry.label}
       </Text>
     </View>
   );

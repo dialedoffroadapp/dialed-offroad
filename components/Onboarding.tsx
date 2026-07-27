@@ -210,7 +210,7 @@ const Slide2Content = () => (
         </View>
         <View style={s.stepRight}>
           <Text style={s.stepTitle}>Get exact clicker settings</Text>
-          <Text style={[s.stepDesc, { marginBottom: 0 }]}>Fork comp, rebound, shock LSC, HSC, sag — all zero-referenced.</Text>
+          <Text style={[s.stepDesc, { marginBottom: 0 }]}>Fork comp, rebound, shock LSC, HSC, sag. All zero-referenced.</Text>
         </View>
       </View>
 
@@ -306,7 +306,7 @@ const Slide3Content = () => (
         <ReviewCard
           initials="MK"
           name="MotoKyle_88"
-          review="Finally stopped guessing. My bike feels completely different — in a good way."
+          review="Finally stopped guessing. My bike feels completely different, in a good way."
         />
         {/* TODO(winback-batch): this second slot is reserved for a
             refinement-focused testimonial (ride → rate → second pass) once a
@@ -314,7 +314,7 @@ const Slide3Content = () => (
         <ReviewCard
           initials="TR"
           name="TrailRipper_CO"
-          review="Worth every penny. Used to spend hours tweaking — now it takes minutes."
+          review="Worth every penny. Used to spend hours tweaking. Now it takes minutes."
         />
       </View>
     </View>

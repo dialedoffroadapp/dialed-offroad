@@ -186,7 +186,7 @@ export async function scheduleRideReminder(params: {
         title:
           params.title ??
           `How did the ${params.bikeName} feel on v${params.versionNumber}?`,
-        body: "Tell Dialed and get your refined setup — takes 30 seconds.",
+        body: "Tell Dialed and get your refined setup. Takes 30 seconds.",
         data: {
           kind: "ride_reminder",
           // Existing app scheme; "/" resolves through IndexGate → /(tabs)

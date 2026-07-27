@@ -168,9 +168,9 @@ export default function WinbackScreen() {
 
   const hookLine = hook
     ? hook.versionCount > 0
-      ? `${hook.bikeTitle ? `Your ${hook.bikeTitle}` : "Your bike"} — ` +
+      ? `${hook.bikeTitle ? `Your ${hook.bikeTitle}` : "Your bike"}, with ` +
         `${hook.versionCount} setup version${hook.versionCount === 1 ? "" : "s"} ` +
-        `of dialed-in history — is waiting right where you left it.`
+        `of dialed-in history, is waiting right where you left it.`
       : "Your bikes and setup history are waiting right where you left them."
     : "";
 
@@ -265,7 +265,7 @@ export default function WinbackScreen() {
         ) : null}
 
         <Text style={S.footNote}>
-          Everything you built — bikes, sessions, setup versions — is intact.
+          Everything you built is intact: bikes, sessions, setup versions.
           Pro picks up exactly where you left off.
         </Text>
       </ScrollView>

@@ -221,7 +221,7 @@ function BikePickerSheet({
               >
                 <View style={{ flex: 1 }}>
                   <Text style={[S.optionText, { fontWeight: "900" }]}>
-                    {b.year} {b.make} {b.model} {b.nickname ? `— ${b.nickname}` : ""}
+                    {b.year} {b.make} {b.model} {b.nickname ? `· ${b.nickname}` : ""}
                     {b.is_primary ? "  ★" : ""}
                   </Text>
                   <Text style={S.muted}>{b.make}</Text>
@@ -905,7 +905,7 @@ export default function TuneScreen() {
         generateTune(input, sagBounds, specAirFork),
         new Promise<never>((_resolve, reject) => {
           const timer = setTimeout(
-            () => reject(new Error("This is taking longer than expected — try again")),
+            () => reject(new Error("This is taking longer than expected. Try again")),
             GENERATE_TIMEOUT_MS
           );
           cancelGenerateRef.current = () => {
@@ -1183,7 +1183,7 @@ export default function TuneScreen() {
         <View style={[S.headerSolid, { paddingBottom: 16 }]}>
           <Text style={S.heroTitle}>Your First Tune</Text>
           <Text style={S.heroSubtitle}>
-            Your tune is ready — start your free trial to unlock it.
+            Your tune is ready. Start your free trial to unlock it.
           </Text>
         </View>
 
@@ -1322,7 +1322,7 @@ export default function TuneScreen() {
           <Text style={S.heroSubtitle}>
             {isOnboarding
               ? state.hasSeenIntro
-                ? "Your bike is ready — generate your tune."
+                ? "Your bike is ready. Generate your tune."
                 : "Confirm today’s conditions, then generate your first tune."
               : "Dial in a zero-based tune for today’s conditions."}
           </Text>
@@ -1408,7 +1408,7 @@ export default function TuneScreen() {
               </View>
             ) : bikes.length === 0 ? (
               <Text style={S.selectorEmpty}>
-                No bikes in your Garage yet. Add one in the Garage tab — or use the fields below.
+                No bikes in your Garage yet. Add one in the Garage tab, or use the fields below.
               </Text>
             ) : (
               <ScrollView

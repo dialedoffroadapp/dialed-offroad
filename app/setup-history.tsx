@@ -198,7 +198,7 @@ function baselineSummary(v: VersionWithFeedback): string {
   if (typeof rider.skill === "string") parts.push(rider.skill);
   if (ctx.wants_air_fork) parts.push("air fork");
   return parts.length
-    ? `Starting point — ${parts.join(", ")}`
+    ? `Starting point: ${parts.join(", ")}`
     : "Starting point";
 }
 
@@ -538,7 +538,7 @@ export default function SetupHistoryScreen() {
             >
               <Ionicons name="time-outline" size={18} color={C.ACCENT} />
               <Text style={S.winbackBannerText}>
-                Your setup history is waiting — pick up where you left off
+                Your setup history is waiting. Pick up where you left off
               </Text>
               <Ionicons name="chevron-forward" size={16} color={C.ACCENT} />
             </Pressable>
@@ -674,7 +674,7 @@ export default function SetupHistoryScreen() {
                 {showReversal && child ? (
                   <View style={S.reversalCallout}>
                     <Text style={S.reversalText}>
-                      ↩ Next refinement reversed this — see v
+                      ↩ Next refinement reversed this. See v
                       {child.version_number}
                     </Text>
                   </View>
@@ -690,7 +690,7 @@ export default function SetupHistoryScreen() {
                     <Text style={S.lockedValuesHint}>
                       <Ionicons name="lock-closed" size={11} color={C.MUTED} />
                       {"  "}
-                      {rows.length} setting change{rows.length === 1 ? "" : "s"} —
+                      {rows.length} setting change{rows.length === 1 ? "" : "s"}:
                       values with Pro
                     </Text>
                   ) : (
@@ -703,7 +703,7 @@ export default function SetupHistoryScreen() {
                         <Text style={S.diffLabel}>{r.label} </Text>
                         {fmtVal(r.from, r.unit)} → {fmtVal(r.to, r.unit)}
                         {r.reason ? (
-                          <Text style={S.diffReason}> — {r.reason}</Text>
+                          <Text style={S.diffReason}> · {r.reason}</Text>
                         ) : null}
                       </Text>
                     ))}

@@ -225,6 +225,15 @@ candidate in a 2h window).
 - **Audit before building.** Much of this app already exists under other names
   (e.g. `setup_versions`/`ride_feedback` already cover "sessions/refinements").
   Search first; extend rather than rebuild.
+- **Copy conventions (2026-07-28): NO em dashes in user-facing copy** —
+  strings, toasts, notifications, accessibility labels, onboarding slides.
+  Rewrite with periods, commas, or colons; machine-joined value summaries
+  (share text, session notes) use " · ". Exceptions that KEEP their glyphs:
+  the "—" empty-value placeholder (it's data, not prose), en-dash numeric
+  ranges ("95–110 lb"), code comments, console logs, and — critically —
+  engine note strings (`ai-tune` ↔ `lib/tuneNotes.ts` matchers are
+  byte-frozen contract; one match string carries an em dash and MUST keep it
+  until an engine+tests+tuneNotes three-way change).
 - **Decisions in force:** `applied_settings == recommended_settings` until an
   override UI ships (schema is ready for the split); `settings_delta` is
   server-computed.

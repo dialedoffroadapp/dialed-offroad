@@ -548,7 +548,7 @@ export default function TuneTwoResultScreen() {
             : null,
         ]
           .filter(Boolean)
-          .join(" — "),
+          .join(" · "),
       };
 
       const { error } = await supabase.from("sessions").insert(insert);

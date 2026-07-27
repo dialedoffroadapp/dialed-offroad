@@ -123,9 +123,9 @@ function dismissIdOf(card: CardState): string {
 }
 
 const CONFIRMATIONS: Record<FeedbackOutcome, string> = {
-  improved: "Logged — that's what the next refinement builds on.",
+  improved: "Logged. That's what the next refinement builds on.",
   same: "Noted. Next refinement takes a bigger step.",
-  worse: "Got it — next refinement goes back and tries the other direction.",
+  worse: "Got it. Next refinement goes back and tries the other direction.",
 };
 
 async function isSnoozedOrDismissed(id: string): Promise<boolean> {

@@ -151,8 +151,8 @@ export default function TuneResultsPreviewScreen() {
             {mode === "balanced"
               ? "Factory-balanced for most conditions."
               : mode === "comfort"
-              ? "Softer — better for rough, physical terrain."
-              : "Stiffer — better for speed and precision."}
+              ? "Softer: better for rough, physical terrain."
+              : "Stiffer: better for speed and precision."}
           </Text>
         </View>
 

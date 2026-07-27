@@ -367,7 +367,7 @@ export default function PremiumScreen() {
       {isOnboardingTrial ? (
         <Text style={[styles.subtext, { color: colors.MUTED }]}>
           {state.hasSeenIntro
-            ? "Your tune is ready — start your free trial to unlock it."
+            ? "Your tune is ready. Start your free trial to unlock it."
             : "Your tune is ready. Start your free trial to reveal the exact numbers and notes."}
         </Text>
       ) : null}

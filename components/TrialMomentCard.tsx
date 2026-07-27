@@ -185,8 +185,8 @@ function ValueCard({
     support.stockDeltaClicks !== null
       ? `Fork compression: ${support.stockDeltaClicks} click${
           support.stockDeltaClicks === 1 ? "" : "s"
-        } off stock — tuned for your weight and style.`
-      : "v1 saved — refine after your next ride.";
+        } off stock. Tuned for your weight and style.`
+      : "v1 saved. Refine after your next ride.";
 
   return (
     <View style={[styles.card, { backgroundColor: C.CARD, borderColor: C.BORDER }]}>
@@ -247,7 +247,7 @@ function CountdownCard({
           support.refinementCount > 0
             ? `, ${plur(support.refinementCount, "refinement")}`
             : ""
-        } — all of it stays with Pro.`
+        }. All of it stays with Pro.`
       : "Your setup and history stay with Pro.";
 
   const onCta = () => {

@@ -423,7 +423,7 @@ export default function HomeScreen() {
               onPress={() => onDeclinerTap("body")}
               style={styles.declinerRow}
               accessibilityRole="button"
-              accessibilityLabel="Your tune is ready — start your free trial to reveal it"
+              accessibilityLabel="Your tune is ready. Start your free trial to reveal it"
             >
               <View style={styles.declinerIconTile}>
                 <Ionicons name="lock-closed" size={19} color={t.ACCENT} />

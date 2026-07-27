@@ -1023,7 +1023,7 @@ export default function GarageScreen() {
             <View style={[styles.card, styles.centerEmpty]}>
               <Ionicons name="bicycle-outline" size={20} color={colors.MUTED} />
               <Text style={[styles.muted, { marginTop: 6 }]}>
-                No bikes yet — tap + to add one.
+                No bikes yet. Tap + to add one.
               </Text>
             </View>
           ) : (
@@ -1215,7 +1215,7 @@ export default function GarageScreen() {
       />
       <PickerSheet
         open={modelOpen}
-        title={newBike.make ? `Select model — ${newBike.make}` : "Select model"}
+        title={newBike.make ? `Select model: ${newBike.make}` : "Select model"}
         options={newBike.make ? modelOptions : []}
         initialValue={newBike.model}
         onPick={(val) => setNewBike((nb) => ({ ...nb, model: val }))}
