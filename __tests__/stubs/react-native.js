@@ -58,13 +58,32 @@ const Easing = {
   linear: () => 0,
 };
 
+// Screen-level suites (SignupScreen) render a wider primitive set — all
+// host strings, plus no-op Keyboard/LayoutAnimation/UIManager so handlers
+// that animate or dismiss run inertly under act().
+const Keyboard = { dismiss: () => {} };
+const LayoutAnimation = {
+  configureNext: () => {},
+  Presets: { easeInEaseOut: {}, linear: {}, spring: {} },
+};
+const UIManager = { setLayoutAnimationEnabledExperimental: () => {} };
+
 module.exports = {
   Platform: { OS: "ios", select: (obj) => obj.ios },
   AppState,
   Animated,
   Easing,
-  StyleSheet: { create: (s) => s, flatten: (s) => s },
+  StyleSheet: { create: (s) => s, flatten: (s) => s, absoluteFill: {} },
   Pressable: "Pressable",
   Text: "Text",
   View: "View",
+  Image: "Image",
+  TextInput: "TextInput",
+  ScrollView: "ScrollView",
+  ActivityIndicator: "ActivityIndicator",
+  KeyboardAvoidingView: "KeyboardAvoidingView",
+  TouchableWithoutFeedback: "TouchableWithoutFeedback",
+  Keyboard,
+  LayoutAnimation,
+  UIManager,
 };

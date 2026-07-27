@@ -3,3 +3,6 @@
 // inert client — unit tests never touch the network.
 process.env.EXPO_PUBLIC_SUPABASE_URL = "http://127.0.0.1:1";
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
+
+// RN global for screen-level suites (metro defines this at bundle time).
+globalThis.__DEV__ = false;

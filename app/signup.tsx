@@ -1,12 +1,13 @@
 // app/signup.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   Pressable,
   ScrollView,
@@ -14,12 +15,13 @@ import {
   Text,
   TextInput,
   TouchableWithoutFeedback,
+  UIManager,
   View,
 } from "react-native";
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
 import { completeAuthSuccess } from "../lib/authSuccess";
-import { useOnboarding } from "../lib/onboarding";
+import { readPendingTune, useOnboarding } from "../lib/onboarding";
 import {
   isAppleSignInAvailable,
   isGoogleSignInAvailable,
@@ -30,7 +32,16 @@ import {
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { claimAnonTuneCalls } from "../lib/tuneAttribution";
+import { TuneTeaseCard, type TuneTeaseValues } from "../components/TuneTeaseCard";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
+
+// LayoutAnimation drives the email-form expand; Android needs the opt-in.
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 function SignupInner() {
   const router = useRouter();
@@ -64,6 +75,13 @@ function SignupInner() {
   const [accepted, setAccepted] = useState(false);
   const [loadingUp, setLoadingUp] = useState(false);
 
+  // v2.3.0 redesign: blurred tease of the rider's real pending tune, and the
+  // email form collapsed behind a "Continue with email" row.
+  const [teaseTune, setTeaseTune] = useState<TuneTeaseValues | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const emailInputRef = useRef<TextInput>(null);
+  const emailExpandLoggedRef = useRef(false);
+
   // Provider buttons render ONLY when the native module is in this binary
   // (older builds: absent, not broken) — see lib/socialAuth.ts guards.
   const [appleAvailable, setAppleAvailable] = useState(false);
@@ -86,6 +104,53 @@ function SignupInner() {
 
   const emailValid = useMemo(() => /^\S+@\S+\.\S+$/.test(email.trim()), [email]);
   const canSubmit = emailValid && password.trim().length > 0 && accepted;
+
+  // Tease card data: the SAME pending tune the locked results screen reads.
+  // No pending tune (direct signup route) → card hidden entirely.
+  useEffect(() => {
+    void (async () => {
+      const { tune } = await readPendingTune();
+      if (!tune) return;
+      try {
+        const r = JSON.parse(decodeURIComponent(tune.r));
+        setTeaseTune({
+          fork_comp:
+            typeof r?.fork?.comp_clicks === "number" ? r.fork.comp_clicks : null,
+          shock_reb:
+            typeof r?.shock?.reb_clicks === "number" ? r.shock.reb_clicks : null,
+          air_bar:
+            typeof r?.fork?.air_pressure_bar === "number"
+              ? r.fork.air_pressure_bar
+              : null,
+        });
+      } catch {
+        // Unparseable pending tune: the screen just renders without the tease.
+      }
+    })();
+  }, []);
+
+  const onToggleEmail = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const next = !emailOpen;
+    setEmailOpen(next);
+    if (next) {
+      // Focus after the expand animation settles. Optional-call keeps the
+      // test-renderer host instance (no .focus) from throwing.
+      setTimeout(() => emailInputRef.current?.focus?.(), 120);
+      if (!emailExpandLoggedRef.current) {
+        emailExpandLoggedRef.current = true;
+        // No dedicated event type today (the CHECK constraint is live and no
+        // migration ships with this): ride heard_card_shown's meta — the
+        // documented carrier precedent (surface: "notif_prompt"). Queued
+        // pre-auth like this screen's sibling events; filter by surface.
+        void logEvent(
+          "heard_card_shown",
+          { surface: "signup_email_expand", source_route: "/signup" },
+          { allowAnonymous: true, queueIfAnonymous: true }
+        );
+      }
+    }
+  };
   const onboardingAgeMs = useMemo(() => {
     const parsed = Date.parse(state.lastUpdatedAt);
     return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
@@ -272,13 +337,9 @@ function SignupInner() {
   };
 
   const onProviderSignIn = async (provider: SocialProvider) => {
-    if (!accepted) {
-      toast.show("Please agree to the Terms and Privacy Policy.", {
-        kind: "error",
-      });
-      return;
-    }
-
+    // Provider path carries no checkbox (v2.3.0 redesign): the passive terms
+    // line under the buttons covers agreement. The email path keeps its
+    // explicit checkbox via canSubmit — that gate is untouched.
     setProviderLoading(provider);
     try {
       const result =
@@ -348,14 +409,18 @@ function SignupInner() {
             style={styles.logo}
           />
 
-          {/* Headline + context-aware subtitle */}
-          <Text style={styles.headline}>Create your account</Text>
+          {/* Blurred tease of the rider's real pending tune (hidden when no
+              pending tune exists — direct signup route). */}
+          {teaseTune && <TuneTeaseCard values={teaseTune} />}
+
+          {/* Headline: brand display fallback (Barlow Condensed not bundled) —
+              heaviest weight, uppercase, tight leading, accent period. */}
+          <Text style={styles.headline}>
+            CREATE YOUR ACCOUNT
+            <Text style={styles.headlineDot}>.</Text>
+          </Text>
           <Text style={styles.subtitle}>
-            {state.onboardingStep === "signup"
-              ? state.hasSeenIntro
-                ? "Almost there. Create your account to reveal your tune."
-                : "Your setup is ready. Create your account to reveal it and save your bike."
-              : "Start saving bikes, sessions, and AI-powered presets."}
+            One step left to reveal your settings.
           </Text>
 
           {/* Provider sign-in (feature-gated: absent in binaries without the
@@ -365,10 +430,6 @@ function SignupInner() {
             <View style={styles.providerBlock}>
               {appleAvailable && (
                 <>
-                  <Text style={styles.providerHint}>
-                    Signed up with email before? Use email below, or choose
-                    Share My Email so we can find your garage.
-                  </Text>
                   <Pressable
                     onPress={() => onProviderSignIn("apple")}
                     disabled={providerLoading !== null || loadingUp}
@@ -415,6 +476,32 @@ function SignupInner() {
                   )}
                 </Pressable>
               )}
+              {/* Hint moved BELOW the buttons (v2.3.0), caption weight. */}
+              {appleAvailable && (
+                <Text style={styles.providerHint}>
+                  Signed up with email before? Choose Share My Email so we
+                  find your garage.
+                </Text>
+              )}
+              {/* Passive agreement covers the provider path; the email path
+                  keeps its explicit checkbox inside the form. */}
+              <Text style={styles.termsPassive}>
+                By continuing you agree to the{" "}
+                <Text
+                  style={styles.legalLink}
+                  onPress={() => router.push("/legal/terms")}
+                >
+                  Terms of Service
+                </Text>{" "}
+                and{" "}
+                <Text
+                  style={styles.legalLink}
+                  onPress={() => router.push("/legal/privacy")}
+                >
+                  Privacy Policy
+                </Text>
+                .
+              </Text>
               <View style={styles.dividerRow}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>or</Text>
@@ -423,11 +510,36 @@ function SignupInner() {
             </View>
           )}
 
-          {/* Form */}
+          {/* Email path, collapsed to one row; tapping expands the EXISTING
+              form in place (logic untouched). */}
+          <Pressable
+            onPress={onToggleEmail}
+            style={({ pressed }) => [
+              styles.emailRow,
+              pressed && { opacity: 0.9 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              emailOpen ? "Hide the email form" : "Continue with email"
+            }
+          >
+            <Ionicons name="mail-outline" size={18} color={colors.TEXT} />
+            <Text style={styles.emailRowText}>Continue with email</Text>
+            <View style={{ flex: 1 }} />
+            <Ionicons
+              name={emailOpen ? "chevron-up-outline" : "chevron-down-outline"}
+              size={16}
+              color="rgba(255,255,255,0.4)"
+            />
+          </Pressable>
+
+          {/* Form (existing, unchanged logic) — renders only when expanded */}
+          {emailOpen && (
           <View style={styles.form}>
             {/* Email */}
             <Text style={styles.label}>Email</Text>
             <TextInput
+              ref={emailInputRef}
               value={email}
               onChangeText={(v) => {
                 setEmail(v);
@@ -542,6 +654,7 @@ function SignupInner() {
               You’ll use this email and password to sign in.
             </Text>
           </View>
+          )}
 
           {/* Switch to login */}
           <Pressable
@@ -592,12 +705,18 @@ const makeStyles = (C: ThemeTokens) =>
       marginBottom: 28,
     },
 
+    // Brand display fallback: Barlow Condensed Black Italic is not bundled,
+    // so heaviest system weight, uppercase (literal), tight leading.
     headline: {
       color: C.TEXT,
-      fontWeight: "700",
-      fontSize: 24,
-      letterSpacing: -0.3,
+      fontWeight: "900",
+      fontSize: 30,
+      lineHeight: 32,
+      letterSpacing: 0.2,
       marginBottom: 6,
+    },
+    headlineDot: {
+      color: C.ACCENT,
     },
     subtitle: {
       color: "rgba(255,255,255,0.55)",
@@ -609,14 +728,19 @@ const makeStyles = (C: ThemeTokens) =>
     providerBlock: {
       marginBottom: 16,
     },
-    // Footnote weight, deliberately below the subtitle: smaller, dimmer,
-    // narrower, sitting as a caption directly above the Apple button.
+    // Footnote weight, sits below the provider buttons as a caption.
     providerHint: {
       color: "rgba(255,255,255,0.38)",
       fontSize: 11,
       lineHeight: 15,
       maxWidth: "88%",
-      marginBottom: 8,
+      marginBottom: 6,
+    },
+    termsPassive: {
+      color: "rgba(255,255,255,0.38)",
+      fontSize: 11,
+      lineHeight: 15,
+      marginBottom: 10,
     },
     providerBtn: {
       flexDirection: "row",
@@ -654,12 +778,30 @@ const makeStyles = (C: ThemeTokens) =>
       fontWeight: "600",
     },
 
+    // Same height/radius family as the provider buttons, outlined.
+    emailRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      borderWidth: 1,
+      borderColor: C.BORDER,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      minHeight: 50,
+    },
+    emailRowText: {
+      color: C.TEXT,
+      fontWeight: "700",
+      fontSize: 15,
+    },
+
     form: {
       backgroundColor: C.CARD,
       borderRadius: 16,
       borderWidth: 1,
       borderColor: C.BORDER,
       padding: 20,
+      marginTop: 10,
     },
 
     label: {

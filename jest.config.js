@@ -15,6 +15,8 @@ module.exports = {
       "@react-native-async-storage/async-storage/jest/async-storage-mock",
     "^react-native$": "<rootDir>/__tests__/stubs/react-native.js",
     "^expo-notifications$": "<rootDir>/__tests__/stubs/expo-notifications.js",
+    "^expo-blur$": "<rootDir>/__tests__/stubs/expo-blur.js",
+    "\\.(png|jpg|jpeg|gif|webp)$": "<rootDir>/__tests__/stubs/asset.js",
     "^react-native-url-polyfill/auto$": "<rootDir>/__tests__/stubs/empty.js",
     // Side-effect polyfill import in lib/tuneAttribution.ts — node's own
     // globalThis.crypto covers the tests.
