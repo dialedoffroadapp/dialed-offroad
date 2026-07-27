@@ -59,6 +59,23 @@ const config: ExpoConfig = {
   },
 
   plugins: [
+    // GoogleSignIn's SDK chain (AppCheckCore → GoogleUtilities /
+    // GTMSessionFetcher) ships Swift pods whose deps don't define module
+    // maps, which fails `pod install` under static libraries (first hit on
+    // EAS build b567e47a, 2026-07-27). Targeted fix per the pod error text:
+    // modular headers for exactly those pods — NOT ios.useFrameworks:
+    // "static", which would change linkage for every pod in the app.
+    [
+      "expo-build-properties",
+      {
+        ios: {
+          extraPods: [
+            { name: "GoogleUtilities", modularHeaders: true },
+            { name: "GTMSessionFetcher", modularHeaders: true },
+          ],
+        },
+      },
+    ],
     "expo-router",
     [
       "expo-splash-screen",
