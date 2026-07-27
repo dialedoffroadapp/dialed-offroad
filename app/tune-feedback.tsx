@@ -67,7 +67,22 @@ type RouteParams = {
   context?: string; // encoded Tune2Context (bike + rider info)
   bikeId?: string; // optional – carried through but not required here
   versionId?: string; // setup_versions id of the tune being critiqued (if saved)
+  checkinSource?: string; // set only when a check-in card opened this screen
 };
+
+/** Trust only the card's own vocabulary — a malformed deep link must not put
+ *  junk in feedback_submitted meta. Absent/invalid = not a card-origin visit. */
+const CHECKIN_SOURCES = [
+  "home_mount",
+  "warm_resume",
+  "notification",
+  "tune_focus",
+] as const;
+function asCheckinSource(v: unknown): string | null {
+  return typeof v === "string" && (CHECKIN_SOURCES as readonly string[]).includes(v)
+    ? v
+    : null;
+}
 
 // Issue chips cycle: off → mild → bad → off
 type IssueLevel = 0 | 1 | 2;
@@ -343,7 +358,8 @@ function PulsePressable({
 /* ------------------------------------------------------------------ */
 
 export default function TuneFeedbackScreen() {
-  const { meta, previous, context, versionId } = useLocalSearchParams<RouteParams>();
+  const { meta, previous, context, versionId, checkinSource } =
+    useLocalSearchParams<RouteParams>();
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
@@ -634,6 +650,7 @@ export default function TuneFeedbackScreen() {
         typeof versionId === "string" && versionId.length > 0 ? versionId : null;
       let feedbackId: string | null = null;
       let shadowWriteFailed = false;
+      const cardSource = asCheckinSource(checkinSource);
       const feedbackEntries: FeedbackEntry[] = [
         ...symptoms,
         ...protectedAreas.map((area) => ({ area, protect: true as const })),
@@ -642,6 +659,7 @@ export default function TuneFeedbackScreen() {
         overallRating: overallRatingTen ?? null,
         symptoms: feedbackEntries,
         freeText: notes.trim() || null,
+        checkinSource: cardSource,
       };
       // The retry queue replays whatever is still null/pending in this entry.
       const retryEntry = () => ({
@@ -672,6 +690,7 @@ export default function TuneFeedbackScreen() {
           overallRating: feedbackPayload.overallRating,
           symptoms: feedbackEntries,
           freeText: notes,
+          checkinSource: cardSource,
         });
         feedbackId = fb.id;
         // Feedback landed for this version — the ride reminder pointing at it

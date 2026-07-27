@@ -307,6 +307,9 @@ export async function createFeedback(params: {
   overallRating?: number | null; // 1–10, post-conversion
   symptoms: FeedbackEntry[]; // issue + protection entries, see FeedbackEntry
   freeText?: string | null;
+  /** Check-in card attribution (components/OutcomeCheckinCard.tsx
+   *  CheckinSource) — null/absent on non-card entries into the picker. */
+  checkinSource?: string | null;
 }): Promise<RideFeedbackRow> {
   const userId = await requireUserId();
   const freeText =
@@ -331,6 +334,7 @@ export async function createFeedback(params: {
   void logEvent("feedback_submitted", {
     symptom_count: params.symptoms.filter((s) => !("protect" in s)).length,
     has_free_text: !!freeText,
+    ...(params.checkinSource ? { checkin_source: params.checkinSource } : {}),
   });
   return data;
 }

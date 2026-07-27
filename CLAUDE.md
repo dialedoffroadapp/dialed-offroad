@@ -10,7 +10,11 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 - **Run:** `npx expo start` — this is a **dev-client** app (custom native
   modules); **Expo Go will not run it**. iOS build: `npx expo run:ios`.
 - **App tests:** `npx jest` (config `jest.config.js`, ts-jest; native modules
-  stubbed in `__tests__/stubs/`).
+  stubbed in `__tests__/stubs/`). Component tests are `*.test.tsx` rendered
+  with `react-test-renderer` against the same stubs (no RN jest preset);
+  `stubs/react-native.js` drives AppState via `__emit` and completes Animated
+  synchronously. See `__tests__/OutcomeCheckinCard.test.tsx` for the
+  fresh-registry pattern components with module-level state need.
 - **Typecheck:** no script — run `npx tsc --noEmit`.
 - **Engine tests are separate (Deno, not Jest):**
   `AI_TUNE_TEST=1 deno test --allow-env supabase/functions/ai-tune/tests/`
@@ -58,7 +62,12 @@ episode; >1h backgrounded resets the one-card-per-session latch).
 
 **Check-in analytics counting rule:** a surfaced check-in card logs
 `checkin_shown` (outcome mode) **or** `preride_shown` (first-ride mode) —
-total check-in surfacing = the SUM of both. The notification-permission prompt
+total check-in surfacing = the SUM of both. Both carry `checkin_source` meta
+(`home_mount | warm_resume | notification | tune_focus`), threaded through the
+card's refine params so `feedback_submitted` meta has `checkin_source` exactly
+when the submission started from a card (absent = results-screen / garage /
+Bike Home entries — most submissions, by design). The key's presence also
+fingerprints v2.3.0+ clients. The notification-permission prompt
 logs its outcome in `heard_card_shown` meta (`surface: "notif_prompt"`,
 `outcome: granted|denied|declined`) — no dedicated event type (new types need
 a `usage_events_event_type_check` migration).
@@ -198,10 +207,12 @@ candidate in a 2h window).
 
 ## How to work here
 
-- **Branch discipline:** default branch is `main`; release work on `release/*`;
-  features on `feat/*`. **Don't commit or push unless asked. Ask before pushing
-  to the prod DB or acting on a release branch.** Keep commits scoped to one
-  logical change.
+- **Branch discipline (convention set 2026-07-24):** `main` tracks the shipped
+  release — it was fast-forwarded to `release/v2.2.0` (build 35, the live
+  binaries) and stays the source of truth. Feature branches come off `main`;
+  release branches are cut from `main`. **Don't commit or push unless asked.
+  Ask before pushing to the prod DB or acting on a release branch.** Keep
+  commits scoped to one logical change.
 - **Audit before building.** Much of this app already exists under other names
   (e.g. `setup_versions`/`ride_feedback` already cover "sessions/refinements").
   Search first; extend rather than rebuild.
@@ -250,6 +261,20 @@ that change none of those skip it.)*
   (was `fork_comp_reveal_v1`). `meta.spec` carries display-only
   `fork_type`/`shock_type`; the persisted `recommended_settings.context`
   shape is unchanged.
+- **v2.2.0 is LIVE** (iOS 2026-07-22, Android 2026-07-24) — but fleet adoption
+  lags: prod events still look v2.1.0-shaped (zero `notif_prompt` outcomes,
+  ~zero reminder arrivals). Gate check-in analysis on `checkin_source` presence
+  (v2.3.0+ clients) or by date once adoption is confirmed in the store consoles.
+- **`feat/checkin-instrumentation` (v2.3.0 Workstream B, 2026-07-24, off
+  `release/v2.2.0`):** checkin_source attribution (see counting rule above),
+  check-in card moved above the presets rail on Home (first content block),
+  and the OutcomeCheckinCard render-path test suite. Audit verdict behind it:
+  surfacing logic is sound (4/4 returning-eligible users got the card); the
+  gaps were split-event undercounting, below-fold placement (11 impressions,
+  0 answers), and the dead notification arm. Meta-only — no migration.
+  Based on `release/v2.2.0`'s tip = `main`'s tip since the 2026-07-24
+  fast-forward, so it merges onto `main` clean (verified; so does
+  `feat/social-auth`, and the two merge clean with each other).
 - **`feat/tune-attribution` (v2.3.0 Workstream C, 2026-07-24, off `main`):**
   pre-auth onboarding tune attribution. Client mints one random `anon_id`
   uuid (`lib/tuneAttribution.ts`, AsyncStorage); signed-out `generateTune`
@@ -270,9 +295,10 @@ that change none of those skip it.)*
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
   build); on-device visual pass of the new results cards, locked value
-  stack, and temp chips (existing dev client is fine — pure JS); on-device
-  E2E of the pre-auth tune → signup → claim flow against a pushed migration
-  (unit/handler suites cover each hop, not the live RPC).
+  stack, and temp chips (existing dev client is fine — pure JS) — plus the
+  relocated Home check-in card position; on-device E2E of the pre-auth
+  tune → signup → claim flow against a pushed migration (unit/handler
+  suites cover each hop, not the live RPC).
 
 ## Sprint focus (in order)
 
