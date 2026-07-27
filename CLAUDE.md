@@ -115,24 +115,18 @@ candidate in a 2h window).
   prod.** Pushing from a branch missing an applied migration diverges history.
   `release/v2.2.0` satisfies this (it merged `feat/bike-entry-canonicalization`
   first, which carries all applied prod migrations — through `20260715150000`).
-- **v2.3.0 batched push — HOLD until release assembly.** `20260724090000`
-  (oauth event types, Workstream A) and `20260724110000` (tune_calls anon
-  claim, Workstream C) push TOGETHER from the release branch cut off `main`
-  after A, B, and C have all merged — one branch satisfies the superset rule
-  in one shot. Never push either from a feature branch. Order within
-  assembly: migration first, THEN the `ai-tune` edge redeploy — the new edge
-  inserts `anon_id`, which fails (and silently drops rate-limit rows) if the
-  column doesn't exist yet. Old edge + new migration is harmless.
-- **v2.3.0 release-assembly checklist item (Workstream D, DO NOT FORGET):**
-  after A, B, C, D merge and the release branch is cut, author a NEW
-  `usage_events_event_type_check` migration ON THE RELEASE BRANCH, sequenced
-  after WS-A's `20260724090000`, re-adding the constraint with A's full oauth
-  list PLUS `loop_preview_shown` and `hook_ride_armed`. It must land in the
-  batched push BEFORE any store build ships from the release branch —
-  `loop_preview_shown` queues pre-auth, and one unwhitelisted queued type
-  rejects the ENTIRE flush batch (the oauth queue-poison failure mode). D
-  deliberately ships no migration file on its own branch: the re-added
-  constraint list needs A's merged migration to be visible first.
+- **v2.3.0 batched push: THREE staged migrations, pushed together from
+  `release/v2.3.0` only** — `20260724090000` (A: oauth event types),
+  `20260724110000` (C: tune_calls anon claim), `20260727100000` (D: loop
+  event types). D's file IS the former assembly-checklist item — authored
+  2026-07-27 on the release branch from the LIVE constraint (54 types);
+  do not author it again. Never push any of these from a feature branch.
+  Order within assembly: migrations first, THEN the `ai-tune` edge
+  redeploy — the new edge inserts `anon_id`, which fails (and silently
+  drops rate-limit rows) if the column doesn't exist yet. Old edge + new
+  migration is harmless. Store builds ship only after both (the loop
+  events queue pre-auth; one unwhitelisted queued type rejects the ENTIRE
+  flush batch — the queue-poison failure mode).
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
@@ -237,7 +231,7 @@ candidate in a 2h window).
   server-computed.
 
 ## Current state — update this section when structure changes
-*(As of 2026-07-18. Standing rule: any commit that changes branch structure,
+*(As of 2026-07-27. Standing rule: any commit that changes branch structure,
 canonical data shapes, applied migrations, established conventions, or sprint
 focus updates the relevant section of this file IN THE SAME COMMIT; commits
 that change none of those skip it.)*
@@ -263,11 +257,17 @@ that change none of those skip it.)*
   uses `created_at ≈ last_sign_in_at` (email keeps its `identities[]` check).
   Apple first-auth name → `display_name` for NEW accounts only. Login screen
   has the same provider buttons (no hint line, `mode: "login"` heal-only
-  profile writes). Staged
-  UNAPPLIED migration `20260724090000_usage_events_oauth_event_types.sql` —
-  batch with Workstream C's push. Needs before it works on device: new
-  dev-client build, Apple provider config in Supabase dashboard + App ID
-  capability, Google client IDs (env + Supabase authorized list).
+  profile writes). Migration
+  `20260724090000_usage_events_oauth_event_types.sql` is part of the
+  three-migration v2.3.0 batched push. **Dashboard prerequisites DONE
+  2026-07-24:** Sign in with Apple capability on `com.dialedoffroad.app`;
+  Supabase Apple provider enabled (client ID `com.dialedoffroad.app`,
+  empty secret — native id-token flow needs no JWT secret); Google Cloud
+  iOS/Web/Android OAuth clients created (project `611855927324`); Supabase
+  Google provider configured (iOS + Web client IDs comma-separated, Web
+  client secret). Still needed: a fresh dev-client build (new native
+  modules), and River flips the Google consent screen Testing → Production
+  before store submission.
 - Results/input value pass (2026-07-19, sprint items 1+2): spring-check card
   (ok/marginal/out_of_range, above the Fork card, NEVER blurred), sag
   provenance caption + range bar (`spec_verified` only), "Fork · {type}" /
@@ -298,10 +298,16 @@ that change none of those skip it.)*
   anon `tune_calls` rows only. `claim_anon_tune_calls(p_anon_id)` RPC
   (migration `20260724110000` — STAGED, NOT PUSHED; see batched-push rule)
   attributes rows server-side: exact anon_id + `user_id IS NULL` one-shot
-  guard + 48h window; table stays deny-all. Claim fires at auth success in
-  `signup.tsx` and `login.tsx` next to the analytics flush, then rotates the
-  stored id — TODO markers in both files: fold into `completeAuthSuccess`
-  when `feat/social-auth` merges. Historical row-level backfill ruled out;
+  guard + 48h window; table stays deny-all. **Claim consolidated at v2.3.0
+  assembly (`098e9dd`):** fires inside `completeAuthSuccess` immediately
+  before the flush-triggering sign_up/sign_in event (covers email signup +
+  Apple/Google on both screens), PLUS two documented inline sites on paths
+  that bypass that function — `login.tsx` email sign-in (own IndexGate-mirror
+  routing) and `signup.tsx`'s already-registered recovery branch (the gap C
+  flagged, now closed). Every auth path claims exactly once (verified:
+  disjoint handlers); rotation-on-success unchanged. **v2.3.x follow-up:**
+  reroute those two inline flows through `completeAuthSuccess`, then delete
+  the direct calls. Historical row-level backfill ruled out;
   use the aggregate correction factor (see counting rule). Ride-along:
   `meta.app_version` on all events. Edge NOT redeployed (assembly-time, after
   the migration). Known pre-existing red: engine_test #10's authenticated leg
@@ -330,6 +336,17 @@ that change none of those skip it.)*
   loop-preview copy; v3 reads in **bar, not psi** (user preferred psi but
   every in-product air display is bar; consistency rule won) — if the app
   ever switches air display to psi, update v3 in the same commit.
+- **`release/v2.3.0` is the v2.3.0 integration branch** (cut 2026-07-27 off
+  `main` = `b3df976`). Merged `--no-ff` in order: `feat/social-auth`,
+  `feat/tune-attribution` (one signup.tsx conflict — A's
+  `completeAuthSuccess` owns the sign_up/sign_in events, so C's inline
+  logEvent was dropped, claim kept), `feat/checkin-instrumentation`,
+  `feat/loop-surfacing` (usage.ts union tail + CLAUDE.md, keep-both). Then
+  the WS-C claim consolidation (`098e9dd`, see C entry) and D's CHECK
+  migration `20260727100000` (assembly-authored). Branch suites at
+  assembly: jest 14 suites / 116 tests green, tsc 19 = baseline, Deno 14
+  passed + the known pre-existing #10. `main` fast-forwards to this branch
+  at release per convention.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
