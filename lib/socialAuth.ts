@@ -48,37 +48,48 @@ const GOOGLE_IOS_CLIENT_ID: string =
     ? extra.GOOGLE_IOS_CLIENT_ID.trim()
     : "";
 
-/** require() guard — returns null when the module isn't in this binary. */
-function loadModule(name: string): any | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require(name);
-  } catch {
-    return null;
-  }
+// require() guards — null when the module isn't usable in this binary.
+//
+// ⚠️ Metro resolves require() at BUNDLE time and rejects non-literal
+// arguments ("Invalid call: require(name)") — a loadModule(name) helper here
+// crashed the app at boot on the dev client's first launch (2026-07-28;
+// jest and the native build both passed because neither goes through
+// Metro). Each module therefore gets its own STATIC require in a try/catch:
+// the string literal lets Metro resolve it, and the catch preserves the
+// old-binary posture — native module absent → module factory throws →
+// null → button hidden, never a crash.
+/* eslint-disable @typescript-eslint/no-require-imports */
+let appleAuthModule: any | null = null;
+try {
+  appleAuthModule = require("expo-apple-authentication");
+} catch {
+  appleAuthModule = null;
 }
 
-let appleAuthModule: any | null | undefined;
+let cryptoModule: any | null = null;
+try {
+  cryptoModule = require("expo-crypto");
+} catch {
+  cryptoModule = null;
+}
+
+let googleModule: any | null = null;
+try {
+  googleModule = require("@react-native-google-signin/google-signin");
+} catch {
+  googleModule = null;
+}
+/* eslint-enable @typescript-eslint/no-require-imports */
+
 function getAppleAuth(): any | null {
-  if (appleAuthModule === undefined) {
-    appleAuthModule = loadModule("expo-apple-authentication");
-  }
   return appleAuthModule;
 }
 
-let cryptoModule: any | null | undefined;
 function getCrypto(): any | null {
-  if (cryptoModule === undefined) {
-    cryptoModule = loadModule("expo-crypto");
-  }
   return cryptoModule;
 }
 
-let googleModule: any | null | undefined;
 function getGoogleSignin(): any | null {
-  if (googleModule === undefined) {
-    googleModule = loadModule("@react-native-google-signin/google-signin");
-  }
   return googleModule;
 }
 
