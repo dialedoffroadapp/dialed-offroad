@@ -82,6 +82,23 @@ async function ensureTableBike(
  * 4. Heals the pending tune's bike ids via the resulting id map, falling back
  *    to a make/model/year match against the user's garage.
  */
+/**
+ * The signup-time retry stash (PENDING_GUEST_BIKE_SYNC_KEY) is bound to the
+ * user whose migration failed — it must NEVER fire for whoever happens to be
+ * signed in at retry time (that's the cross-account write shape of the
+ * 2026-07-27 dup-bike incident; the stash was already bound, this predicate
+ * just makes the binding testable).
+ */
+export function stashBelongsToUser(syncData: any, userId: string): boolean {
+  return !!(
+    syncData &&
+    syncData.userId === userId &&
+    syncData.make &&
+    syncData.model &&
+    syncData.year
+  );
+}
+
 export async function reconcileGuestBikes(userId: string): Promise<void> {
   try {
     const idMap = new Map<string, string>(); // localId -> uuid
@@ -139,12 +156,7 @@ export async function reconcileGuestBikes(userId: string): Promise<void> {
       const syncRaw = await AsyncStorage.getItem(PENDING_GUEST_BIKE_SYNC_KEY);
       if (syncRaw) {
         const syncData = JSON.parse(syncRaw);
-        if (
-          syncData?.userId === userId &&
-          syncData?.make &&
-          syncData?.model &&
-          syncData?.year
-        ) {
+        if (stashBelongsToUser(syncData, userId)) {
           const uuid = await ensureTableBike(
             userId,
             {

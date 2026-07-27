@@ -13,6 +13,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { normalizeBikeStrings, resolveModelId } from "./bikes";
 import {
+  markPendingTuneMigrated,
   PENDING_GUEST_BIKE_SYNC_KEY,
   readPendingTune,
   remapPendingTuneBikeId,
@@ -123,10 +124,23 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
     //    it — the tune was generated as a guest, so its meta still carries
     //    the LOCAL bike id, which would strand the post-signup refine/save
     //    flow bikeless (no lineage/history).
+    // Migration is gated to funnel-exit auths: the signup screen (email or
+    // provider, INCLUDING auto-linked collisions — that person just walked
+    // the guest funnel holding this device) and any auth that minted a new
+    // account. A RETURNING login-screen auth must NOT absorb device-local
+    // guest state that may belong to someone else (shipped dup, 2026-07-27:
+    // one guest bike migrated into two accounts on the same device).
+    const shouldMigrateGuestState = mode === "signup" || isNewAccount;
+
     let pendingBike: { make: string; model: string; year: number } | null = null;
     try {
       const { tune: pending } = await readPendingTune();
-      if (pending) {
+      // One-shot latch: a payload already migrated into ANY account never
+      // migrates again — not into a second account (the dup), and not into
+      // the same account twice (re-auth after a remap failure). Everything
+      // AFTER this block (events, claim, onboarding advance, routing) still
+      // runs on every auth.
+      if (pending && shouldMigrateGuestState && !pending.migratedForUserId) {
         const metaObj = JSON.parse(decodeURIComponent(pending.meta));
         const bike = metaObj?.bike;
         if (bike?.make && bike?.model && bike?.year) {
@@ -155,6 +169,9 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
             .single();
           if (bikeInsertErr) throw bikeInsertErr;
           pendingBike = null; // success — no retry needed
+          // Latch FIRST (bike row exists now); if the remap below throws,
+          // the stash retry is user-bound and re-auth can no longer dup.
+          await markPendingTuneMigrated(userId);
           if (insertedBike?.id) {
             await remapPendingTuneBikeId(insertedBike.id);
           }

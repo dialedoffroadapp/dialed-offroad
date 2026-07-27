@@ -118,6 +118,14 @@ export async function autoCreateBaselineFromPendingTune(): Promise<AutoBaselineR
     const { tune: pending } = await readPendingTune();
     if (!pending) return null;
 
+    // A pending tune migrated into a DIFFERENT account is not this user's
+    // data — never baseline it here (and never let resolveBikeId's
+    // newest-bike fallback graft someone else's tune values onto this
+    // user's garage). Unstamped payloads (pre-latch builds) pass through.
+    if (pending.migratedForUserId && pending.migratedForUserId !== userId) {
+      return null;
+    }
+
     let tune: ZeroTuneResult;
     let meta: any;
     try {

@@ -393,3 +393,67 @@ describe("WS-C claim consolidation (v2.3.0 assembly)", () => {
     expect(claimOrder).toBeLessThan(logEvent.mock.invocationCallOrder[signInIdx]);
   });
 });
+
+describe("guest-state migration latch (dup-bike fix, 2026-07-27 incident)", () => {
+  test("guest tune → signup migrates ONCE; second auth (different user) migrates nothing", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+
+    await completeAuthSuccess(makeParams()); // user A, mode signup
+    expect(bikeInsert).toHaveBeenCalledTimes(1);
+
+    const { tune: afterA } = await readPendingTune();
+    expect(afterA?.migratedForUserId).toBe(USER_ID);
+
+    // Same device, new account (the incident shape: 22:39 → 22:50).
+    await completeAuthSuccess(
+      makeParams({ userId: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff" })
+    );
+    expect(bikeInsert).toHaveBeenCalledTimes(1); // still once — no dup
+
+    const { tune: afterB } = await readPendingTune();
+    expect(afterB?.migratedForUserId).toBe(USER_ID); // latch untouched
+  });
+
+  test("same user re-auth does not migrate twice either", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+
+    await completeAuthSuccess(makeParams());
+    await completeAuthSuccess(makeParams());
+
+    expect(bikeInsert).toHaveBeenCalledTimes(1);
+  });
+
+  test("returning login-mode auth does NOT absorb device guest state", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+
+    await completeAuthSuccess(
+      makeParams({ mode: "login", isNewAccount: false })
+    );
+
+    expect(bikeInsert).not.toHaveBeenCalled();
+    const { tune } = await readPendingTune();
+    expect(tune?.migratedForUserId).toBeUndefined(); // unclaimed for its owner
+  });
+
+  test("login-mode auth that MINTS a new account still migrates (funnel exit)", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+
+    await completeAuthSuccess(
+      makeParams({ mode: "login", isNewAccount: true })
+    );
+
+    expect(bikeInsert).toHaveBeenCalledTimes(1);
+  });
+
+  test("latch survives a failed remap: bike row exists, no re-dup on re-auth", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+    // Insert succeeds; remap would run after the latch write. Simulate a
+    // re-auth after partial failure by just re-running the whole sequence.
+    await completeAuthSuccess(makeParams());
+    const { tune } = await readPendingTune();
+    expect(tune?.migratedForUserId).toBe(USER_ID);
+
+    await completeAuthSuccess(makeParams());
+    expect(bikeInsert).toHaveBeenCalledTimes(1);
+  });
+});

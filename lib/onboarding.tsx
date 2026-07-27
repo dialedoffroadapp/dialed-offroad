@@ -66,6 +66,12 @@ export type PendingTunePayload = {
   meta: string;
   bikeId: string | null;
   savedAt: number;
+  /** Set once the guest bike has been migrated into an account — the latch
+   *  that stops a second auth on the same device from re-migrating (shipped
+   *  dup: same guest bike landed in two accounts, 2026-07-27). Consumers
+   *  that materialize user data from this payload (authSuccess migration,
+   *  autoBaseline) must treat a payload stamped for ANOTHER user as absent. */
+  migratedForUserId?: string;
 };
 
 type OnboardingContextValue = {
@@ -175,6 +181,12 @@ export function isValidPendingTunePayload(
   if (typeof value.savedAt !== "number" || !Number.isFinite(value.savedAt)) {
     return false;
   }
+  if (
+    value.migratedForUserId !== undefined &&
+    typeof value.migratedForUserId !== "string"
+  ) {
+    return false;
+  }
 
   return canParseEncodedJson(value.r) && canParseEncodedJson(value.meta);
 }
@@ -224,6 +236,19 @@ export async function writePendingTune(
   }
 
   await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, JSON.stringify(payload));
+}
+
+/**
+ * markPendingTuneMigrated
+ * Stamp the payload with the account that successfully absorbed the guest
+ * bike — one read-modify-write (single setItem, atomic at the JS layer).
+ * Call IMMEDIATELY after the bikes insert succeeds, before anything that can
+ * throw, so a later failure can't leave the latch unset.
+ */
+export async function markPendingTuneMigrated(userId: string): Promise<void> {
+  const { tune } = await readPendingTune();
+  if (!tune) return;
+  await writePendingTune({ ...tune, migratedForUserId: userId });
 }
 
 export async function clearPendingTune(): Promise<void> {
