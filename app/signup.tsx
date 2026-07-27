@@ -28,6 +28,7 @@ import {
 } from "../lib/socialAuth";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { claimAnonTuneCalls } from "../lib/tuneAttribution";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 function SignupInner() {
@@ -240,6 +241,12 @@ function SignupInner() {
       const isNewAccount =
         !Array.isArray(signUpData?.user?.identities) ||
         (signUpData?.user?.identities?.length ?? 0) > 0;
+      // Attribute this device's pre-auth tune_calls rows to the new session.
+      // Merge resolution note: C's inline logEvent("sign_up"/"sign_in") is
+      // dropped — completeAuthSuccess below owns those events now (A's
+      // refactor). TODO(assembly consolidation): move this claim inside
+      // completeAuthSuccess so email + Apple/Google all claim identically.
+      await claimAnonTuneCalls();
 
       await completeAuthSuccess({
         userId: signInData?.user?.id ?? null,

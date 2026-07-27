@@ -12,6 +12,9 @@ module.exports = {
     "^react-native$": "<rootDir>/__tests__/stubs/react-native.js",
     "^expo-notifications$": "<rootDir>/__tests__/stubs/expo-notifications.js",
     "^react-native-url-polyfill/auto$": "<rootDir>/__tests__/stubs/empty.js",
+    // Side-effect polyfill import in lib/tuneAttribution.ts — node's own
+    // globalThis.crypto covers the tests.
+    "^react-native-get-random-values$": "<rootDir>/__tests__/stubs/empty.js",
     "^react-native-purchases$":
       "<rootDir>/__tests__/stubs/react-native-purchases.js",
     "^expo-constants$": "<rootDir>/__tests__/stubs/expo-constants.js",

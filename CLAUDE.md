@@ -63,6 +63,25 @@ logs its outcome in `heard_card_shown` meta (`surface: "notif_prompt"`,
 `outcome: granted|denied|declined`) — no dedicated event type (new types need
 a `usage_events_event_type_check` migration).
 
+**Fleet fingerprint (v2.3.0+):** every event's meta carries `app_version`,
+stamped in `logEvent` at generation time — queued pre-auth events keep their
+origin version through the flush, so absence of `app_version` means a
+pre-v2.3.0 generator, not a pre-auth event. Prefer it as the general
+version gate.
+
+**Pre-v2.3.0 tune-attribution correction (Workstream C audit, 2026-07-24):**
+before v2.3.0, pre-auth onboarding tunes exist in `tune_calls` only as
+`user_id IS NULL` ip-only rows — attributed rows therefore massively
+undercount "generated a tune" for signups (July 2026: 25% attributed vs ~91%
+add-a-bike). For historical windows, estimate the tune-before-signup rate as
+`min(1, anon zero_baseline_v1 rows / signups)` over the same window.
+Assumptions: ~1 pre-auth tune per onboarding device (measured 1.07 =
+930 rows / 872 distinct IPs, Jul 7–24) and anon rows ≈ onboarding guests
+(direct-API abuse is bounded by the 10/hr per-IP limit). **Never row-link
+historical anon rows to users:** auth audit logs store no IPs, and time-window
+matching is ambiguous (only 8 of 292 July guest-tune signups had a unique
+candidate in a 2h window).
+
 ## Data model & Supabase
 
 - **Two parallel data models — know which you're touching:** legacy **`sessions`**
@@ -87,6 +106,14 @@ a `usage_events_event_type_check` migration).
   prod.** Pushing from a branch missing an applied migration diverges history.
   `release/v2.2.0` satisfies this (it merged `feat/bike-entry-canonicalization`
   first, which carries all applied prod migrations — through `20260715150000`).
+- **v2.3.0 batched push — HOLD until release assembly.** `20260724090000`
+  (oauth event types, Workstream A) and `20260724110000` (tune_calls anon
+  claim, Workstream C) push TOGETHER from the release branch cut off `main`
+  after A, B, and C have all merged — one branch satisfies the superset rule
+  in one shot. Never push either from a feature branch. Order within
+  assembly: migration first, THEN the `ai-tune` edge redeploy — the new edge
+  inserts `anon_id`, which fails (and silently drops rate-limit rows) if the
+  column doesn't exist yet. Old edge + new migration is harmless.
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
@@ -162,6 +189,12 @@ a `usage_events_event_type_check` migration).
 - **Shadow writes are non-fatal by design.** `setupVersions` helpers throw;
   callers catch and fall back to `lib/feedbackRetry.ts`. Don't let them block the
   tune/refine flow.
+- **Usage-event queue limits (known, accepted 2026-07-24):** the pre-auth
+  AsyncStorage queue keeps only the LAST 25 events (older silently dropped)
+  and the flush discards each event's `queued_at` — flushed rows get
+  signup-time `created_at`. Generation time is unrecoverable; only
+  `meta.app_version` reflects the generating binary. Don't "fix" these in
+  passing — changing either alters analytics semantics.
 
 ## How to work here
 
@@ -217,11 +250,29 @@ that change none of those skip it.)*
   (was `fork_comp_reveal_v1`). `meta.spec` carries display-only
   `fork_type`/`shock_type`; the persisted `recommended_settings.context`
   shape is unchanged.
+- **`feat/tune-attribution` (v2.3.0 Workstream C, 2026-07-24, off `main`):**
+  pre-auth onboarding tune attribution. Client mints one random `anon_id`
+  uuid (`lib/tuneAttribution.ts`, AsyncStorage); signed-out `generateTune`
+  sends it top-level in the wire payload; the `ai-tune` edge stamps it on
+  anon `tune_calls` rows only. `claim_anon_tune_calls(p_anon_id)` RPC
+  (migration `20260724110000` — STAGED, NOT PUSHED; see batched-push rule)
+  attributes rows server-side: exact anon_id + `user_id IS NULL` one-shot
+  guard + 48h window; table stays deny-all. Claim fires at auth success in
+  `signup.tsx` and `login.tsx` next to the analytics flush, then rotates the
+  stored id — TODO markers in both files: fold into `completeAuthSuccess`
+  when `feat/social-auth` merges. Historical row-level backfill ruled out;
+  use the aggregate correction factor (see counting rule). Ride-along:
+  `meta.app_version` on all events. Edge NOT redeployed (assembly-time, after
+  the migration). Known pre-existing red: engine_test #10's authenticated leg
+  fails offline on `main` too (`enforceBaselineCredit`'s service client isn't
+  dep-injected) — not introduced by this branch.
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client
   build); on-device visual pass of the new results cards, locked value
-  stack, and temp chips (existing dev client is fine — pure JS).
+  stack, and temp chips (existing dev client is fine — pure JS); on-device
+  E2E of the pre-auth tune → signup → claim flow against a pushed migration
+  (unit/handler suites cover each hop, not the live RPC).
 
 ## Sprint focus (in order)
 
