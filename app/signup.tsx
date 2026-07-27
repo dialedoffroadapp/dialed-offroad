@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -328,8 +329,19 @@ function SignupInner() {
       style={{ flex: 1, backgroundColor: colors.BG }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
+      {/* The provider buttons pushed the form past the fold on SE-class
+          screens (and past it everywhere with the keyboard open) — the page
+          must scroll. keyboardShouldPersistTaps lets the submit/provider
+          buttons receive their first tap while the keyboard is up. */}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.pageContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+      >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View style={styles.page}>
+        <View style={styles.pageInner}>
           {/* Logo */}
           <Image
             source={require("../assets/images/android-icon-foreground.png")}
@@ -341,7 +353,7 @@ function SignupInner() {
           <Text style={styles.subtitle}>
             {state.onboardingStep === "signup"
               ? state.hasSeenIntro
-                ? "Almost there — create your account to reveal your tune."
+                ? "Almost there. Create your account to reveal your tune."
                 : "Your setup is ready. Create your account to reveal it and save your bike."
               : "Start saving bikes, sessions, and AI-powered presets."}
           </Text>
@@ -354,8 +366,8 @@ function SignupInner() {
               {appleAvailable && (
                 <>
                   <Text style={styles.providerHint}>
-                    Signed up with email before? Use email below — or choose
-                    “Share My Email” so we can find your garage.
+                    Signed up with email before? Use email below, or choose
+                    Share My Email so we can find your garage.
                   </Text>
                   <Pressable
                     onPress={() => onProviderSignIn("apple")}
@@ -543,6 +555,7 @@ function SignupInner() {
           </Pressable>
         </View>
       </TouchableWithoutFeedback>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -557,11 +570,18 @@ export default function SignupScreen() {
 
 const makeStyles = (C: ThemeTokens) =>
   StyleSheet.create({
-    page: {
-      flex: 1,
+    // Scroll container (was a fixed `page` view — see ScrollView comment in
+    // render). flexGrow keeps short content filling the viewport; bottom
+    // padding clears the home indicator on notched devices.
+    pageContent: {
+      flexGrow: 1,
       paddingHorizontal: 24,
       paddingTop: 60,
+      paddingBottom: 48,
       backgroundColor: C.BG,
+    },
+    pageInner: {
+      flexGrow: 1,
     },
 
     logo: {
@@ -583,17 +603,20 @@ const makeStyles = (C: ThemeTokens) =>
       color: "rgba(255,255,255,0.55)",
       fontSize: 15,
       lineHeight: 21,
-      marginBottom: 28,
+      marginBottom: 24,
     },
 
     providerBlock: {
-      marginBottom: 18,
+      marginBottom: 16,
     },
+    // Footnote weight, deliberately below the subtitle: smaller, dimmer,
+    // narrower, sitting as a caption directly above the Apple button.
     providerHint: {
-      color: "rgba(255,255,255,0.45)",
-      fontSize: 12,
-      lineHeight: 17,
-      marginBottom: 10,
+      color: "rgba(255,255,255,0.38)",
+      fontSize: 11,
+      lineHeight: 15,
+      maxWidth: "88%",
+      marginBottom: 8,
     },
     providerBtn: {
       flexDirection: "row",
@@ -611,11 +634,14 @@ const makeStyles = (C: ThemeTokens) =>
       fontWeight: "700",
       fontSize: 15,
     },
+    // Rhythm: buttons carry marginBottom 10, so the divider adds none of its
+    // own — every gap in the provider stack reads as the same 10pt beat.
+    // alignItems centers the hairlines on the "or" text's vertical middle.
     dividerRow: {
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
-      marginTop: 4,
+      marginTop: 0,
     },
     dividerLine: {
       flex: 1,
