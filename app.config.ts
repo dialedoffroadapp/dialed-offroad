@@ -8,7 +8,7 @@ const config: ExpoConfig = {
   scheme: "dialedoffroad",
 
   // 🔵 BUMPED APP VERSION (user-facing)
-  version: "2.2.0",
+  version: "2.3.0",
 
   orientation: "portrait",
   icon: "./assets/images/icon.png",
