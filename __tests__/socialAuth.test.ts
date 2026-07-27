@@ -163,7 +163,11 @@ describe("Apple sign-in", () => {
 
     const result = await signInWithApple();
 
-    expect(result).toEqual({ status: "failed", message: "Invalid id token" });
+    // Friendly line to the user; RAW message only in the log channel.
+    expect(result).toEqual({
+      status: "failed",
+      message: "Couldn't sign in with Apple. Try again.",
+    });
     expect(logEvent).toHaveBeenCalledWith("oauth_failed", {
       provider: "apple",
       code: null,
@@ -196,10 +200,18 @@ describe("Google sign-in", () => {
 
     const result = await signInWithGoogle();
 
+    // Contract pin: token WITHOUT nonce, and no other keys. The id_token
+    // carries an SDK-internal nonce claim we can never know the preimage of;
+    // GoTrue only accepts sha256(passed)==claim, so any nonce we add is
+    // guaranteed wrong (see lib/socialAuth.ts Google-path comment).
     expect(signInWithIdToken).toHaveBeenCalledWith({
       provider: "google",
       token: "google-jwt",
     });
+    expect(Object.keys(signInWithIdToken.mock.calls[0][0]).sort()).toEqual([
+      "provider",
+      "token",
+    ]);
     expect(result).toEqual({
       status: "success",
       userId: "user-new",
@@ -208,6 +220,32 @@ describe("Google sign-in", () => {
     });
     expect(logEvent).toHaveBeenCalledWith("oauth_started", {
       provider: "google",
+    });
+  });
+
+  test("Supabase rejection → friendly line to user, raw message logged", async () => {
+    (GoogleSignin as any).signIn = jest.fn(async () => ({
+      type: "success",
+      data: { idToken: "google-jwt", user: { name: null } },
+    }));
+    signInWithIdToken.mockResolvedValue({
+      data: null,
+      error: new Error(
+        "Passed nonce and nonce in id_token should either both exist or not."
+      ),
+    });
+
+    const result = await signInWithGoogle();
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Couldn't sign in with Google. Try again.",
+    });
+    expect(logEvent).toHaveBeenCalledWith("oauth_failed", {
+      provider: "google",
+      code: null,
+      message:
+        "Passed nonce and nonce in id_token should either both exist or not.",
     });
   });
 

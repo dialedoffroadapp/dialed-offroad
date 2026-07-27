@@ -200,9 +200,12 @@ export async function signInWithApple(): Promise<SocialAuthResult> {
       return { status: "cancelled" };
     }
     await logOAuthFailed("apple", e);
+    // Raw error is LOGGED (console + oauth_failed meta), never displayed —
+    // provider/Supabase internals read as gibberish in a toast.
+    console.warn("[socialAuth] apple sign-in failed:", errorMessage(e, "unknown"));
     return {
       status: "failed",
-      message: errorMessage(e, "Apple sign-in failed. Please try again."),
+      message: "Couldn't sign in with Apple. Try again.",
     };
   }
 }
@@ -240,6 +243,18 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
     const idToken: string | null = account?.idToken ?? null;
     if (!idToken) throw new Error("Google returned no ID token.");
 
+    // ⚠️ NO nonce here, and none can be added client-side (verified
+    // 2026-07-28, do not "fix" blind):
+    //   - GoogleSignIn's iOS SDK embeds an internally-generated nonce claim
+    //     in the id_token; this wrapper (v16 free tier) exposes no API to
+    //     supply our own (nonce params are paid/Universal-module only).
+    //   - GoTrue validates ONLY sha256(passed_nonce) == token claim
+    //     (supabase/auth internal/api/token_oidc.go) — we can never know the
+    //     claim's preimage, so passing anything (including the claim itself)
+    //     fails with "Nonces mismatch".
+    //   - Ergo "Passed nonce and nonce in id_token should either both exist
+    //     or not" is resolvable only server-side (Google provider
+    //     skip_nonce_check) or by a paid/Universal wrapper migration.
     const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "google",
       token: idToken,
@@ -259,9 +274,11 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
       return { status: "cancelled" };
     }
     await logOAuthFailed("google", e);
+    // Raw error is LOGGED (console + oauth_failed meta), never displayed.
+    console.warn("[socialAuth] google sign-in failed:", errorMessage(e, "unknown"));
     return {
       status: "failed",
-      message: errorMessage(e, "Google sign-in failed. Please try again."),
+      message: "Couldn't sign in with Google. Try again.",
     };
   }
 }
