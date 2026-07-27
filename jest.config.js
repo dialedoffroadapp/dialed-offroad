@@ -15,6 +15,11 @@ module.exports = {
     "^react-native-purchases$":
       "<rootDir>/__tests__/stubs/react-native-purchases.js",
     "^expo-constants$": "<rootDir>/__tests__/stubs/expo-constants.js",
+    "^expo-apple-authentication$":
+      "<rootDir>/__tests__/stubs/expo-apple-authentication.js",
+    "^expo-crypto$": "<rootDir>/__tests__/stubs/expo-crypto.js",
+    "^@react-native-google-signin/google-signin$":
+      "<rootDir>/__tests__/stubs/google-signin.js",
   },
   transform: {
     "^.+\\.tsx?$": [

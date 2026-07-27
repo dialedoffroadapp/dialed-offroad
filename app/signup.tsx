@@ -15,16 +15,17 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
+import { completeAuthSuccess } from "../lib/authSuccess";
+import { useOnboarding } from "../lib/onboarding";
 import {
-  PENDING_GUEST_BIKE_SYNC_KEY,
-  readPendingTune,
-  remapPendingTuneBikeId,
-  useOnboarding,
-} from "../lib/onboarding";
-import { normalizeBikeStrings, resolveModelId } from "../lib/bikes";
+  isAppleSignInAvailable,
+  isGoogleSignInAvailable,
+  signInWithApple,
+  signInWithGoogle,
+  type SocialProvider,
+} from "../lib/socialAuth";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -60,6 +61,26 @@ function SignupInner() {
 
   const [accepted, setAccepted] = useState(false);
   const [loadingUp, setLoadingUp] = useState(false);
+
+  // Provider buttons render ONLY when the native module is in this binary
+  // (older builds: absent, not broken) — see lib/socialAuth.ts guards.
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  const [googleAvailable] = useState(() => isGoogleSignInAvailable());
+  const [providerLoading, setProviderLoading] = useState<SocialProvider | null>(
+    null
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    isAppleSignInAvailable()
+      .then((ok) => {
+        if (mounted) setAppleAvailable(ok);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const emailValid = useMemo(() => /^\S+@\S+\.\S+$/.test(email.trim()), [email]);
   const canSubmit = emailValid && password.trim().length > 0 && accepted;
@@ -207,97 +228,11 @@ function SignupInner() {
         return;
       }
 
-      // 3) Ensure a profiles row exists so downstream screens never hit null.
-      //    Retry up to 2 times to handle transient RLS/timing issues where the
-      //    new session JWT may not be fully propagated yet.
-      if (signInData?.user?.id) {
-        let profileCreated = false;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          // is_pro is server-only (webhook/service role) since 20260710170000
-          // — including it would fail the whole upsert on column grants.
-          const { error: profileErr } = await supabase.from("profiles").upsert(
-            {
-              user_id: signInData.user.id,
-              onboarding_step: "trial",
-              onboarding_complete: false,
-            },
-            { onConflict: "user_id", ignoreDuplicates: false }
-          );
-          if (!profileErr) {
-            profileCreated = true;
-            break;
-          }
-          // Brief pause before retry to let the JWT propagate
-          if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
-        }
-        if (!profileCreated) {
-          // Profile creation failed after retries — still route the user forward
-          // rather than stranding them. Login will detect the missing profile
-          // and create it on next sign-in.
-          console.warn("[Signup] profile upsert failed after retries");
-        }
-
-        // 4) Migrate guest bike from pending tune into Supabase so hasLegacyUsage
-        //    fires correctly on next cold start and the TrialPromptModal can show.
-        //    Capture the new uuid and rewrite the pending tune's bike ids with
-        //    it — the tune was generated as a guest, so its meta still carries
-        //    the LOCAL bike id, which would strand the post-signup refine/save
-        //    flow bikeless (no lineage/history).
-        let pendingBike: { make: string; model: string; year: number } | null = null;
-        try {
-          const { tune: pending } = await readPendingTune();
-          if (pending) {
-            const metaObj = JSON.parse(decodeURIComponent(pending.meta));
-            const bike = metaObj?.bike;
-            if (bike?.make && bike?.model && bike?.year) {
-              const norm = normalizeBikeStrings(
-                String(bike.make),
-                String(bike.model)
-              );
-              pendingBike = {
-                make: norm.make,
-                model: norm.model,
-                year: Number(bike.year),
-              };
-              const model_id = await resolveModelId(
-                pendingBike.make,
-                pendingBike.model,
-                pendingBike.year
-              );
-              const { data: insertedBike, error: bikeInsertErr } = await supabase
-                .from("bikes")
-                .insert({
-                  user_id: signInData.user.id,
-                  ...pendingBike,
-                  model_id,
-                })
-                .select("id")
-                .single();
-              if (bikeInsertErr) throw bikeInsertErr;
-              pendingBike = null; // success — no retry needed
-              if (insertedBike?.id) {
-                await remapPendingTuneBikeId(insertedBike.id);
-              }
-            }
-          }
-        } catch {
-          // Save for retry on next cold start
-          if (pendingBike) {
-            try {
-              await AsyncStorage.setItem(
-                PENDING_GUEST_BIKE_SYNC_KEY,
-                JSON.stringify({ ...pendingBike, userId: signInData.user.id })
-              );
-            } catch {
-              // ignore
-            }
-          }
-        }
-      }
-
-      toast.show("Account created. You’re signed in ✅", {
-        kind: "success",
-      });
+      // 3+) Shared post-auth sequence (lib/authSuccess.ts): profile upsert w/
+      //     retries, guest-bike migration + remap, sign_up/sign_in + funnel
+      //     events, onboarding advance, routing. Apple/Google sign-in call the
+      //     SAME function — keep provider-specific logic out of it.
+      //
       // Enumeration protection (email confirmation disabled) can make signUp()
       // return no error for an EXISTING email, with an empty identities[]. That
       // is a sign-in, not a new account — so sign_up only fires when identities
@@ -305,41 +240,79 @@ function SignupInner() {
       const isNewAccount =
         !Array.isArray(signUpData?.user?.identities) ||
         (signUpData?.user?.identities?.length ?? 0) > 0;
-      await logEvent(isNewAccount ? "sign_up" : "sign_in");
 
-      // Funnel completion for ANY new account created during active (incomplete)
-      // onboarding — previously gated on step === "signup", which missed signups
-      // routed in from the login screen, the guest-tune gate, cold-start resume,
-      // and the tune-results fallback. Routing below stays gated on "signup".
-      if (isNewAccount && !state.onboardingComplete) {
-        const funnelId = await getOrCreateFunnelId();
-        await logEvent("onboarding_signup_completed", {
-          funnel_id: funnelId,
-          onboarding_step: state.onboardingStep,
-          signed_in: true,
-          account_created: true,
-          trial_started: false,
-          onboarding_complete: false,
-          pending_tune_exists: true,
-          resume: ageMinutesSinceLastStep >= 5,
-          age_minutes_since_last_step: ageMinutesSinceLastStep,
-          source_route: "/signup",
-        });
-      }
-
-      if (state.onboardingStep === "signup") {
-        await markAccountCreated();
-        await setStep("trial");
-        router.replace("/premium");
-        return;
-      }
-
-      // ✅ go to paywall (or whatever returnTo is)
-      router.replace(returnTo);
+      await completeAuthSuccess({
+        userId: signInData?.user?.id ?? null,
+        isNewAccount,
+        method: "email",
+        onboardingStep: state.onboardingStep,
+        onboardingComplete: state.onboardingComplete,
+        ageMinutesSinceLastStep,
+        notify: () =>
+          toast.show("Account created. You’re signed in ✅", {
+            kind: "success",
+          }),
+        markAccountCreated,
+        setStep,
+        replace: (route) => router.replace(route as never),
+        returnTo,
+      });
     } catch (e: any) {
       toast.show(e?.message ?? "Failed to sign up", { kind: "error" });
     } finally {
       setLoadingUp(false);
+    }
+  };
+
+  const onProviderSignIn = async (provider: SocialProvider) => {
+    if (!accepted) {
+      toast.show("Please agree to the Terms and Privacy Policy.", {
+        kind: "error",
+      });
+      return;
+    }
+
+    setProviderLoading(provider);
+    try {
+      const result =
+        provider === "apple"
+          ? await signInWithApple()
+          : await signInWithGoogle();
+
+      // Sheet dismissed — stay on signup, nothing was touched.
+      if (result.status === "cancelled") return;
+      if (result.status === "failed") {
+        toast.show(result.message, { kind: "error" });
+        return;
+      }
+
+      // Same-email collisions auto-link in Supabase (verified email), so a
+      // returning rider lands on their existing account: isNewAccount=false,
+      // garage and entitlements intact.
+      await completeAuthSuccess({
+        userId: result.userId,
+        isNewAccount: result.isNewAccount,
+        method: provider,
+        displayName: result.displayName,
+        onboardingStep: state.onboardingStep,
+        onboardingComplete: state.onboardingComplete,
+        ageMinutesSinceLastStep,
+        notify: () =>
+          toast.show(
+            result.isNewAccount
+              ? "Account created. You’re signed in ✅"
+              : "Welcome back! Signed in ✅",
+            { kind: "success" }
+          ),
+        markAccountCreated,
+        setStep,
+        replace: (route) => router.replace(route as never),
+        returnTo,
+      });
+    } catch (e: any) {
+      toast.show(e?.message ?? "Sign-in failed", { kind: "error" });
+    } finally {
+      setProviderLoading(null);
     }
   };
 
@@ -366,6 +339,71 @@ function SignupInner() {
                 : "Your setup is ready. Create your account to reveal it and save your bike."
               : "Start saving bikes, sessions, and AI-powered presets."}
           </Text>
+
+          {/* Provider sign-in (feature-gated: absent in binaries without the
+              native modules). Apple first on iOS per App Store convention;
+              Android shows Google only. */}
+          {(appleAvailable || googleAvailable) && (
+            <View style={styles.providerBlock}>
+              {appleAvailable && (
+                <>
+                  <Text style={styles.providerHint}>
+                    Signed up with email before? Use email below — or choose
+                    “Share My Email” so we can find your garage.
+                  </Text>
+                  <Pressable
+                    onPress={() => onProviderSignIn("apple")}
+                    disabled={providerLoading !== null || loadingUp}
+                    style={({ pressed }) => [
+                      styles.providerBtn,
+                      pressed && { opacity: 0.9 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Continue with Apple"
+                  >
+                    {providerLoading === "apple" ? (
+                      <ActivityIndicator color="#000" />
+                    ) : (
+                      <>
+                        <Ionicons name="logo-apple" size={18} color="#000" />
+                        <Text style={styles.providerBtnText}>
+                          Continue with Apple
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+                </>
+              )}
+              {googleAvailable && (
+                <Pressable
+                  onPress={() => onProviderSignIn("google")}
+                  disabled={providerLoading !== null || loadingUp}
+                  style={({ pressed }) => [
+                    styles.providerBtn,
+                    pressed && { opacity: 0.9 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue with Google"
+                >
+                  {providerLoading === "google" ? (
+                    <ActivityIndicator color="#000" />
+                  ) : (
+                    <>
+                      <Ionicons name="logo-google" size={18} color="#3c4043" />
+                      <Text style={styles.providerBtnText}>
+                        Continue with Google
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              )}
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+            </View>
+          )}
 
           {/* Form */}
           <View style={styles.form}>
@@ -540,6 +578,48 @@ const makeStyles = (C: ThemeTokens) =>
       fontSize: 15,
       lineHeight: 21,
       marginBottom: 28,
+    },
+
+    providerBlock: {
+      marginBottom: 18,
+    },
+    providerHint: {
+      color: "rgba(255,255,255,0.45)",
+      fontSize: 12,
+      lineHeight: 17,
+      marginBottom: 10,
+    },
+    providerBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      backgroundColor: "#fff",
+      borderRadius: 12,
+      paddingVertical: 14,
+      minHeight: 50,
+      marginBottom: 10,
+    },
+    providerBtnText: {
+      color: "#000",
+      fontWeight: "700",
+      fontSize: 15,
+    },
+    dividerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginTop: 4,
+    },
+    dividerLine: {
+      flex: 1,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: C.BORDER,
+    },
+    dividerText: {
+      color: "rgba(255,255,255,0.35)",
+      fontSize: 12,
+      fontWeight: "600",
     },
 
     form: {

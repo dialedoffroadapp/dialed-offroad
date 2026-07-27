@@ -32,6 +32,7 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Post-ride check-in card | `components/OutcomeCheckinCard.tsx`, `lib/checkinLogic.ts` |
 | Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts`, `lib/guestRecovery.ts` (30h guest-abandon nudge — armed when a guest backgrounds off locked results, cancelled on any auth session; NEVER prompts for permission; analytics-dark until a `usage_events` CHECK migration adds `guest_recovery_*` types) |
 | Paywall / Pro / IAP | `app/premium.tsx`, `lib/purchases.ts`, `hooks/usePro.ts`, `supabase/functions/revenuecat-webhook` (`verify_jwt = false` — it's a public webhook) |
+| Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
 | Analytics | `lib/usage.ts` (`logEvent`, `UsageEvent` union) |
@@ -140,9 +141,18 @@ a `usage_events_event_type_check` migration).
 ## Landmines
 
 - **Native modules → dev-client required.** expo-notifications,
-  react-native-view-shot, expo-sharing. A fresh dev-client / EAS build is needed
+  react-native-view-shot, expo-sharing, expo-apple-authentication, expo-crypto,
+  @react-native-google-signin. A fresh dev-client / EAS build is needed
   after any config-plugin change; **notifications are inert in binaries built
-  before the plugin existed.**
+  before the plugin existed.** Social sign-in buttons feature-gate on module
+  presence (`lib/socialAuth.ts` require guards) — absent, not broken, in old
+  binaries. The Google config plugin is skipped entirely until
+  `EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME` is set (empty env ⇒ no plugin, button hidden).
+- **`oauth_started`/`oauth_failed` are analytics-dark AND must never be queued**
+  (`queueIfAnonymous`) until `20260724090000_usage_events_oauth_event_types.sql`
+  is applied: one queued unknown event type fails the ENTIRE pre-auth flush
+  batch insert in `lib/usage.ts` and silently drops the onboarding funnel
+  events with it.
 - **`app/feedback.tsx` (a support-email screen) is NOT `app/tune-feedback.tsx`
   (the symptom picker).** Easy to edit the wrong one.
 - **`lib/tuneEvents.ts` was deleted** on `feat/bike-entry-canonicalization`
@@ -185,6 +195,19 @@ that change none of those skip it.)*
   NONE of the merged work above.
 - `ai-tune` edge function: deployed and verified live post-`57e7edc`
   (sag-target fallback + spec-authoritative fork type) as of 2026-07-18.
+- **`feat/social-auth` (v2.3.0 Workstream A, 2026-07-24, off `release/v2.2.0`):**
+  native Apple + Google sign-in via `signInWithIdToken` (no web OAuth, no new
+  deep links; auth-callback machinery untouched). Email signup's success
+  sequence extracted verbatim into `lib/authSuccess.ts:completeAuthSuccess`
+  (equivalence-pinned by `__tests__/authSuccess.test.ts`); OAuth new-vs-returning
+  uses `created_at ≈ last_sign_in_at` (email keeps its `identities[]` check).
+  Apple first-auth name → `display_name` for NEW accounts only. Login screen
+  has the same provider buttons (no hint line, `mode: "login"` heal-only
+  profile writes). Staged
+  UNAPPLIED migration `20260724090000_usage_events_oauth_event_types.sql` —
+  batch with Workstream C's push. Needs before it works on device: new
+  dev-client build, Apple provider config in Supabase dashboard + App ID
+  capability, Google client IDs (env + Supabase authorized list).
 - Results/input value pass (2026-07-19, sprint items 1+2): spring-check card
   (ok/marginal/out_of_range, above the Fork card, NEVER blurred), sag
   provenance caption + range bar (`spec_verified` only), "Fork · {type}" /
