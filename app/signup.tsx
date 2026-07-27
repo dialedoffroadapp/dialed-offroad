@@ -32,7 +32,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { claimAnonTuneCalls } from "../lib/tuneAttribution";
-import { TuneTeaseCard, type TuneTeaseValues } from "../components/TuneTeaseCard";
+import { TuneTeaseCard } from "../components/TuneTeaseCard";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 // LayoutAnimation drives the email-form expand; Android needs the opt-in.
@@ -75,9 +75,11 @@ function SignupInner() {
   const [accepted, setAccepted] = useState(false);
   const [loadingUp, setLoadingUp] = useState(false);
 
-  // v2.3.0 redesign: blurred tease of the rider's real pending tune, and the
-  // email form collapsed behind a "Continue with email" row.
-  const [teaseTune, setTeaseTune] = useState<TuneTeaseValues | null>(null);
+  // v2.3.0 redesign: blurred tease card (STATIC DECOYS — see TuneTeaseCard's
+  // paywall-integrity note) and the email form collapsed behind a
+  // "Continue with email" row. The pending tune decides only render/no-render
+  // and whether the bike has an air row at all.
+  const [tease, setTease] = useState<{ showAir: boolean } | null>(null);
   const [emailOpen, setEmailOpen] = useState(false);
   const emailInputRef = useRef<TextInput>(null);
   const emailExpandLoggedRef = useRef(false);
@@ -105,23 +107,17 @@ function SignupInner() {
   const emailValid = useMemo(() => /^\S+@\S+\.\S+$/.test(email.trim()), [email]);
   const canSubmit = emailValid && password.trim().length > 0 && accepted;
 
-  // Tease card data: the SAME pending tune the locked results screen reads.
-  // No pending tune (direct signup route) → card hidden entirely.
+  // Tease gating: the SAME pending tune the locked results screen reads, but
+  // consulted ONLY for (a) does a tune exist → render, (b) does it have an
+  // air value → show the air row. Real values NEVER reach the card.
   useEffect(() => {
     void (async () => {
       const { tune } = await readPendingTune();
       if (!tune) return;
       try {
         const r = JSON.parse(decodeURIComponent(tune.r));
-        setTeaseTune({
-          fork_comp:
-            typeof r?.fork?.comp_clicks === "number" ? r.fork.comp_clicks : null,
-          shock_reb:
-            typeof r?.shock?.reb_clicks === "number" ? r.shock.reb_clicks : null,
-          air_bar:
-            typeof r?.fork?.air_pressure_bar === "number"
-              ? r.fork.air_pressure_bar
-              : null,
+        setTease({
+          showAir: typeof r?.fork?.air_pressure_bar === "number",
         });
       } catch {
         // Unparseable pending tune: the screen just renders without the tease.
@@ -409,9 +405,9 @@ function SignupInner() {
             style={styles.logo}
           />
 
-          {/* Blurred tease of the rider's real pending tune (hidden when no
-              pending tune exists — direct signup route). */}
-          {teaseTune && <TuneTeaseCard values={teaseTune} />}
+          {/* Blurred tease card — static decoys only (paywall integrity),
+              hidden when no pending tune exists (direct signup route). */}
+          {tease && <TuneTeaseCard showAir={tease.showAir} />}
 
           {/* Headline: brand display fallback (Barlow Condensed not bundled) —
               heaviest weight, uppercase, tight leading, accent period. */}
@@ -420,7 +416,9 @@ function SignupInner() {
             <Text style={styles.headlineDot}>.</Text>
           </Text>
           <Text style={styles.subtitle}>
-            One step left to reveal your settings.
+            {state.onboardingStep === "signup"
+              ? "One step left to reveal your settings."
+              : "Create your account to save your setups."}
           </Text>
 
           {/* Provider sign-in (feature-gated: absent in binaries without the

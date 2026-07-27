@@ -41,11 +41,12 @@ jest.mock("../components/Toast", () => ({
 }));
 
 const readPendingTune = jest.fn(async () => ({ tune: null, isExpired: false }));
+let mockOnbStep = "signup";
 jest.mock("../lib/onboarding", () => ({
   readPendingTune: (...a: any[]) => readPendingTune(...(a as [])),
   useOnboarding: () => ({
     state: {
-      onboardingStep: "signup",
+      onboardingStep: mockOnbStep,
       hasSeenIntro: true,
       accountCreated: false,
       trialStarted: false,
@@ -89,6 +90,11 @@ jest.mock("../lib/socialAuth", () => ({
 import React from "react";
 import { act, create, ReactTestRenderer } from "react-test-renderer";
 import SignupScreen from "../app/signup";
+import {
+  TEASE_DECOY_AIR,
+  TEASE_DECOY_FORK,
+  TEASE_DECOY_SHOCK,
+} from "../components/TuneTeaseCard";
 
 function textsIn(node: any): string[] {
   return node
@@ -137,17 +143,45 @@ const PENDING = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockOnbStep = "signup";
   readPendingTune.mockResolvedValue({ tune: null, isExpired: false } as any);
 });
 
-test("tease card renders the rider's REAL pending values", async () => {
+test("pending tune present: tease shows DECOYS and NEVER the real values (paywall integrity)", async () => {
   readPendingTune.mockResolvedValue(PENDING as any);
   const r = await renderScreen();
   const texts = textsIn(r.root);
   expect(texts).toContain("YOUR TUNE IS READY");
-  expect(texts).toContain("16 clicks");
-  expect(texts).toContain("12 clicks");
-  expect(texts).toContain("10.76 bar");
+  expect(texts).toContain(TEASE_DECOY_FORK);
+  expect(texts).toContain(TEASE_DECOY_SHOCK);
+  expect(texts).toContain(TEASE_DECOY_AIR); // pending tune HAS air → row shown
+  // The rider's actual values (16 / 12 / 10.76) must never render pre-signup.
+  expect(texts).not.toContain("16 clicks");
+  expect(texts).not.toContain("12 clicks");
+  expect(texts).not.toContain("10.76 bar");
+});
+
+test("coil-fork pending tune: air row hidden (presence signal only)", async () => {
+  const coil = JSON.parse(JSON.stringify(PENDING));
+  coil.tune.r = encodeURIComponent(
+    JSON.stringify({ fork: { comp_clicks: 16 }, shock: { reb_clicks: 12 } })
+  );
+  readPendingTune.mockResolvedValue(coil as any);
+  const r = await renderScreen();
+  const texts = textsIn(r.root);
+  expect(texts).toContain(TEASE_DECOY_FORK);
+  expect(texts).not.toContain("Air pressure");
+});
+
+test("subtitle: onboarding route vs direct route", async () => {
+  const onb = await renderScreen();
+  expect(textsIn(onb.root)).toContain("One step left to reveal your settings.");
+
+  mockOnbStep = "complete";
+  const direct = await renderScreen();
+  expect(textsIn(direct.root)).toContain(
+    "Create your account to save your setups."
+  );
 });
 
 test("no pending tune (direct route): tease card fully hidden", async () => {

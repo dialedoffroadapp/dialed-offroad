@@ -1,45 +1,40 @@
 // components/TuneTeaseCard.tsx
-// Signup-screen tease (v2.3.0 redesign): the rider's REAL pending-tune
-// values, compact and blurred, directly above the headline — the account is
-// the last step between them and these numbers. Values come from the same
-// pending tune the locked results screen reads; the screen hides this card
-// entirely when no pending tune exists (direct signup route).
+// Signup-screen tease (v2.3.0 redesign): a compact blurred settings card
+// directly above the headline — the account is the last step between the
+// rider and their numbers.
+//
+// ⚠️ PAYWALL INTEGRITY: this card renders STATIC DECOY values, never the
+// rider's real tune. A weak blur over real numbers is recoverable from a
+// screenshot, and this card sits BEFORE signup — real values here would be
+// the cheapest paywall bypass in the app. The component takes no value
+// props at all (structurally incapable of leaking); the screen consults the
+// pending tune ONLY to decide render/no-render and whether an air row
+// exists for this bike.
 //
 // Blur treatment matches the locked-results BlurCards verbatim
-// (intensity 30, tint by background) — deliberately not extracted from
-// app/tune-results.tsx today; params are copied, not shared (ship-day scope).
+// (intensity 30, tint by background) — params copied, not shared (ship-day
+// scope; see tune-results.tsx BlurCard).
 
 import { BlurView } from "expo-blur";
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { useTheme } from "../lib/theme";
 
-export type TuneTeaseValues = {
-  fork_comp: number | null;
-  shock_reb: number | null;
-  air_bar: number | null;
-};
+// Plausible mid-range decoys. Exported so tests can pin that ONLY these
+// strings ever render.
+export const TEASE_DECOY_FORK = "14 clicks";
+export const TEASE_DECOY_SHOCK = "11 clicks";
+export const TEASE_DECOY_AIR = "10.2 bar";
 
-export function TuneTeaseCard({ values }: { values: TuneTeaseValues }) {
+export function TuneTeaseCard({ showAir }: { showAir: boolean }) {
   const { colors: C } = useTheme();
   const S = React.useMemo(() => makeStyles(C), [C]);
 
   const rows = [
-    {
-      label: "Fork compression",
-      text: values.fork_comp != null ? `${values.fork_comp} clicks` : null,
-    },
-    {
-      label: "Shock rebound",
-      text: values.shock_reb != null ? `${values.shock_reb} clicks` : null,
-    },
-    {
-      label: "Air pressure",
-      text: values.air_bar != null ? `${values.air_bar.toFixed(2)} bar` : null,
-    },
-  ].filter((r) => r.text !== null);
-
-  if (rows.length === 0) return null;
+    { label: "Fork compression", text: TEASE_DECOY_FORK },
+    { label: "Shock rebound", text: TEASE_DECOY_SHOCK },
+    ...(showAir ? [{ label: "Air pressure", text: TEASE_DECOY_AIR }] : []),
+  ];
 
   return (
     <View style={S.card}>
