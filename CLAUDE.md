@@ -115,18 +115,17 @@ candidate in a 2h window).
   prod.** Pushing from a branch missing an applied migration diverges history.
   `release/v2.2.0` satisfies this (it merged `feat/bike-entry-canonicalization`
   first, which carries all applied prod migrations — through `20260715150000`).
-- **v2.3.0 batched push: THREE staged migrations, pushed together from
-  `release/v2.3.0` only** — `20260724090000` (A: oauth event types),
-  `20260724110000` (C: tune_calls anon claim), `20260727100000` (D: loop
-  event types). D's file IS the former assembly-checklist item — authored
-  2026-07-27 on the release branch from the LIVE constraint (54 types);
-  do not author it again. Never push any of these from a feature branch.
-  Order within assembly: migrations first, THEN the `ai-tune` edge
-  redeploy — the new edge inserts `anon_id`, which fails (and silently
-  drops rate-limit rows) if the column doesn't exist yet. Old edge + new
-  migration is harmless. Store builds ship only after both (the loop
-  events queue pre-auth; one unwhitelisted queued type rejects the ENTIRE
-  flush batch — the queue-poison failure mode).
+- **v2.3.0 migration batch: APPLIED to prod 2026-07-27** from
+  `release/v2.3.0` — `20260724090000` (oauth event types), `20260724110000`
+  (tune_calls anon claim), `20260727100000` (loop event types; 54-type
+  constraint verified live), plus `20260727110000` (claim RPC anon revoke).
+  `ai-tune` was redeployed AFTER the batch; store builds may now ship
+  (before this, the queued loop events would have poisoned the pre-auth
+  flush batch). **Grant idiom rule from the stage-1 finding:** this
+  project's default ACLs grant function EXECUTE to anon/authenticated as
+  INDIVIDUAL roles, so `revoke ... from public` alone leaves anon able to
+  execute — auth-required RPCs must `revoke execute ... from anon`
+  explicitly (the `20260715150000` idiom).
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
@@ -244,11 +243,18 @@ that change none of those skip it.)*
   writer + ride-loop's trigger/columns/check-in machinery both kept).
 - Migrations applied to prod AND present here: `20260714120000` through
   `20260715150000` (recommended/applied/delta columns, bike_models generations
-  schema + backfill, security hardening).
+  schema + backfill, security hardening), plus the v2.3.0 batch
+  `20260724090000`–`20260727110000` (applied 2026-07-27).
 - `release/v2.1.0`: build 34, was in App Review as of 2026-07-14 — contains
   NONE of the merged work above.
-- `ai-tune` edge function: deployed and verified live post-`57e7edc`
-  (sag-target fallback + spec-authoritative fork type) as of 2026-07-18.
+- `ai-tune` edge function: redeployed 2026-07-27 (anon_id stamping,
+  v2.3.0) and verified live end-to-end: anon request → row with anon_id;
+  authenticated request → user_id-only with a supplied anon_id IGNORED;
+  anon 10/hr IP limit returns 429 at call 11 with no row recorded.
+  (Previous deploy: post-`57e7edc`, 2026-07-18.) NOTE: the 2026-07-27
+  verification left 10 anon test rows (anon_id `d0d0feed-…-0001`, one IP)
+  and test account `dialedoffroadapp+ws-assembly-test@gmail.com` in prod —
+  exclude that day's cluster from anon-row analytics, delete at will.
 - **`feat/social-auth` (v2.3.0 Workstream A, 2026-07-24, off `release/v2.2.0`):**
   native Apple + Google sign-in via `signInWithIdToken` (no web OAuth, no new
   deep links; auth-callback machinery untouched). Email signup's success
