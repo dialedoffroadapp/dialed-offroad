@@ -60,22 +60,18 @@ const config: ExpoConfig = {
 
   plugins: [
     // GoogleSignIn's SDK chain (AppCheckCore → GoogleUtilities /
-    // GTMSessionFetcher) ships Swift pods whose deps don't define module
-    // maps, which fails `pod install` under static libraries (first hit on
-    // EAS build b567e47a, 2026-07-27). Targeted fix per the pod error text:
-    // modular headers for exactly those pods — NOT ios.useFrameworks:
-    // "static", which would change linkage for every pod in the app.
-    [
-      "expo-build-properties",
-      {
-        ios: {
-          extraPods: [
-            { name: "GoogleUtilities", modularHeaders: true },
-            { name: "GTMSessionFetcher", modularHeaders: true },
-          ],
-        },
-      },
-    ],
+    // RecaptchaInterop / GTMSessionFetcher) ships Swift pods whose deps
+    // don't define module maps, which fails `pod install` under static
+    // LIBRARIES. Two EAS builds proved the minimal fixes insufficient:
+    // b567e47a (no config) and f55e7fc3 (extraPods modularHeaders for
+    // GoogleUtilities + GTMSessionFetcher — injected, verified in the pod
+    // log, still "does not define modules" because subspec-level deps
+    // don't inherit the flag). ios.useFrameworks "static" is
+    // @react-native-google-signin's documented Expo requirement; all our
+    // native deps (notifications, purchases, view-shot, svg, dev-client)
+    // support static frameworks. Side effect: RN builds from source
+    // instead of precompiled — slower EAS builds, no runtime difference.
+    ["expo-build-properties", { ios: { useFrameworks: "static" } }],
     "expo-router",
     [
       "expo-splash-screen",
