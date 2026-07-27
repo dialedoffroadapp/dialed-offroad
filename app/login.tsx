@@ -122,9 +122,10 @@ function LoginInner() {
       if (error) throw error;
 
       toast.show("Signed in ✅", { kind: "success" });
-      // Attribute pre-auth tune_calls made on this device (guest tune → "I
-      // already have an account" → sign-in lands here, not signup.tsx).
-      // TODO(feat/social-auth merge): fold into completeAuthSuccess.
+      // Attribute pre-auth tune_calls (WS-C). The email sign-in path keeps
+      // its own inline flow (the IndexGate-mirror routing below) and never
+      // reaches completeAuthSuccess — so it claims directly; OAuth on this
+      // screen claims inside completeAuthSuccess like every other path.
       await claimAnonTuneCalls();
       await logEvent("sign_in");
 

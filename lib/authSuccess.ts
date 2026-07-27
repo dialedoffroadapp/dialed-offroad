@@ -19,6 +19,7 @@ import {
   type OnboardingStep,
 } from "./onboarding";
 import { supabase } from "./supabase";
+import { claimAnonTuneCalls } from "./tuneAttribution";
 import { getOrCreateFunnelId, logEvent } from "./usage";
 
 export type SignupMethod = "email" | "apple" | "google";
@@ -175,6 +176,16 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
   }
 
   notify?.();
+
+  // WS-C consolidation (v2.3.0 assembly): attribute this device's pre-auth
+  // tune_calls rows — server-enforced claim, then id rotation. Every path
+  // through here (email signup, Apple/Google on both screens) claims at the
+  // same point C's inline call sites used: immediately before the
+  // sign_up/sign_in event whose logEvent triggers the pre-auth queue flush.
+  // Fail-silent by design. NOTE: login.tsx's email path and signup.tsx's
+  // recovery branch do NOT route through this function — they keep direct
+  // claim calls.
+  await claimAnonTuneCalls();
 
   await logEvent(isNewAccount ? "sign_up" : "sign_in", { signup_method: method });
 

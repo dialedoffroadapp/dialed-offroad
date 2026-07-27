@@ -197,6 +197,12 @@ function SignupInner() {
           }
 
           toast.show("Welcome back! Signed in ✅", { kind: "success" });
+          // This recovered sign-in bypasses completeAuthSuccess (inline heal
+          // + custom routing), so it claims pre-auth tune_calls directly —
+          // the gap WS-C flagged: without this, a guest who tunes, hits
+          // "already registered", and recovers into their account never
+          // attributes their pre-auth rows.
+          await claimAnonTuneCalls();
           await logEvent("sign_in");
 
           if (state.onboardingStep === "signup") {
@@ -241,13 +247,6 @@ function SignupInner() {
       const isNewAccount =
         !Array.isArray(signUpData?.user?.identities) ||
         (signUpData?.user?.identities?.length ?? 0) > 0;
-      // Attribute this device's pre-auth tune_calls rows to the new session.
-      // Merge resolution note: C's inline logEvent("sign_up"/"sign_in") is
-      // dropped — completeAuthSuccess below owns those events now (A's
-      // refactor). TODO(assembly consolidation): move this claim inside
-      // completeAuthSuccess so email + Apple/Google all claim identically.
-      await claimAnonTuneCalls();
-
       await completeAuthSuccess({
         userId: signInData?.user?.id ?? null,
         isNewAccount,

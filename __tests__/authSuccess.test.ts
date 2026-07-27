@@ -50,6 +50,15 @@ jest.mock("../lib/bikes", () => ({
   resolveModelId: async () => "model-uuid-1",
 }));
 
+// WS-C consolidation (v2.3.0 assembly): silent mock — no `calls` push,
+// because the equivalence tests assert exact call sequences transcribed
+// from PRE-claim signup.tsx. Ordering is asserted separately below via
+// invocationCallOrder.
+const claimAnonTuneCalls = jest.fn(async () => {});
+jest.mock("../lib/tuneAttribution", () => ({
+  claimAnonTuneCalls: () => claimAnonTuneCalls(),
+}));
+
 /* eslint-disable import/first -- these imports must follow the jest.mock
    factories above: the factories close over the mock fns (TDZ otherwise). */
 import { completeAuthSuccess, type AuthSuccessParams } from "../lib/authSuccess";
@@ -358,5 +367,29 @@ describe("login-screen mode (mirrors email login's profile-write contract)", () 
       "onboarding_signup_completed",
       expect.objectContaining({ signup_method: "apple" })
     );
+  });
+});
+
+describe("WS-C claim consolidation (v2.3.0 assembly)", () => {
+  test("every pass claims pre-auth tune_calls BEFORE the flush-triggering sign_up/sign_in event", async () => {
+    await completeAuthSuccess(makeParams());
+
+    expect(claimAnonTuneCalls).toHaveBeenCalledTimes(1);
+    const claimOrder = claimAnonTuneCalls.mock.invocationCallOrder[0];
+    const signUpIdx = logEvent.mock.calls.findIndex((c) => c[0] === "sign_up");
+    expect(signUpIdx).toBeGreaterThanOrEqual(0);
+    expect(claimOrder).toBeLessThan(logEvent.mock.invocationCallOrder[signUpIdx]);
+  });
+
+  test("returning-user OAuth (mode login) claims too, before sign_in", async () => {
+    await completeAuthSuccess(
+      makeParams({ isNewAccount: false, method: "google", mode: "login" })
+    );
+
+    expect(claimAnonTuneCalls).toHaveBeenCalledTimes(1);
+    const claimOrder = claimAnonTuneCalls.mock.invocationCallOrder[0];
+    const signInIdx = logEvent.mock.calls.findIndex((c) => c[0] === "sign_in");
+    expect(signInIdx).toBeGreaterThanOrEqual(0);
+    expect(claimOrder).toBeLessThan(logEvent.mock.invocationCallOrder[signInIdx]);
   });
 });
