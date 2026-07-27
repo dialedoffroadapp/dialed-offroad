@@ -18,7 +18,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Chip } from "../components/Chip";
+import { LoopPreview } from "../components/LoopPreview";
 import { OnboardingProgress } from "../components/OnboardingProgress";
+import { RideItHook } from "../components/RideItHook";
 import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
 import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
@@ -330,6 +332,11 @@ export default function TuneResultScreen() {
   const [whyExpanded, setWhyExpanded] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
+  // WS-D post-reveal hook: arming state for the ride check-in line.
+  const [rideHookArmed, setRideHookArmed] = useState(false);
+  const [rideHookBusy, setRideHookBusy] = useState(false);
+  const loggedLoopPreviewRef = useRef(false);
+
   // The notification permission ask used to live here (inline rationale on
   // the unblurred results). It moved to feedback-submit success in
   // app/tune-feedback.tsx — a stronger value moment, and the reminder it
@@ -392,6 +399,33 @@ export default function TuneResultScreen() {
     state.onboardingStep,
     state.trialStarted,
   ]);
+
+  // WS-D: the loop preview renders whenever the screen is locked (shouldBlur)
+  // — log its impression once per mount, queued pre-auth like the sibling
+  // locked-view event above. ⚠️ Whitelist dependency: this event type ships
+  // in the assembly CHECK migration; a queued unknown type would poison the
+  // whole pre-auth flush batch (see CLAUDE.md).
+  useEffect(() => {
+    if (!restoreTried || !base || !shouldBlur || loggedLoopPreviewRef.current) {
+      return;
+    }
+    loggedLoopPreviewRef.current = true;
+    void (async () => {
+      const funnelId = await getOrCreateFunnelId();
+      await logEvent(
+        "loop_preview_shown",
+        {
+          funnel_id: funnelId,
+          onboarding_step: state.onboardingStep,
+          signed_in: isSignedIn,
+          bike_id: bikeId,
+          source_route: "/tune-results",
+          variant: LOCKED_VARIANT,
+        },
+        { allowAnonymous: true, queueIfAnonymous: true }
+      );
+    })();
+  }, [base, bikeId, isSignedIn, restoreTried, shouldBlur, state.onboardingStep]);
 
   // Guest abandon → recovery nudge: a guest (no session) backgrounding off the
   // locked results is the churn moment — arm the 30h recovery notification
@@ -972,6 +1006,87 @@ export default function TuneResultScreen() {
     }
   };
 
+  // WS-D post-reveal hook: arm the ride check-in for this bike. Reuses the
+  // save flow's idempotent version-ensure (same latest-match guard as onSave
+  // above — the two stay interchangeable: whichever runs first mints v1, the
+  // other reuses it) + scheduleRideReminder. NEVER prompts for notification
+  // permission (the ask lives at feedback-submit success in tune-feedback.tsx;
+  // scheduleRideReminder no-ops without an existing grant — the check-in CARD
+  // on Home still surfaces organically via isFirstRideEligible either way).
+  const onArmRide = async () => {
+    if (rideHookArmed || rideHookBusy) return;
+    setRideHookBusy(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user?.id) return; // hook only renders unlocked, but guard anyway
+
+      let versionId: string | null = null;
+      let versionNumber = 1;
+
+      const { data: latest } = await supabase
+        .from("setup_versions")
+        .select(
+          "id, version_number, fork_comp_clicks, fork_reb_clicks, fork_air_bar, shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm"
+        )
+        .eq("bike_id", bikeId)
+        .order("version_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latest && versionMatchesTune(latest as any, result)) {
+        versionId = (latest as any).id;
+        versionNumber = (latest as any).version_number ?? 1;
+      } else {
+        const version = await createBaselineVersion({
+          bikeId,
+          tune: result,
+          terrain: Array.isArray(metaObj?.context?.terrain)
+            ? metaObj.context.terrain[0] ?? null
+            : metaObj?.context?.terrain ?? null,
+          context: metaObj?.context ?? null,
+          recommendedContext: {
+            model_id: metaObj?.spec?.model_id ?? null,
+            spec_verified: !!metaObj?.spec?.spec_verified,
+            sag_target_mm: metaObj?.spec?.sag_target_mm ?? null,
+            sag_bounds: metaObj?.spec?.sag_bounds ?? null,
+            rider_weight_lbs: metaObj?.context?.rider_weight_lbs ?? null,
+            spring_check: base?.spring_check
+              ? {
+                  status: base.spring_check.status,
+                  direction: base.spring_check.direction,
+                }
+              : null,
+            engine: "zero_baseline_v1",
+          },
+        });
+        versionId = version.id;
+        versionNumber = version.version_number;
+        baselineVersionIdRef.current = version.id;
+      }
+
+      if (!versionId) return;
+
+      void scheduleRideReminder({
+        versionId,
+        versionNumber,
+        bikeName: bikeTitle,
+      });
+
+      await logEvent("hook_ride_armed", {
+        bike_id: asUuidOrNull(bikeId),
+        version_id: versionId,
+        source_route: "/tune-results",
+      });
+
+      setRideHookArmed(true);
+      toast.show("I'll check in after your next ride ✅", { kind: "success" });
+    } catch (e: any) {
+      toast.show(e?.message ?? "Couldn't set the check-in", { kind: "error" });
+    } finally {
+      setRideHookBusy(false);
+    }
+  };
+
   // ----- Preset: open naming modal (kept for future refined tunes) -----
   const startSavePreset = async () => {
     try {
@@ -1337,6 +1452,13 @@ export default function TuneResultScreen() {
           ) : null}
         </BlurCard>
 
+        {/* WS-D post-reveal hook: one quiet line under the revealed settings
+            pulling the rider into the loop. Baseline results only — the
+            TuneTwo variant already lives inside the loop. */}
+        {!shouldBlur && !isTuneTwo ? (
+          <RideItHook armed={rideHookArmed} busy={rideHookBusy} onArm={onArmRide} />
+        ) : null}
+
         {/* Why this setup? — collapsible (unlocked only) */}
         {!shouldBlur && base?.notes?.length ? (
           <View style={[S.card, { overflow: "hidden" }]}>
@@ -1431,6 +1553,12 @@ export default function TuneResultScreen() {
             </Text>
           </View>
         ) : null}
+
+        {/* WS-D loop preview: last content before the unlock CTA, so "this
+            learns from every ride" is the parting impression pre-paywall.
+            Never blurred (value proof, like SpringCheckCard) but tagged
+            PREVIEW + faded rail so it can't read as real history. */}
+        {shouldBlur ? <LoopPreview /> : null}
 
         {/* Bottom action bar */}
         <View style={S.bottomActionBar}>

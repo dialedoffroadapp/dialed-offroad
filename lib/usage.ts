@@ -63,7 +63,13 @@ export type UsageEvent =
   // with queueIfAnonymous before that migration applies — one queued unknown
   // type fails the whole pre-auth flush batch and drops the funnel events.
   | "oauth_started"
-  | "oauth_failed";
+  | "oauth_failed"
+  // WS-D loop surfacing. Same analytics-dark rule: whitelisted by the
+  // assembly CHECK migration (after 20260724090000). loop_preview_shown
+  // queues pre-auth, so no store build may ship before that migration
+  // lands (queue-poison hazard).
+  | "loop_preview_shown"
+  | "hook_ride_armed";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

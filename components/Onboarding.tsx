@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import Svg, { Line, Path, Polygon, Rect } from "react-native-svg";
+import { LoopPreview } from "./LoopPreview";
 
 type OnboardingProps = {
   onFinish: () => void;
@@ -54,33 +55,12 @@ const LinesIcon = () => (
   </Svg>
 );
 
-// Small SVG icons for the clicker preview card
-const SettingsIcon = () => (
-  <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
-    <Path d="M6 8a2 2 0 100-4 2 2 0 000 4z" stroke="#1D9BF0" strokeWidth={1.2} />
-    <Path d="M6 1v1M6 10v1M1 6h1M10 6h1M2.5 2.5l.7.7M8.8 8.8l.7.7M9.5 2.5l-.7.7M3.2 8.8l-.7.7" stroke="#1D9BF0" strokeWidth={1.2} strokeLinecap="round" />
-  </Svg>
-);
-
-const RotateIcon = () => (
-  <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
-    <Path d="M1.5 6a4.5 4.5 0 018.3-2.4M10.5 6a4.5 4.5 0 01-8.3 2.4" stroke="#1D9BF0" strokeWidth={1.2} strokeLinecap="round" />
-    <Path d="M9.8 1.5v2.1H7.7M2.2 10.5V8.4h2.1" stroke="#1D9BF0" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
-  </Svg>
-);
-
 /** Refresh-style loop icon; color parameterized so slide 2's step 4 (accent
  *  on dark) and slide 4's filled perk tile (white on accent) can share it. */
 const RefineIcon = ({ color = "#1D9BF0" }: { color?: string }) => (
   <Svg width={15} height={15} viewBox="0 0 12 12" fill="none">
     <Path d="M1.5 6a4.5 4.5 0 018.3-2.4M10.5 6a4.5 4.5 0 01-8.3 2.4" stroke={color} strokeWidth={1.4} strokeLinecap="round" />
     <Path d="M9.8 1.5v2.1H7.7M2.2 10.5V8.4h2.1" stroke={color} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
-  </Svg>
-);
-
-const DropletIcon = () => (
-  <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
-    <Path d="M6 1.5S3 5.5 3 7.5a3 3 0 006 0C9 5.5 6 1.5 6 1.5z" stroke="#1D9BF0" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
   </Svg>
 );
 
@@ -112,34 +92,6 @@ const Stars = () => (
     {[0, 1, 2, 3, 4].map((i) => (
       <StarIcon key={i} />
     ))}
-  </View>
-);
-
-// ─── Clicker Preview (Slide 2, Step 3) ───────────────────────────────────────
-
-const ClickerRow = ({
-  icon,
-  label,
-  sub,
-  value,
-  unit,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  sub: string;
-  value: string;
-  unit: string;
-}) => (
-  <View style={s.clickerRow}>
-    <View style={s.clickerIcon}>{icon}</View>
-    <View style={{ flex: 1 }}>
-      <Text style={s.clickerLabel}>{label}</Text>
-      <Text style={s.clickerSub}>{sub}</Text>
-    </View>
-    <View style={{ alignItems: "flex-end" }}>
-      <Text style={s.clickerValue}>{value}</Text>
-      <Text style={s.clickerUnit}>{unit}</Text>
-    </View>
   </View>
 );
 
@@ -211,7 +163,7 @@ const Slide2Content = () => (
 
     <Text style={s.h1}>
       {"Three steps.\n"}
-      <Text style={s.accent}>{"Then it gets better every ride."}</Text>
+      <Text style={s.accent}>{"Then it learns every ride."}</Text>
     </Text>
 
     <View style={s.stepsWrap}>
@@ -276,32 +228,22 @@ const Slide2Content = () => (
       </View>
     </View>
 
-    {/* Premium clicker preview — full-width, outside the timeline indent */}
-    <View style={s.clickerCard}>
-      <ClickerRow
-        icon={<SettingsIcon />}
-        label="Fork compression"
-        sub="Clicks out from zero"
-        value="16"
-        unit="clicks"
-      />
-      <View style={s.clickerDivider} />
-      <ClickerRow
-        icon={<RotateIcon />}
-        label="Shock rebound"
-        sub="Clicks out from zero"
-        value="12"
-        unit="clicks"
-      />
-      <View style={s.clickerDivider} />
-      <ClickerRow
-        icon={<DropletIcon />}
-        label="Air / AER pressure"
-        sub="Spring pressure"
-        value="10.6"
-        unit="bar"
-      />
-    </View>
+    {/* Loop preview — the same faux timeline the locked results screen shows
+        (WS-D). Replaces the static clicker card: that card was the exact
+        "settings calculator" image the reviews misfile the app as; the
+        timeline keeps concrete clicker numbers while showing learning.
+        Fixed palette: this overlay is hard-dark regardless of app theme. */}
+    <LoopPreview
+      title="Your first three rides"
+      style={{ marginHorizontal: 0 }}
+      palette={{
+        CARD: "rgba(255,255,255,0.035)",
+        TEXT: "#FFFFFF",
+        MUTED: "rgba(255,255,255,0.6)",
+        ACCENT: "#1D9BF0",
+        BORDER: "rgba(255,255,255,0.06)",
+      }}
+    />
   </>
 );
 
@@ -835,55 +777,6 @@ const s = StyleSheet.create({
   chipLitText: {
     color: "#5BC0F8",
     fontSize: 11,
-  },
-
-  // Premium clicker preview card (slide 2, full-width)
-  clickerCard: {
-    backgroundColor: "rgba(255,255,255,0.035)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  clickerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 4,
-  },
-  clickerIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    backgroundColor: "rgba(29,155,240,0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  clickerLabel: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  clickerSub: {
-    color: "rgba(255,255,255,0.4)",
-    fontSize: 10,
-    marginTop: 1,
-  },
-  clickerValue: {
-    color: "#FFFFFF",
-    fontSize: 19,
-    fontWeight: "700",
-  },
-  clickerUnit: {
-    color: "rgba(255,255,255,0.4)",
-    fontSize: 10,
-    marginTop: 1,
-  },
-  clickerDivider: {
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    marginVertical: 8,
   },
 
   // ── Slide 3 ────────────────────────────────────────────────────────────────
