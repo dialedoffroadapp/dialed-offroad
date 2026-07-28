@@ -281,9 +281,14 @@ that change none of those skip it.)*
   empty secret — native id-token flow needs no JWT secret); Google Cloud
   iOS/Web/Android OAuth clients created (project `611855927324`); Supabase
   Google provider configured (iOS + Web client IDs comma-separated, Web
-  client secret). Still needed: a fresh dev-client build (new native
-  modules), and River flips the Google consent screen Testing → Production
-  before store submission.
+  client secret). Still needed: River flips the Google consent screen
+  Testing → Production before store submission. **Google nonce (RESOLVED
+  2026-07-28):** GoogleSignIn's iOS SDK embeds an unknowable nonce claim and
+  GoTrue accepts only sha256(passed)==claim, so `skip_nonce_check` is now
+  ENABLED on the Supabase Google provider (option A; per-provider — Apple's
+  nonce flow untouched) and Google sign-in is verified working on device.
+  v2.3.x follow-up: migrate to the wrapper's Universal Sign-In with real
+  nonce support, then disable the toggle.
 - Results/input value pass (2026-07-19, sprint items 1+2): spring-check card
   (ok/marginal/out_of_range, above the Fork card, NEVER blurred), sag
   provenance caption + range bar (`spec_verified` only), "Fork · {type}" /
@@ -371,8 +376,14 @@ that change none of those skip it.)*
   decision). Lifecycle per newest version in `lib/rideArmCard.ts`: armed
   (either surface) and feedback-submitted hide permanently, "Not now"
   snoozes 24h, 14-day window, new version resets. `hook_ride_armed` meta
-  now carries `source: setup_card|home_card` + `variant: card_v1`; Home
-  impressions ride heard_card_shown meta (`surface: "home_arm_card"`).
+  now carries `source: setup_card|home_card` + `variant: card_v1` +
+  `notif: scheduled|in_app_only`; Home impressions ride heard_card_shown
+  meta (`surface: "home_arm_card"`). **Permission-on-arm (2026-07-28,
+  supersedes the hook's original no-prompt rule):** arming from either card
+  runs `armRideCheckinWithPermission` — undetermined → system prompt;
+  grant → schedule; deny → honest in-app-only armed state, never
+  re-prompts, no Settings nag. The feedback-submit inline rationale stays
+  the unchanged fallback (a card-arm denial stamps its 30-day decline).
   `RideItHook` deleted (replaced). OutcomeCheckinCard's `onEligibility`
   callback is consumed for the first time (shipped in WS-B untested — the
   slot-gate matrix is tested, the callback itself still isn't).

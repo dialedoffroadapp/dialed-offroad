@@ -40,7 +40,12 @@ import {
 import { isProfane } from "../lib/profanity";
 import { deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
-import { scheduleRideReminder } from "../lib/rideReminder";
+import {
+  ARM_TOAST_IN_APP,
+  ARM_TOAST_SCHEDULED,
+  armRideCheckinWithPermission,
+  scheduleRideReminder,
+} from "../lib/rideReminder";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
@@ -1067,7 +1072,10 @@ export default function TuneResultScreen() {
 
       if (!versionId) return;
 
-      void scheduleRideReminder({
+      // Permission-on-arm (supersedes the hook's original no-prompt rule):
+      // undetermined → system prompt; denied → honest in-app-only state;
+      // never re-prompts after denial.
+      const notif = await armRideCheckinWithPermission({
         versionId,
         versionNumber,
         bikeName: bikeTitle,
@@ -1082,10 +1090,14 @@ export default function TuneResultScreen() {
         source_route: "/tune-results",
         source: "setup_card",
         variant: "card_v1",
+        notif,
       });
 
       setRideHookArmed(true);
-      toast.show("I'll check in after your next ride ✅", { kind: "success" });
+      toast.show(
+        notif === "scheduled" ? ARM_TOAST_SCHEDULED : ARM_TOAST_IN_APP,
+        { kind: "success" }
+      );
     } catch (e: any) {
       toast.show(e?.message ?? "Couldn't set the check-in", { kind: "error" });
     } finally {

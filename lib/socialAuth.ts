@@ -255,6 +255,9 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
     //   - Ergo "Passed nonce and nonce in id_token should either both exist
     //     or not" is resolvable only server-side (Google provider
     //     skip_nonce_check) or by a paid/Universal wrapper migration.
+    //   RESOLVED 2026-07-28: skip_nonce_check ENABLED on the Supabase Google
+    //   provider (verified working on device). v2.3.x follow-up: Universal
+    //   Sign-In migration with a real nonce, then disable the toggle.
     const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "google",
       token: idToken,

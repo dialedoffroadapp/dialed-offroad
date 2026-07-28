@@ -115,6 +115,47 @@ export async function requestNotificationPermission(): Promise<boolean> {
   }
 }
 
+// Toast copy for the ride-arm cards — exported so tests pin the strings and
+// both surfaces provably share them.
+export const ARM_TOAST_SCHEDULED = "I'll check in after your next ride ✅";
+export const ARM_TOAST_IN_APP =
+  "Check-in set. I'll ask when you're back in the app.";
+
+export type ArmRideCheckinOutcome = "scheduled" | "in_app_only";
+
+/**
+ * Permission-on-arm for the ride-arm cards (supersedes the original
+ * no-prompt rule for the post-reveal hook; the feedback-submit inline
+ * rationale stays the unchanged fallback path):
+ *   undetermined → system prompt → grant: schedule / deny: in-app only
+ *   granted      → schedule (exactly the old behavior)
+ *   denied       → in-app only, NEVER re-prompts, no Settings nag
+ * "In-app only" is honest state, not failure: the Home check-in card still
+ * surfaces organically without a notification. A denial also stamps the
+ * inline-rationale decline so feedback-submit doesn't immediately re-ask.
+ */
+export async function armRideCheckinWithPermission(params: {
+  versionId: string;
+  versionNumber: number;
+  bikeName: string;
+  title?: string;
+}): Promise<ArmRideCheckinOutcome> {
+  let status = await getNotificationPermission();
+  if (status === "undetermined") {
+    if (await requestNotificationPermission()) {
+      status = "granted";
+    } else {
+      status = "denied";
+      await declineNotificationPrompt();
+    }
+  }
+  if (status === "granted") {
+    await scheduleRideReminder(params);
+    return "scheduled";
+  }
+  return "in_app_only";
+}
+
 /** Nudge an instant into the same/next 9am–8pm local window: pull a pre-9am
  *  time up to 9am today, push an 8pm-or-later time to 9am tomorrow.
  *  (Exported for the other local-notification schedulers — every notification

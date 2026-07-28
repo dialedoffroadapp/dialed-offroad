@@ -28,7 +28,11 @@ import {
   readArmCardLocal,
   snoozeArmCard,
 } from "../../lib/rideArmCard";
-import { scheduleRideReminder } from "../../lib/rideReminder";
+import {
+  ARM_TOAST_IN_APP,
+  ARM_TOAST_SCHEDULED,
+  armRideCheckinWithPermission,
+} from "../../lib/rideReminder";
 import { hasPurchasedThisSession } from "../../lib/purchases";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
@@ -200,10 +204,10 @@ export default function HomeScreen() {
     if (!armCandidate || homeArmDone || homeArmBusy) return;
     setHomeArmBusy(true);
     try {
-      // Same arming pieces as the Setup card: reminder no-ops without an
-      // existing notification grant (the ask stays at feedback-submit); the
-      // Home check-in card still surfaces organically either way.
-      void scheduleRideReminder({
+      // Permission-on-arm, same helper as the Setup card: undetermined →
+      // system prompt; denied → honest in-app-only state (the check-in card
+      // still surfaces organically); never re-prompts after denial.
+      const notif = await armRideCheckinWithPermission({
         versionId: armCandidate.versionId,
         versionNumber: armCandidate.versionNumber,
         bikeName: armCandidate.bikeTitle,
@@ -215,8 +219,13 @@ export default function HomeScreen() {
         source_route: "/(tabs)",
         source: "home_card",
         variant: "card_v1",
+        notif,
       });
       setHomeArmDone(true);
+      toast.show(
+        notif === "scheduled" ? ARM_TOAST_SCHEDULED : ARM_TOAST_IN_APP,
+        { kind: "success" }
+      );
     } finally {
       setHomeArmBusy(false);
     }
