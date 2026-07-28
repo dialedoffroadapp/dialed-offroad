@@ -139,6 +139,17 @@ candidate in a 2h window).
   tune-results renders verbatim. Displayed rates must be real rates. Never
   mix conventions; migration `20260728100000` corrected the five original
   PDS rows and documents per-value sources inline.
+- **Backfill year sanity guard (2026-07-28): `bikes.year` participates in
+  generation matching ONLY when 1990-2027.** Prod holds corrupt years (24,
+  213, 2825, 20250, 5019, ...). Invalid-year bikes get a `model_id` only on
+  an unambiguous name match to a single-generation model; multi-generation
+  matches stay NULL, never guessed (`20260728110000` idiom, reused in
+  `20260728120000`). Make-casing residue ('Ktm', 'Gas gas', ...) came from
+  pre-v2.2.0 binaries inserting without `normalizeBikeStrings`; no
+  server-side path writes `bikes`, so there is no source to fix, only
+  residue. One row was left misnamed deliberately: its user also has the
+  same bike under canonical casing, and normalizing would violate
+  `ux_bikes_unique_desc_per_user`.
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
