@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -223,7 +224,9 @@ function LoginInner() {
       } catch {
         // Fall through to default "/(tabs)" if profile check fails
       }
-      router.replace(target);
+      // target is assembled from typed literals above; the cast mirrors the
+      // signup screen's replace callback (typed-routes vs dynamic string).
+      router.replace(target as never);
     } catch (e: any) {
       const msg =
         e?.message?.toLowerCase().includes("invalid")
@@ -332,8 +335,18 @@ function LoginInner() {
       style={{ flex: 1, backgroundColor: colors.BG }}
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
+      {/* Same scroll treatment as signup (c9f052d): the provider buttons
+          consumed the vertical slack of a fixed layout, clipping the form on
+          SE-class devices and everywhere with the keyboard open. */}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.pageContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+      >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View style={styles.page}>
+        <View style={styles.pageInner}>
           {/* Logo */}
           <Image
             source={require("../assets/images/android-icon-foreground.png")}
@@ -535,6 +548,7 @@ function LoginInner() {
           </View>
         </View>
       </TouchableWithoutFeedback>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -551,11 +565,18 @@ export default function LoginScreen() {
 
 const makeStyles = (C: ThemeTokens) =>
   StyleSheet.create({
-    page: {
-      flex: 1,
+    // Scroll container (was a fixed `page` view — see ScrollView comment in
+    // render). flexGrow keeps short content filling the viewport; bottom
+    // padding clears the home indicator.
+    pageContent: {
+      flexGrow: 1,
       paddingHorizontal: 24,
       paddingTop: 60,
+      paddingBottom: 48,
       backgroundColor: C.BG,
+    },
+    pageInner: {
+      flexGrow: 1,
     },
 
     logo: {
