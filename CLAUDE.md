@@ -362,6 +362,14 @@ that change none of those skip it.)*
   assembly: jest 14 suites / 116 tests green, tsc 19 = baseline, Deno 14
   passed + the known pre-existing #10. `main` fast-forwards to this branch
   at release per convention.
+- **v2.3.x login/signup alignment pass (queued 2026-07-28, drift report
+  accepted):** bring `app/login.tsx` up to the signup redesign — (1)
+  headline to the display style (900 uppercase, tight leading, accent
+  period: "WELCOME BACK."), (2) subtitle tone from marketing line to
+  task-focused copy, (3) decide whether login's always-expanded email form
+  should adopt signup's collapsed "Continue with email" row. The passive
+  provider-path terms line was NOT deferred — it shipped 2026-07-28 on both
+  screens (legal coverage: login's auto-link can mint accounts).
 - **Unverified:** E2E of `settings_delta` on real rows; on-device 36h
   notification path, warm-resume check-in surfacing, the feedback-submit
   permission alert, and the guest-recovery 30h nudge (need a dev-client

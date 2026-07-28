@@ -409,6 +409,27 @@ function LoginInner() {
                   )}
                 </Pressable>
               )}
+              {/* Passive agreement for the provider path — identical copy
+                  and styling to signup. Matters here because auto-linking
+                  can MINT a new account from this screen (isNewAccount true)
+                  and that user would otherwise never see terms. */}
+              <Text style={styles.termsPassive}>
+                By continuing you agree to the{" "}
+                <Text
+                  style={styles.legalLink}
+                  onPress={() => router.push("/legal/terms")}
+                >
+                  Terms of Service
+                </Text>{" "}
+                and{" "}
+                <Text
+                  style={styles.legalLink}
+                  onPress={() => router.push("/legal/privacy")}
+                >
+                  Privacy Policy
+                </Text>
+                .
+              </Text>
               <View style={styles.dividerRow}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>or</Text>
@@ -620,6 +641,18 @@ const makeStyles = (C: ThemeTokens) =>
       fontWeight: "700",
       fontSize: 15,
     },
+    // Identical to signup's passive terms treatment.
+    termsPassive: {
+      color: "rgba(255,255,255,0.38)",
+      fontSize: 11,
+      lineHeight: 15,
+      marginBottom: 10,
+    },
+    legalLink: {
+      color: "rgba(255,255,255,0.75)",
+      fontWeight: "600",
+    },
+
     dividerRow: {
       flexDirection: "row",
       alignItems: "center",
