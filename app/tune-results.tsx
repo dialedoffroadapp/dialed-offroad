@@ -20,7 +20,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Chip } from "../components/Chip";
 import { LoopPreview } from "../components/LoopPreview";
 import { OnboardingProgress } from "../components/OnboardingProgress";
-import { RideItHook } from "../components/RideItHook";
+import { RideCheckinCard } from "../components/RideCheckinCard";
+import { markArmCardArmed } from "../lib/rideArmCard";
 import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
 import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
@@ -1071,11 +1072,16 @@ export default function TuneResultScreen() {
         versionNumber,
         bikeName: bikeTitle,
       });
+      // Cross-surface latch: arming here permanently hides the Home arm card
+      // for this version (lib/rideArmCard.ts).
+      void markArmCardArmed(versionId);
 
       await logEvent("hook_ride_armed", {
         bike_id: asUuidOrNull(bikeId),
         version_id: versionId,
         source_route: "/tune-results",
+        source: "setup_card",
+        variant: "card_v1",
       });
 
       setRideHookArmed(true);
@@ -1452,11 +1458,17 @@ export default function TuneResultScreen() {
           ) : null}
         </BlurCard>
 
-        {/* WS-D post-reveal hook: one quiet line under the revealed settings
-            pulling the rider into the loop. Baseline results only — the
+        {/* Post-reveal ride check-in, promoted from the inline hook to a
+            card (v2.3.0 approved design). Baseline results only — the
             TuneTwo variant already lives inside the loop. */}
         {!shouldBlur && !isTuneTwo ? (
-          <RideItHook armed={rideHookArmed} busy={rideHookBusy} onArm={onArmRide} />
+          <RideCheckinCard
+            caps="THE NEXT STEP"
+            body="Ride it, then tell me how it felt. I'll adjust."
+            armed={rideHookArmed}
+            busy={rideHookBusy}
+            onArm={onArmRide}
+          />
         ) : null}
 
         {/* Why this setup? — collapsible (unlocked only) */}

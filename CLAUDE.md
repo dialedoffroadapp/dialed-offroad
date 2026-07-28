@@ -34,6 +34,7 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Symptom picker (post-ride debrief) | `app/tune-feedback.tsx` |
 | Tune results | `app/tune-two-results.tsx` (baseline: `app/tune-results.tsx`) |
 | Post-ride check-in card | `components/OutcomeCheckinCard.tsx`, `lib/checkinLogic.ts` |
+| Ride-arm cards (Setup + Home) | `components/RideCheckinCard.tsx`, `lib/rideArmCard.ts` (per-version lifecycle: armed latch, 24h snooze, 14d window; Home slot mutually exclusive with check-in cards via `homeArmSlotVisible` + OutcomeCheckinCard's `onEligibility`) |
 | Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts`, `lib/guestRecovery.ts` (30h guest-abandon nudge — armed when a guest backgrounds off locked results, cancelled on any auth session; NEVER prompts for permission; analytics-dark until a `usage_events` CHECK migration adds `guest_recovery_*` types) |
 | Paywall / Pro / IAP | `app/premium.tsx`, `lib/purchases.ts`, `hooks/usePro.ts`, `supabase/functions/revenuecat-webhook` (`verify_jwt = false` — it's a public webhook) |
 | Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
@@ -362,6 +363,19 @@ that change none of those skip it.)*
   assembly: jest 14 suites / 116 tests green, tsc 19 = baseline, Deno 14
   passed + the known pre-existing #10. `main` fast-forwards to this branch
   at release per convention.
+- **Ride-arm card promotion (2026-07-28, approved design):** the Setup
+  screen's inline post-reveal hook is now a full card ("THE NEXT STEP",
+  accent border, primary CTA), and Home gained a "YOUR TUNE IS LIVE" arming
+  card below the check-in slot with strict mutual exclusion (a rendering
+  outcome/first-ride card suppresses it; nothing renders until the check-in
+  decision). Lifecycle per newest version in `lib/rideArmCard.ts`: armed
+  (either surface) and feedback-submitted hide permanently, "Not now"
+  snoozes 24h, 14-day window, new version resets. `hook_ride_armed` meta
+  now carries `source: setup_card|home_card` + `variant: card_v1`; Home
+  impressions ride heard_card_shown meta (`surface: "home_arm_card"`).
+  `RideItHook` deleted (replaced). OutcomeCheckinCard's `onEligibility`
+  callback is consumed for the first time (shipped in WS-B untested — the
+  slot-gate matrix is tested, the callback itself still isn't).
 - **v2.3.x login/signup alignment pass (queued 2026-07-28, drift report
   accepted):** bring `app/login.tsx` up to the signup redesign — (1)
   headline to the display style (900 uppercase, tight leading, accent

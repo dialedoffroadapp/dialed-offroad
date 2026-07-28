@@ -1,7 +1,7 @@
 // app/(tabs)/index.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -18,6 +18,17 @@ import { useToast } from "../../components/Toast";
 import { TrialMomentCard } from "../../components/TrialMomentCard";
 import { readPendingTune, useOnboarding } from "../../lib/onboarding";
 import { deriveIsPaywallDecliner } from "../../lib/paywallDecliner";
+import { RideCheckinCard } from "../../components/RideCheckinCard";
+import {
+  ArmCardCandidate,
+  computeArmCardEligible,
+  getArmCardCandidate,
+  homeArmSlotVisible,
+  markArmCardArmed,
+  readArmCardLocal,
+  snoozeArmCard,
+} from "../../lib/rideArmCard";
+import { scheduleRideReminder } from "../../lib/rideReminder";
 import { hasPurchasedThisSession } from "../../lib/purchases";
 import { supabase } from "../../lib/supabase";
 import { useTheme } from "../../lib/theme";
@@ -145,6 +156,77 @@ export default function HomeScreen() {
   // Which bike the ActiveSetupCard is showing (null = hidden). Used to drop
   // the redundant Last Session card when both would show the same bike.
   const [activeSetupBikeId, setActiveSetupBikeId] = useState<string | null>(null);
+
+  // Ride-arm card (v2.3.0): mutual exclusion with the check-in slot above it
+  // — nothing renders until OutcomeCheckinCard reports its decision, and a
+  // visible check-in card always wins (lib/rideArmCard.homeArmSlotVisible).
+  const [checkinDecided, setCheckinDecided] = useState(false);
+  const [checkinVisible, setCheckinVisible] = useState(false);
+  const [armCandidate, setArmCandidate] = useState<ArmCardCandidate | null>(null);
+  const [armEligible, setArmEligible] = useState(false);
+  const [homeArmDone, setHomeArmDone] = useState(false);
+  const [homeArmBusy, setHomeArmBusy] = useState(false);
+  const homeArmShownLoggedRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        const [{ candidate, hasFeedback }, local] = await Promise.all([
+          getArmCardCandidate(),
+          readArmCardLocal(),
+        ]);
+        if (cancelled) return;
+        setArmCandidate(candidate);
+        // NOTE: homeArmDone is session-transient on purpose — an armed
+        // version is hidden on later visits via armEligible=false, not
+        // resurrected in its armed state.
+        setArmEligible(
+          computeArmCardEligible({
+            candidate,
+            hasFeedback,
+            local,
+            now: Date.now(),
+          })
+        );
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
+
+  const onArmFromHome = async () => {
+    if (!armCandidate || homeArmDone || homeArmBusy) return;
+    setHomeArmBusy(true);
+    try {
+      // Same arming pieces as the Setup card: reminder no-ops without an
+      // existing notification grant (the ask stays at feedback-submit); the
+      // Home check-in card still surfaces organically either way.
+      void scheduleRideReminder({
+        versionId: armCandidate.versionId,
+        versionNumber: armCandidate.versionNumber,
+        bikeName: armCandidate.bikeTitle,
+      });
+      await markArmCardArmed(armCandidate.versionId);
+      await logEvent("hook_ride_armed", {
+        bike_id: armCandidate.bikeId,
+        version_id: armCandidate.versionId,
+        source_route: "/(tabs)",
+        source: "home_card",
+        variant: "card_v1",
+      });
+      setHomeArmDone(true);
+    } finally {
+      setHomeArmBusy(false);
+    }
+  };
+
+  const onNotNowHome = async () => {
+    if (!armCandidate) return;
+    setArmEligible(false);
+    await snoozeArmCard(armCandidate.versionId);
+  };
 
   // Presets row
   const [presetsLoading, setPresetsLoading] = useState(true);
@@ -315,6 +397,28 @@ export default function HomeScreen() {
       void logEvent("decliner_home_landed", {});
     }
   }, [isPaywallDecliner]);
+
+  // Ride-arm slot gate (also used by the render below). Lives AFTER
+  // isPaywallDecliner's derivation. Impression logs once per Home session,
+  // only when the slot actually renders — no dedicated event type (live
+  // CHECK constraint): rides the heard_card_shown meta bus like
+  // notif_prompt / signup_email_expand.
+  const homeArmSlotShowing =
+    homeArmSlotVisible({
+      paywallDecliner: isPaywallDecliner,
+      checkinDecided,
+      checkinVisible,
+      armEligible: armEligible || homeArmDone,
+    }) && !!armCandidate;
+  useEffect(() => {
+    if (homeArmSlotShowing && !homeArmShownLoggedRef.current) {
+      homeArmShownLoggedRef.current = true;
+      void logEvent("heard_card_shown", {
+        surface: "home_arm_card",
+        version_id: armCandidate?.versionId ?? null,
+      });
+    }
+  }, [homeArmSlotShowing, armCandidate?.versionId]);
 
   // The onboarding tune (blurred results) stays reachable while it lives in
   // pending storage (24h TTL) — the banner body taps through to it.
@@ -536,8 +640,26 @@ export default function HomeScreen() {
           <OutcomeCheckinCard
             surface="home"
             style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
+            onEligibility={(visible) => {
+              setCheckinVisible(visible);
+              setCheckinDecided(true);
+            }}
           />
         )}
+
+        {/* Ride-arm card — strictly below the check-in slot; a rendering
+            check-in card (outcome or first-ride) suppresses it entirely. */}
+        {homeArmSlotShowing && armCandidate && (
+            <RideCheckinCard
+              caps="YOUR TUNE IS LIVE"
+              body={`${armCandidate.bikeTitle} is set up. Tell me how the next ride feels and I'll refine it.`}
+              armed={homeArmDone}
+              busy={homeArmBusy}
+              onArm={onArmFromHome}
+              onNotNow={onNotNowHome}
+              style={{ marginHorizontal: 0, marginTop: 0, marginBottom: 12 }}
+            />
+          )}
 
         {/* ── My Presets ── */}
         <View style={styles.card}>
