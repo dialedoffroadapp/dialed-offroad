@@ -150,6 +150,14 @@ candidate in a 2h window).
   residue. One row was left misnamed deliberately: its user also has the
   same bike under canonical casing, and normalizing would violate
   `ux_bikes_unique_desc_per_user`.
+- **`bike_models.spec_verified = false` means PROVISIONAL:** at least one
+  spring rate is unconfirmed against a factory/fitment source. The client
+  spec path (`fetchModelSpecs`) trusts ONLY `spec_verified = true`, so
+  provisional rows surface nothing in-app; they still canonicalize strings
+  and attribute `bikes.model_id`. Rows whose stored values are all
+  confirmed stay verified even when a rate column is NULL because the
+  factory publishes none (Sherco shocks, Stark's weight-swapped spring,
+  Beta Xtrainer).
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
@@ -277,7 +285,18 @@ that change none of those skip it.)*
 - Migrations applied to prod AND present here: `20260714120000` through
   `20260715150000` (recommended/applied/delta columns, bike_models generations
   schema + backfill, security hardening), plus the v2.3.0 batch
-  `20260724090000`–`20260727110000` (applied 2026-07-27).
+  `20260724090000`–`20260727110000` (applied 2026-07-27), plus the
+  spec-expansion batch `20260728100000`–`20260728120000` (applied
+  2026-07-28 from `feat/bike-specs-expansion`, cut off `release/v2.3.0`).
+- **bike_models coverage (2026-07-28, spec-expansion sprint):** 116
+  generation rows (was 24): Stage 1 WP platform (KTM/Husqvarna/GasGas, all
+  verified), Stage 2 Japanese/Beta/Sherco/Stark (mixed verified/provisional).
+  `bikes.model_id` matched 67.2% (was 29.7%). Remaining unmatched top: bikes
+  OLDER than covered generation windows (pre-2018 CRF250R, pre-2017 300 EXC,
+  pre-2019 KX450), minis (85/65/50 classes, out of scope), Husqvarna FX
+  350/450, Stark Varg EX, Beta RR 4T line, and KTM's 2023+ 300 SX (real
+  model, no spec row; '300 sx' strings deliberately NOT aliased to another
+  model). Those need spec rows, not aliases.
 - `release/v2.1.0`: build 34, was in App Review as of 2026-07-14 — contains
   NONE of the merged work above.
 - `ai-tune` edge function: redeployed 2026-07-27 (anon_id stamping,
