@@ -127,6 +127,18 @@ candidate in a 2h window).
   INDIVIDUAL roles, so `revoke ... from public` alone leaves anon able to
   execute — auth-required RPCs must `revoke execute ... from anon`
   explicitly (the `20260715150000` idiom).
+- **bike_models spring convention (2026-07-28): `stock_shock_spring_nmm`
+  stores the TRUE engineering rate on every row, PDS included.** PDS has no
+  linkage reduction, so true PDS rates are ~60-72 N/mm (K-Tech progressive
+  60/63/66 for 2017-2023, WP linear 69/72 for 2024+), far stiffer than the
+  linkage-relative ~42-48 the original seed stored. Safe because nothing
+  computes with the rate: the `ai-tune` edge never reads `bike_models` (its
+  two mentions are comments; the client sends resolved guardrails), and
+  `computeSpringCheck` (`lib/modelSpecs.ts`) decides status from the
+  rider-weight range alone, carrying rates as display values that
+  tune-results renders verbatim. Displayed rates must be real rates. Never
+  mix conventions; migration `20260728100000` corrected the five original
+  PDS rows and documents per-value sources inline.
 - **Prod division of labor:** read-only Claude (claude.ai chat, MCP) *verifies*
   prod — inspects rows, checks advisors/logs. Claude Code *writes* — migrations
   (`db push`) and edge deploys, and only when asked.
