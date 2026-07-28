@@ -192,17 +192,7 @@ function nextSaturday(now: Date, hour: number): Date {
  * Fri–Sun tunes fire 36h after the tune, nudged into a civil 9am–8pm window so
  * they never buzz at 3am.
  */
-// ⚠️⚠️ TEST OVERRIDE — MUST NOT SHIP ⚠️⚠️
-// When non-null, every ride reminder fires this many seconds after arming,
-// bypassing the production schedule below (which is untouched). Set for a
-// one-off on-device notification test 2026-07-28; the revert of this commit
-// is the gate for kicking off the production build.
-const TEST_FIRE_IN_SECONDS: number | null = 60;
-
 export function nextReminderDate(now: Date = new Date()): Date {
-  if (TEST_FIRE_IN_SECONDS !== null) {
-    return new Date(now.getTime() + TEST_FIRE_IN_SECONDS * 1000);
-  }
   const day = now.getDay(); // 0 Sun … 6 Sat
   const isMidweek = day >= 1 && day <= 4;
   if (isMidweek) {
