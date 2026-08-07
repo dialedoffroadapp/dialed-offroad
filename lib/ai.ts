@@ -7,6 +7,7 @@ import { supabase } from "./supabase";
 import { SpringCheck } from "./modelSpecs";
 import { DEFAULT_SAG, SagBounds } from "./sagBounds";
 import { getOrCreateAnonTuneId } from "./tuneAttribution";
+import { getTuneLocation } from "./tuneLocation";
 import { isUuid } from "./uuid";
 
 /**
@@ -203,6 +204,12 @@ export async function generateTune(
     // attribution is best-effort; the tune request goes out regardless
   }
 
+  // Coarse location capture (v2.4.0): if permission is still undetermined,
+  // the one-time ask fires HERE, at the rider's first tune generation. The
+  // read is bounded (3 s hard cap inside, usually instant via the input
+  // screen's prewarm); null means the key is omitted and nothing changes.
+  const location = await getTuneLocation();
+
   const payload = {
     mode: "zero_baseline_v1" as const,
     ...(anonId ? { anon_id: anonId } : {}),
@@ -235,6 +242,10 @@ export async function generateTune(
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
       guardrails: defaultGuardrails(sagBounds, hasAirFork),
+
+      // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
+      // by generation. Omitted (not null) when unavailable.
+      location: location ?? undefined,
     },
   };
 
@@ -290,6 +301,10 @@ export async function generateTuneTwo(params: {
         : undefined,
   };
 
+  // Same coarse location capture as generateTune (v2.4.0): bounded, optional,
+  // and the one-time permission ask counts refinements as "tune generation".
+  const location = await getTuneLocation();
+
   const payload = {
     mode: "tune2_v1" as const,
     input: {
@@ -317,6 +332,10 @@ export async function generateTuneTwo(params: {
 
       has_zeroed_clickers: true, // Tune Two always assumes we’re still zero-based
       wants_air_fork: context?.wants_air_fork ?? undefined,
+
+      // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
+      // by generation. Omitted (not null) when unavailable.
+      location: location ?? undefined,
 
       guardrails: defaultGuardrails(),
 

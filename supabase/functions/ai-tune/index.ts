@@ -33,6 +33,10 @@ type ZeroInput = {
     // capture). Stamped onto tune_calls.bike_model_id; never used for math —
     // guardrails stay the resolved-values contract.
     model_id?: string;
+    // Coarse client fix (v2.4.0 data capture, ~110 m rounding). Persisted in
+    // tune_calls.input verbatim; NOT used by generation. sanitizeLocation
+    // strips the key when malformed.
+    location?: { lat?: number; lng?: number; accuracy_m?: number | null };
     terrain?: string;
     track?: string;
     temp_f?: number;
@@ -1925,6 +1929,33 @@ function bikeModelIdFrom(body: ZeroInput): string | null {
     : null;
 }
 
+// input.location is stored (tune_calls.input), never used by generation.
+// Normalize in place: a well-formed fix is reduced to exactly
+// {lat, lng, accuracy_m}; anything malformed loses the key entirely.
+function sanitizeLocation(body: ZeroInput): void {
+  const input = body.input as { location?: unknown };
+  if (input.location === undefined) return;
+  const loc = input.location as
+    | { lat?: unknown; lng?: unknown; accuracy_m?: unknown }
+    | null;
+  const lat = loc?.lat;
+  const lng = loc?.lng;
+  const valid =
+    typeof lat === "number" && Number.isFinite(lat) && lat >= -90 && lat <= 90 &&
+    typeof lng === "number" && Number.isFinite(lng) && lng >= -180 && lng <= 180;
+  if (!valid) {
+    delete input.location;
+    return;
+  }
+  const acc = loc?.accuracy_m;
+  input.location = {
+    lat,
+    lng,
+    accuracy_m:
+      typeof acc === "number" && Number.isFinite(acc) ? acc : null,
+  };
+}
+
 /* ------------------------------ Handler ------------------------------ */
 
 export function makeHandler(deps: HandlerDeps = defaultDeps) {
@@ -1938,6 +1969,8 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       if (!body || !body.input) {
         return jsonResponse({ error: "Bad request" }, 400);
       }
+      // Before recordCall stores body.input: malformed location never lands.
+      sanitizeLocation(body);
 
       const mode = body.mode ?? "zero_baseline_v1";
 

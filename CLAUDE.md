@@ -149,11 +149,23 @@ candidate in a 2h window).
   `sag_measured: true`, blank saves null + false, and the engine's
   recommended sag is NEVER written to sessions (it lives on the
   setup_version, whose writers still stamp `sag_measured: false`).
-  The legacy `sessions` columns `terrain`, `rating_1_5`,
-  `tire_pressure_f/r` were already client-dead (no reads or writes
-  anywhere; written only by pre-migration-era builds) — the current session
-  form never touched them; drop the columns in a later migration once old
-  clients age out.
+  **Step 3 (client + edge + migration, staged NOT pushed):** coarse
+  location capture at tune time — `lib/tuneLocation.ts` (expo-location
+  behind a require guard; ONE permission ask ever, at first tune
+  generation, latched in AsyncStorage `tune_location_prompted_v1`; input
+  screens prewarm, generate does a 3 s-capped read) attaches
+  `input.location = {lat, lng, accuracy_m}` (~110 m rounding) inside BOTH
+  `lib/ai.ts` builders; key omitted when unavailable; the rider's elevation
+  input is NOT auto-filled from it yet. Edge `sanitizeLocation` normalizes
+  to exactly that shape or strips the key; generation never reads it.
+  Migration `20260807150000` (STAGED, not pushed; ai-tune NOT redeployed)
+  drops the never-written columns — sessions `terrain`/`rating_1_5`/
+  `tire_pressure_f/r`/`elevation_ft` (0 non-null of 6,223; `elev_ft` is the
+  live one) and bikes `current_fork_comp/reb`/`current_shock_comp/reb`/
+  `current_sag_mm` (0 non-null of 20,104) — and rebuilds
+  `v_bikes_with_stock` without the `current_*` columns (drop+create:
+  security_invoker=true and the authenticated-SELECT/service_role-ALL
+  grants restored explicitly; TrialMomentCard's column set unaffected).
 - **bike_models spring convention (2026-07-28): `stock_shock_spring_nmm`
   stores the TRUE engineering rate on every row, PDS included.** PDS has no
   linkage reduction, so true PDS rates are ~60-72 N/mm (K-Tech progressive
@@ -240,7 +252,8 @@ candidate in a 2h window).
 
 - **Native modules → dev-client required.** expo-notifications,
   react-native-view-shot, expo-sharing, expo-apple-authentication, expo-crypto,
-  @react-native-google-signin. A fresh dev-client / EAS build is needed
+  @react-native-google-signin, expo-location (v2.4.0; `lib/tuneLocation.ts`
+  require-guards it — unavailable, not broken, in older binaries). A fresh dev-client / EAS build is needed
   after any config-plugin change; **notifications are inert in binaries built
   before the plugin existed.** Social sign-in buttons feature-gate on module
   presence (`lib/socialAuth.ts` require guards) — absent, not broken, in old

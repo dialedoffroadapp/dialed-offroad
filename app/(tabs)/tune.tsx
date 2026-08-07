@@ -46,6 +46,7 @@ import { RunningSetupRow } from "../../components/RunningSetupRow";
 import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
+import { prewarmTuneLocation } from "../../lib/tuneLocation";
 import { computeSpringCheck, fetchModelSpecs } from "../../lib/modelSpecs";
 import { resolveSagBounds } from "../../lib/sagBounds";
 import {
@@ -297,6 +298,13 @@ export default function TuneScreen() {
   const isTrialLocked = onboardingActive && state.onboardingStep === "trial";
   const [trialPending, setTrialPending] = useState<PendingTunePayload | null>(null);
   const [trialPendingLoaded, setTrialPendingLoaded] = useState(false);
+
+  // Prewarm a coarse location fix while the rider fills inputs, so the
+  // generate-time read is instant. Never prompts (the one-time permission ask
+  // lives inside generateTune).
+  useEffect(() => {
+    prewarmTuneLocation();
+  }, []);
 
   useEffect(() => {
     if (!isTrialLocked) {
