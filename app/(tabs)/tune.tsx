@@ -886,6 +886,15 @@ export default function TuneScreen() {
       const sagBounds = resolveSagBounds(modelSpecs);
       const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
 
+      // Resolved model for tune_calls attribution: the verified spec row wins,
+      // else the bike's own model_id (covers provisional models, which
+      // fetchModelSpecs filters out). Unmatched bikes send nothing.
+      const matchedModelId =
+        modelSpecs?.id ??
+        bikes.find((b) => b.id === selectedBikeId)?.model_id ??
+        undefined;
+      if (matchedModelId) input.model_id = matchedModelId;
+
       // Verified spec is authoritative for fork type — a stale per-bike toggle
       // or the model-name heuristic must never air-fork a coil bike (or vice
       // versa). Toggle/heuristic still decide for unmatched bikes.

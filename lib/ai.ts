@@ -42,6 +42,10 @@ export type ZeroTuneInput = {
   make?: string;
   model?: string;
   year?: number;
+  // Matched bike_models uuid when the bike resolved to a model (v2.4.0 data
+  // capture). Sent verbatim; the edge stamps it on tune_calls.bike_model_id
+  // and never computes with it.
+  model_id?: string;
 
   // riding context
   terrain: string; // e.g., "hardpack", "sand", "roots", ...
@@ -154,6 +158,9 @@ export type Tune2Context = {
   make?: string;
   model?: string;
   year?: number;
+  // Matched bike_models uuid (v2.4.0 data capture) — same contract as
+  // ZeroTuneInput.model_id.
+  model_id?: string;
   terrain?: string;
   track?: string;
   temp_f?: number;
@@ -203,6 +210,8 @@ export async function generateTune(
       make: input.make?.trim() || undefined,
       model: input.model?.trim() || undefined,
       year: input.year ?? undefined,
+      // undefined (not null) when unmatched — JSON.stringify drops the key.
+      model_id: input.model_id || undefined,
       terrain: input.terrain,
       track: input.track || undefined,
       temp_f: isFiniteNumber(input.temp_f) ? input.temp_f : undefined,
@@ -288,6 +297,8 @@ export async function generateTuneTwo(params: {
       make: context?.make?.trim() || undefined,
       model: context?.model?.trim() || undefined,
       year: context?.year ?? undefined,
+      // undefined (not null) when unmatched — JSON.stringify drops the key.
+      model_id: context?.model_id || undefined,
       terrain: context?.terrain,
       track: context?.track,
       temp_f: isFiniteNumber(context?.temp_f) ? context?.temp_f : undefined,

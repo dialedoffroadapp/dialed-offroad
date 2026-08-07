@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Chip } from "../components/Chip";
+import { SagSaveModal } from "../components/SagSaveModal";
 import { SettingRow } from "../components/SettingRow";
 import { useShareSetup } from "../components/ShareSetupCard";
 import { useToast } from "../components/Toast";
@@ -374,6 +375,12 @@ export default function TuneTwoResultScreen() {
 
   const [savingBaseline, setSavingBaseline] = useState(false);
   const canSaveBaseline = !!bikeId;
+  // Optional race-sag measurement gate in front of the session save (v2.4.0).
+  // pendingSave remembers which save path the modal should continue into.
+  const [sagModalOpen, setSagModalOpen] = useState(false);
+  const [pendingSave, setPendingSave] = useState<"garage" | "addBike" | null>(
+    null
+  );
 
   // Custom-bike rescue: no garage bikeId, but the tune context knows the
   // bike's make/model — offer to add it to the garage and save against it,
@@ -394,7 +401,7 @@ export default function TuneTwoResultScreen() {
     return null;
   }, [metaObj]);
 
-  const onAddBikeAndSave = async () => {
+  const onAddBikeAndSave = async (sagMm: number | null = null) => {
     if (!bikeInfo || savingBaseline) return;
     try {
       setSavingBaseline(true);
@@ -466,7 +473,7 @@ export default function TuneTwoResultScreen() {
         console.warn("custom-bike version shadow write failed", shadowErr);
       }
 
-      await doSave(auth.user.id, newBikeId);
+      await doSave(auth.user.id, newBikeId, sagMm);
     } catch (e: any) {
       toast.show(e?.message ?? "Save failed", { kind: "error" });
     } finally {
@@ -474,7 +481,7 @@ export default function TuneTwoResultScreen() {
     }
   };
 
-  const onSaveBaseline = async () => {
+  const onSaveBaseline = async (sagMm: number | null = null) => {
     if (!canSaveBaseline) {
       toast.show(
         "Pick a bike first (Garage -> select bike), then save your refined setup.",
@@ -490,7 +497,7 @@ export default function TuneTwoResultScreen() {
         router.push("/login");
         return;
       }
-      await doSave(auth.user.id, bikeId as string);
+      await doSave(auth.user.id, bikeId as string, sagMm);
     } catch (e: any) {
       toast.show(e?.message ?? "Save failed", { kind: "error" });
     } finally {
@@ -500,7 +507,11 @@ export default function TuneTwoResultScreen() {
 
   // Shared save body: free-plan cap check + sessions insert. Callers own the
   // savingBaseline flag and error toasts.
-  const doSave = async (userId: string, saveBikeId: string) => {
+  const doSave = async (
+    userId: string,
+    saveBikeId: string,
+    sagMm: number | null = null
+  ) => {
     {
       // Free plan: enforce saved-setup cap
       if (!isPro) {
@@ -538,8 +549,10 @@ export default function TuneTwoResultScreen() {
         fork_reb: num(refined.fork.reb_clicks),
         shock_comp: num(refined.shock.lsc_clicks),
         shock_reb: num(refined.shock.reb_clicks),
-        sag_mm: num(refined.shock.sag_mm),
-        sag_measured: false, // engine output, not a rider measurement
+        // Rider measurement or nothing (v2.4.0): the engine's recommended sag
+        // lives on the setup_version, never in sessions.
+        sag_mm: sagMm,
+        sag_measured: sagMm !== null,
         notes: [
           "Refined tune from Dialed Offroad AI",
           metaObj.mode ? `Mode: ${cap(metaObj.mode)}` : null,
@@ -822,7 +835,10 @@ export default function TuneTwoResultScreen() {
                 to your garage and save?
               </Text>
               <Pressable
-                onPress={onAddBikeAndSave}
+                onPress={() => {
+                  setPendingSave("addBike");
+                  setSagModalOpen(true);
+                }}
                 style={[S.btnPrimary, savingBaseline && S.btnDisabled]}
                 disabled={savingBaseline}
               >
@@ -835,7 +851,10 @@ export default function TuneTwoResultScreen() {
             </View>
           ) : (
             <Pressable
-              onPress={onSaveBaseline}
+              onPress={() => {
+                setPendingSave("garage");
+                setSagModalOpen(true);
+              }}
               style={[
                 S.btnPrimary,
                 (!canSaveBaseline || savingBaseline) && S.btnDisabled,
@@ -859,6 +878,23 @@ export default function TuneTwoResultScreen() {
           </Pressable>
         </View>
       </ScrollView>
+
+      {/* Optional race-sag measurement before the session save (v2.4.0) */}
+      <SagSaveModal
+        visible={sagModalOpen}
+        title="Save refined setup"
+        onCancel={() => {
+          setSagModalOpen(false);
+          setPendingSave(null);
+        }}
+        onSave={async (sagMm) => {
+          const path = pendingSave;
+          setSagModalOpen(false);
+          setPendingSave(null);
+          if (path === "addBike") await onAddBikeAndSave(sagMm);
+          else await onSaveBaseline(sagMm);
+        }}
+      />
     </View>
   );
 }

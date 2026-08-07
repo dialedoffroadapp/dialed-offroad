@@ -135,11 +135,25 @@ candidate in a 2h window).
   the `recordOutput` dep — the insert stays pre-generation so rate limiting
   is unchanged), `rider_weight_lbs` (promoted from `input.rider.weight_lbs`),
   and `bike_model_id` (uuid FK → `bike_models`; the edge accepts optional
-  `input.model_id`, uuid-gated, but NO client sends it yet — null until the
-  input rebuild wires it). `sessions.sag_measured` +
-  `setup_versions.sag_measured` (boolean, default false): false means "not
-  confirmed measured", and no UI sets true yet — every current writer stamps
-  false explicitly (engine outputs, restores, carried-forward values).
+  `input.model_id`, uuid-gated). **Step 2 (client, ships with v2.4.0):**
+  both tune paths now send `model_id` when the bike resolved to a model —
+  baseline via `tune.tsx` (verified spec row id, else the bike's own
+  `model_id`), refine via `Tune2Context.model_id` (tune-results reads
+  `metaObj.spec.model_id`; `buildRefineParams` reads the stored
+  `recommended_settings.context.model_id`); omitted (not null) when
+  unmatched. `sessions.sag_measured` + `setup_versions.sag_measured`
+  (boolean, default false): false means "not confirmed measured".
+  `sessions.sag_mm` is RIDER-MEASURED ONLY now: both save flows gate the
+  insert with `components/SagSaveModal.tsx` (optional field, empty by
+  default, 50-150 mm sanity bounds) — a value saves `sag_mm` +
+  `sag_measured: true`, blank saves null + false, and the engine's
+  recommended sag is NEVER written to sessions (it lives on the
+  setup_version, whose writers still stamp `sag_measured: false`).
+  The legacy `sessions` columns `terrain`, `rating_1_5`,
+  `tire_pressure_f/r` were already client-dead (no reads or writes
+  anywhere; written only by pre-migration-era builds) — the current session
+  form never touched them; drop the columns in a later migration once old
+  clients age out.
 - **bike_models spring convention (2026-07-28): `stock_shock_spring_nmm`
   stores the TRUE engineering rate on every row, PDS included.** PDS has no
   linkage reduction, so true PDS rates are ~60-72 N/mm (K-Tech progressive

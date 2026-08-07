@@ -56,6 +56,17 @@ export function buildRefineParams(
       ? version.context
       : {};
 
+  // The matched model uuid lives in the engine-context capture
+  // (recommended_settings.context.model_id, wrapper shape only); refinement
+  // contexts built after v2.4.0 also carry it directly on version.context.
+  const rec: any = version.recommended_settings;
+  const recCtx: any =
+    rec && typeof rec === "object" && "context" in rec ? rec.context : null;
+  const modelId: string | undefined =
+    (typeof recCtx?.model_id === "string" && recCtx.model_id) ||
+    (typeof storedCtx.model_id === "string" && storedCtx.model_id) ||
+    undefined;
+
   const terrain: string | undefined =
     version.terrain ?? storedCtx.terrain ?? undefined;
 
@@ -63,6 +74,7 @@ export function buildRefineParams(
     make: storedCtx.make,
     model: storedCtx.model,
     year: storedCtx.year,
+    model_id: modelId,
     terrain,
     track: storedCtx.track,
     temp_f: storedCtx.temp_f,
