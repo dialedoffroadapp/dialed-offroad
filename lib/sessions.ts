@@ -78,6 +78,8 @@ export async function createSession(input: {
   shock_comp?: number | null;
   shock_reb?: number | null;
   sag_mm?: number | null;
+  /** true ONLY when the rider measured/entered sag themselves (v2.4.0). */
+  sag_measured?: boolean;
   notes?: string | null;
 }) {
   const payload = {
@@ -91,6 +93,7 @@ export async function createSession(input: {
     shock_comp: input.shock_comp ?? null,
     shock_reb: input.shock_reb ?? null,
     sag_mm: input.sag_mm ?? null,
+    sag_measured: input.sag_measured ?? false,
     notes: input.notes ?? null,
   };
 

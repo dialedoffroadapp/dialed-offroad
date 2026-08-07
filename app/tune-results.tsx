@@ -907,6 +907,7 @@ export default function TuneResultScreen() {
         shock_comp: num(result.shock.lsc_clicks),
         shock_reb: num(result.shock.reb_clicks),
         sag_mm: num(result.shock.sag_mm),
+        sag_measured: false, // engine output, not a rider measurement
         notes: [
           isTuneTwo
             ? "Refined setup from Dialed Offroad AI"

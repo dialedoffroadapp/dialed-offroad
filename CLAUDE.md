@@ -128,6 +128,18 @@ candidate in a 2h window).
   INDIVIDUAL roles, so `revoke ... from public` alone leaves anon able to
   execute — auth-required RPCs must `revoke execute ... from anon`
   explicitly (the `20260715150000` idiom).
+- **v2.4.0 data capture (2026-08-07, migration `20260807120000`):**
+  `tune_calls` gained `input` jsonb (the full validated request `body.input`,
+  verbatim; top-level `mode`/`anon_id` excluded — they have dedicated
+  columns), `output` jsonb (the generated tune, attached post-generation by
+  the `recordOutput` dep — the insert stays pre-generation so rate limiting
+  is unchanged), `rider_weight_lbs` (promoted from `input.rider.weight_lbs`),
+  and `bike_model_id` (uuid FK → `bike_models`; the edge accepts optional
+  `input.model_id`, uuid-gated, but NO client sends it yet — null until the
+  input rebuild wires it). `sessions.sag_measured` +
+  `setup_versions.sag_measured` (boolean, default false): false means "not
+  confirmed measured", and no UI sets true yet — every current writer stamps
+  false explicitly (engine outputs, restores, carried-forward values).
 - **bike_models spring convention (2026-07-28): `stock_shock_spring_nmm`
   stores the TRUE engineering rate on every row, PDS included.** PDS has no
   linkage reduction, so true PDS rates are ~60-72 N/mm (K-Tech progressive

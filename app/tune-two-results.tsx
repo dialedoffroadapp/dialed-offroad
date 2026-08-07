@@ -539,6 +539,7 @@ export default function TuneTwoResultScreen() {
         shock_comp: num(refined.shock.lsc_clicks),
         shock_reb: num(refined.shock.reb_clicks),
         sag_mm: num(refined.shock.sag_mm),
+        sag_measured: false, // engine output, not a rider measurement
         notes: [
           "Refined tune from Dialed Offroad AI",
           metaObj.mode ? `Mode: ${cap(metaObj.mode)}` : null,

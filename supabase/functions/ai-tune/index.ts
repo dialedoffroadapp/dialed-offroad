@@ -29,6 +29,10 @@ type ZeroInput = {
     make?: string;
     model?: string;
     year?: number;
+    // Matched bike_models row id when the client resolved one (v2.4.0 data
+    // capture). Stamped onto tune_calls.bike_model_id; never used for math —
+    // guardrails stay the resolved-values contract.
+    model_id?: string;
     terrain?: string;
     track?: string;
     temp_f?: number;
@@ -1664,7 +1668,9 @@ export type HandlerDeps = {
   getUserId: (req: Request) => Promise<string | null>;
   /** Count this caller's ai-tune calls in the last hour. null = infra failure (fail-open). */
   countRecentCalls: (key: { userId?: string; ip?: string }) => Promise<number | null>;
-  /** Record this call for future rate-limit windows. Must never throw. */
+  /** Record this call for future rate-limit windows. Must never throw.
+   *  Returns the inserted tune_calls id so the output can be attached after
+   *  generation (void-returning test fakes read as "no id"). */
   recordCall: (row: {
     userId: string | null;
     ip: string | null;
@@ -1672,7 +1678,16 @@ export type HandlerDeps = {
     // Optional so pre-existing test fakes keep compiling; null for
     // authenticated callers and for anon callers that sent no/garbage id.
     anonId?: string | null;
-  }) => Promise<void>;
+    // v2.4.0 data capture — the full validated request input, the promoted
+    // rider weight, and the matched bike_models id (all optional for the
+    // same fake-compat reason).
+    input?: unknown;
+    riderWeightLbs?: number | null;
+    bikeModelId?: string | null;
+  }) => Promise<number | null | void>;
+  /** Attach the generated tune to the tune_calls row after a successful
+   *  generation. Optional (test fakes omit it); must never throw. */
+  recordOutput?: (callId: number, output: unknown) => Promise<void>;
   /** Parse free-text feedback (Change 2). null = skip (fail-open). */
   parseFreeText: (text: string) => Promise<unknown | null>;
 };
@@ -1735,18 +1750,40 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
-  recordCall: async ({ userId, ip, mode, anonId }) => {
+  recordCall: async ({ userId, ip, mode, anonId, input, riderWeightLbs, bikeModelId }) => {
     try {
-      const { error } = await getServiceClient().from("tune_calls").insert({
-        user_id: userId,
-        ip,
-        mode,
-        anon_id: anonId ?? null,
-      });
+      const { data, error } = await getServiceClient()
+        .from("tune_calls")
+        .insert({
+          user_id: userId,
+          ip,
+          mode,
+          anon_id: anonId ?? null,
+          input: input ?? null,
+          rider_weight_lbs: riderWeightLbs ?? null,
+          bike_model_id: bikeModelId ?? null,
+        })
+        .select("id")
+        .single();
       if (error) throw error;
+      return typeof data?.id === "number" ? data.id : null;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn("tune_calls insert failed:", msg.slice(0, 160));
+      return null;
+    }
+  },
+
+  recordOutput: async (callId, output) => {
+    try {
+      const { error } = await getServiceClient()
+        .from("tune_calls")
+        .update({ output })
+        .eq("id", callId);
+      if (error) throw error;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("tune_calls output update failed:", msg.slice(0, 160));
     }
   },
 
@@ -1872,6 +1909,22 @@ function anonIdFrom(body: ZeroInput, userId: string | null): string | null {
     : null;
 }
 
+/* ------------------ v2.4.0 data capture (tune_calls) ------------------ */
+
+function riderWeightFrom(body: ZeroInput): number | null {
+  const w = body.input?.rider?.weight_lbs;
+  return typeof w === "number" && Number.isFinite(w) ? Math.round(w) : null;
+}
+
+// Same strict uuid gate as anon_id: tune_calls.bike_model_id is a uuid FK,
+// so anything else must never reach it.
+function bikeModelIdFrom(body: ZeroInput): string | null {
+  const raw = body.input?.model_id;
+  return typeof raw === "string" && ANON_ID_RE.test(raw)
+    ? raw.toLowerCase()
+    : null;
+}
+
 /* ------------------------------ Handler ------------------------------ */
 
 export function makeHandler(deps: HandlerDeps = defaultDeps) {
@@ -1911,12 +1964,20 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           429
         );
       }
-      await deps.recordCall({
+      // The insert stays HERE (before generation) so rate-limit counting is
+      // unchanged; the generated tune is attached to the row afterwards via
+      // recordOutput. `input` is body.input verbatim — top-level mode/anon_id
+      // are excluded (already dedicated columns) and ip never enters the body.
+      const recordedId = await deps.recordCall({
         userId: userId ?? null,
         ip: userId ? null : ip,
         mode,
         anonId: anonIdFrom(body, userId),
+        input: body.input,
+        riderWeightLbs: riderWeightFrom(body),
+        bikeModelId: bikeModelIdFrom(body),
       });
+      const callId = typeof recordedId === "number" ? recordedId : null;
 
       // ------------------------ MODE: Tune Two (feedback refinement) ------------------------
       if (mode === "tune2_v1") {
@@ -1970,6 +2031,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         const partial = buildTuneTwo(tune2Input);
         const result = safeShape(partial, tune2Input.guardrails);
 
+        if (callId !== null) await deps.recordOutput?.(callId, result);
         return jsonResponse(result, 200);
       }
 
@@ -2020,6 +2082,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // Enforce guardrails & shape
         const result = safeShape(partial, z.guardrails);
 
+        if (callId !== null) await deps.recordOutput?.(callId, result);
         return jsonResponse(result, 200);
       } catch (genErr) {
         // The server claimed the credit before generation — generation
