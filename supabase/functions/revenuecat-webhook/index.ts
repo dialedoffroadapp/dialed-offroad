@@ -187,6 +187,16 @@ serve(async (req: Request): Promise<Response> => {
       );
 
     if (error) {
+      // FK violation: the auth user was deleted (account deletion) but
+      // RevenueCat keeps sending events for them. Ack with 200 so RC
+      // stops retrying; there is no profile left to update.
+      if (error.code === "23503") {
+        console.warn(
+          "Webhook: user no longer exists, acking event",
+          { userId, type },
+        );
+        return new Response("OK (user deleted)", { status: 200 });
+      }
       console.error("Webhook: Supabase upsert error", error);
       return new Response("Error updating profile", { status: 500 });
     }

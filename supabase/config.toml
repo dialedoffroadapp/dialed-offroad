@@ -4,6 +4,11 @@ verify_jwt = true
 import_map = "./functions/ai-tune/deno.json"
 entrypoint = "./functions/ai-tune/index.ts"
 
+[functions.delete-account]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/delete-account/index.ts"
+
 [functions.revenuecat-webhook]
 enabled = true
 verify_jwt = false
