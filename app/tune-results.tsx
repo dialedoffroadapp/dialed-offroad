@@ -21,6 +21,7 @@ import { Chip } from "../components/Chip";
 import { LoopPreview } from "../components/LoopPreview";
 import { OnboardingProgress } from "../components/OnboardingProgress";
 import { RideCheckinCard } from "../components/RideCheckinCard";
+import { SagSaveModal } from "../components/SagSaveModal";
 import { markArmCardArmed } from "../lib/rideArmCard";
 import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
@@ -326,6 +327,8 @@ export default function TuneResultScreen() {
   }, [base, mode]);
 
   const [savingBaseline, setSavingBaseline] = useState(false);
+  // Optional race-sag measurement gate in front of the session save (v2.4.0).
+  const [sagModalOpen, setSagModalOpen] = useState(false);
   // Lineage shadow table: id of the setup_versions row created on save, so the
   // refine flow can critique it instead of lazily re-creating a baseline.
   const baselineVersionIdRef = useRef<string | null>(null);
@@ -817,6 +820,7 @@ export default function TuneResultScreen() {
       make: metaObj?.bike?.make ?? metaObj?.bike_hint?.make ?? undefined,
       model: metaObj?.bike?.model ?? metaObj?.bike_hint?.model ?? undefined,
       year: metaObj?.bike?.year ?? metaObj?.bike_hint?.year ?? undefined,
+      model_id: metaObj?.spec?.model_id ?? undefined,
       terrain: terrainVal ?? undefined,
       track: trackName ?? undefined,
       temp_f: metaObj?.context?.temp_f ?? undefined,
@@ -851,7 +855,7 @@ export default function TuneResultScreen() {
   const canSave = !!bikeId;
   const guestLocksActions = isGuest;
 
-  const onSaveBaseline = async () => {
+  const onSaveBaseline = async (sagMm: number | null = null) => {
     if (guestLocksActions) {
       await goToAuth();
       return;
@@ -906,7 +910,10 @@ export default function TuneResultScreen() {
         fork_reb: num(result.fork.reb_clicks),
         shock_comp: num(result.shock.lsc_clicks),
         shock_reb: num(result.shock.reb_clicks),
-        sag_mm: num(result.shock.sag_mm),
+        // Rider measurement or nothing (v2.4.0): the engine's recommended sag
+        // lives on the setup_version, never in sessions.
+        sag_mm: sagMm,
+        sag_measured: sagMm !== null,
         notes: [
           isTuneTwo
             ? "Refined setup from Dialed Offroad AI"
@@ -1618,7 +1625,16 @@ export default function TuneResultScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setMoreMenuOpen(false)} />
           <View style={[S.moreMenuCard, { paddingBottom: insets.bottom + 8 }]}>
             <Pressable
-              onPress={async () => { setMoreMenuOpen(false); await onSaveBaseline(); }}
+              onPress={async () => {
+                setMoreMenuOpen(false);
+                // Guest redirect and bikeless toast live in onSaveBaseline;
+                // only a saveable setup earns the sag question.
+                if (guestLocksActions || !canSave) {
+                  await onSaveBaseline();
+                  return;
+                }
+                setSagModalOpen(true);
+              }}
               style={S.moreMenuItem}
             >
               <Ionicons name="bookmark-outline" size={20} color={C.TEXT} />
@@ -1662,6 +1678,17 @@ export default function TuneResultScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Optional race-sag measurement before the session save (v2.4.0) */}
+      <SagSaveModal
+        visible={sagModalOpen}
+        title={isTuneTwo ? "Save refined setup" : "Save this setup"}
+        onCancel={() => setSagModalOpen(false)}
+        onSave={async (sagMm) => {
+          setSagModalOpen(false);
+          await onSaveBaseline(sagMm);
+        }}
+      />
 
       {/* Preset rename modal (unchanged) */}
       <Modal visible={showNameModal} transparent animationType="fade" onRequestClose={() => setShowNameModal(false)}>

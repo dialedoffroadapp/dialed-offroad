@@ -93,6 +93,9 @@ export type SetupVersionRow = {
   shock_hsc_turns: number | null;
   shock_reb_clicks: number | null;
   sag_mm: number | null;
+  // true ONLY when the rider actually measured/entered this sag value; false
+  // for engine output, defaults, and carried-forward copies (v2.4.0).
+  sag_measured: boolean;
   notes: string[];
   terrain: string | null;
   context: Tune2Context | null;
@@ -117,8 +120,9 @@ export type RideFeedbackRow = {
 export const VERSION_COLUMNS =
   "id, user_id, bike_id, version_number, source, parent_version_id, " +
   "restored_from_version_id, fork_comp_clicks, fork_reb_clicks, fork_air_bar, " +
-  "shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm, notes, terrain, " +
-  "context, recommended_settings, applied_settings, settings_delta, created_at";
+  "shock_lsc_clicks, shock_hsc_turns, shock_reb_clicks, sag_mm, sag_measured, " +
+  "notes, terrain, context, recommended_settings, applied_settings, " +
+  "settings_delta, created_at";
 
 async function requireUserId(): Promise<string> {
   const { data } = await supabase.auth.getUser();
@@ -156,6 +160,9 @@ function tuneColumns(tune: ZeroTuneResult) {
     shock_hsc_turns: tune.shock.hsc_turns,
     shock_reb_clicks: tune.shock.reb_clicks,
     sag_mm: tune.shock.sag_mm,
+    // Engine output, not a rider measurement — every tune-derived version is
+    // unmeasured until a sag-entry UI exists to say otherwise.
+    sag_measured: false,
     notes: tune.notes ?? [],
     // What the rider ran (== recommended until an override UI ships; kept
     // distinct so that day needs no migration). recommended_settings is NOT
@@ -430,6 +437,9 @@ export async function createRestoreVersion(params: {
       shock_hsc_turns: fromVersion.shock_hsc_turns,
       shock_reb_clicks: fromVersion.shock_reb_clicks,
       sag_mm: fromVersion.sag_mm,
+      // Carried forward from the source version, not re-measured — false even
+      // if the source row was measured.
+      sag_measured: false,
       notes: [`Restored from v${fromVersion.version_number}`],
       terrain: fromVersion.terrain,
       context: fromVersion.context,

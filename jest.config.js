@@ -15,6 +15,9 @@ module.exports = {
       "@react-native-async-storage/async-storage/jest/async-storage-mock",
     "^react-native$": "<rootDir>/__tests__/stubs/react-native.js",
     "^expo-notifications$": "<rootDir>/__tests__/stubs/expo-notifications.js",
+    // lib/tuneLocation.ts require-guards this; the empty stub exercises the
+    // "module present but inert" path (every call falls into the catch).
+    "^expo-location$": "<rootDir>/__tests__/stubs/empty.js",
     "^expo-blur$": "<rootDir>/__tests__/stubs/expo-blur.js",
     "\\.(png|jpg|jpeg|gif|webp)$": "<rootDir>/__tests__/stubs/asset.js",
     "^react-native-url-polyfill/auto$": "<rootDir>/__tests__/stubs/empty.js",

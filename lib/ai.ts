@@ -7,6 +7,7 @@ import { supabase } from "./supabase";
 import { SpringCheck } from "./modelSpecs";
 import { DEFAULT_SAG, SagBounds } from "./sagBounds";
 import { getOrCreateAnonTuneId } from "./tuneAttribution";
+import { getTuneLocation } from "./tuneLocation";
 import { isUuid } from "./uuid";
 
 /**
@@ -42,6 +43,10 @@ export type ZeroTuneInput = {
   make?: string;
   model?: string;
   year?: number;
+  // Matched bike_models uuid when the bike resolved to a model (v2.4.0 data
+  // capture). Sent verbatim; the edge stamps it on tune_calls.bike_model_id
+  // and never computes with it.
+  model_id?: string;
 
   // riding context
   terrain: string; // e.g., "hardpack", "sand", "roots", ...
@@ -154,6 +159,9 @@ export type Tune2Context = {
   make?: string;
   model?: string;
   year?: number;
+  // Matched bike_models uuid (v2.4.0 data capture) — same contract as
+  // ZeroTuneInput.model_id.
+  model_id?: string;
   terrain?: string;
   track?: string;
   temp_f?: number;
@@ -196,6 +204,12 @@ export async function generateTune(
     // attribution is best-effort; the tune request goes out regardless
   }
 
+  // Coarse location capture (v2.4.0): if permission is still undetermined,
+  // the one-time ask fires HERE, at the rider's first tune generation. The
+  // read is bounded (3 s hard cap inside, usually instant via the input
+  // screen's prewarm); null means the key is omitted and nothing changes.
+  const location = await getTuneLocation();
+
   const payload = {
     mode: "zero_baseline_v1" as const,
     ...(anonId ? { anon_id: anonId } : {}),
@@ -203,6 +217,8 @@ export async function generateTune(
       make: input.make?.trim() || undefined,
       model: input.model?.trim() || undefined,
       year: input.year ?? undefined,
+      // undefined (not null) when unmatched — JSON.stringify drops the key.
+      model_id: input.model_id || undefined,
       terrain: input.terrain,
       track: input.track || undefined,
       temp_f: isFiniteNumber(input.temp_f) ? input.temp_f : undefined,
@@ -226,6 +242,10 @@ export async function generateTune(
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
       guardrails: defaultGuardrails(sagBounds, hasAirFork),
+
+      // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
+      // by generation. Omitted (not null) when unavailable.
+      location: location ?? undefined,
     },
   };
 
@@ -281,6 +301,10 @@ export async function generateTuneTwo(params: {
         : undefined,
   };
 
+  // Same coarse location capture as generateTune (v2.4.0): bounded, optional,
+  // and the one-time permission ask counts refinements as "tune generation".
+  const location = await getTuneLocation();
+
   const payload = {
     mode: "tune2_v1" as const,
     input: {
@@ -288,6 +312,8 @@ export async function generateTuneTwo(params: {
       make: context?.make?.trim() || undefined,
       model: context?.model?.trim() || undefined,
       year: context?.year ?? undefined,
+      // undefined (not null) when unmatched — JSON.stringify drops the key.
+      model_id: context?.model_id || undefined,
       terrain: context?.terrain,
       track: context?.track,
       temp_f: isFiniteNumber(context?.temp_f) ? context?.temp_f : undefined,
@@ -306,6 +332,10 @@ export async function generateTuneTwo(params: {
 
       has_zeroed_clickers: true, // Tune Two always assumes we’re still zero-based
       wants_air_fork: context?.wants_air_fork ?? undefined,
+
+      // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
+      // by generation. Omitted (not null) when unavailable.
+      location: location ?? undefined,
 
       guardrails: defaultGuardrails(),
 

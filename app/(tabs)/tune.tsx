@@ -46,6 +46,7 @@ import { RunningSetupRow } from "../../components/RunningSetupRow";
 import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
+import { prewarmTuneLocation } from "../../lib/tuneLocation";
 import { computeSpringCheck, fetchModelSpecs } from "../../lib/modelSpecs";
 import { resolveSagBounds } from "../../lib/sagBounds";
 import {
@@ -297,6 +298,13 @@ export default function TuneScreen() {
   const isTrialLocked = onboardingActive && state.onboardingStep === "trial";
   const [trialPending, setTrialPending] = useState<PendingTunePayload | null>(null);
   const [trialPendingLoaded, setTrialPendingLoaded] = useState(false);
+
+  // Prewarm a coarse location fix while the rider fills inputs, so the
+  // generate-time read is instant. Never prompts (the one-time permission ask
+  // lives inside generateTune).
+  useEffect(() => {
+    prewarmTuneLocation();
+  }, []);
 
   useEffect(() => {
     if (!isTrialLocked) {
@@ -885,6 +893,15 @@ export default function TuneScreen() {
       });
       const sagBounds = resolveSagBounds(modelSpecs);
       const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
+
+      // Resolved model for tune_calls attribution: the verified spec row wins,
+      // else the bike's own model_id (covers provisional models, which
+      // fetchModelSpecs filters out). Unmatched bikes send nothing.
+      const matchedModelId =
+        modelSpecs?.id ??
+        bikes.find((b) => b.id === selectedBikeId)?.model_id ??
+        undefined;
+      if (matchedModelId) input.model_id = matchedModelId;
 
       // Verified spec is authoritative for fork type — a stale per-bike toggle
       // or the model-name heuristic must never air-fork a coil bike (or vice

@@ -42,6 +42,7 @@ import {
     FeedbackEntry,
 } from "../lib/setupVersions";
 import { useTheme } from "../lib/theme";
+import { prewarmTuneLocation } from "../lib/tuneLocation";
 import { logEvent } from "../lib/usage";
 import { asUuidOrNull } from "../lib/uuid";
 
@@ -416,6 +417,12 @@ export default function TuneFeedbackScreen() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [overallTouched, setOverallTouched] = useState(false);
+
+  // Prewarm a coarse location fix while the rider picks symptoms, so the
+  // submit-time read inside generateTuneTwo is instant. Never prompts.
+  useEffect(() => {
+    prewarmTuneLocation();
+  }, []);
 
   /* ---------------- Tuner bar reactions ---------------- */
 

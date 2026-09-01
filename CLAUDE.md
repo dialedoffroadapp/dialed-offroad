@@ -128,6 +128,44 @@ candidate in a 2h window).
   INDIVIDUAL roles, so `revoke ... from public` alone leaves anon able to
   execute — auth-required RPCs must `revoke execute ... from anon`
   explicitly (the `20260715150000` idiom).
+- **v2.4.0 data capture (2026-08-07, migration `20260807120000`):**
+  `tune_calls` gained `input` jsonb (the full validated request `body.input`,
+  verbatim; top-level `mode`/`anon_id` excluded — they have dedicated
+  columns), `output` jsonb (the generated tune, attached post-generation by
+  the `recordOutput` dep — the insert stays pre-generation so rate limiting
+  is unchanged), `rider_weight_lbs` (promoted from `input.rider.weight_lbs`),
+  and `bike_model_id` (uuid FK → `bike_models`; the edge accepts optional
+  `input.model_id`, uuid-gated). **Step 2 (client, ships with v2.4.0):**
+  both tune paths now send `model_id` when the bike resolved to a model —
+  baseline via `tune.tsx` (verified spec row id, else the bike's own
+  `model_id`), refine via `Tune2Context.model_id` (tune-results reads
+  `metaObj.spec.model_id`; `buildRefineParams` reads the stored
+  `recommended_settings.context.model_id`); omitted (not null) when
+  unmatched. `sessions.sag_measured` + `setup_versions.sag_measured`
+  (boolean, default false): false means "not confirmed measured".
+  `sessions.sag_mm` is RIDER-MEASURED ONLY now: both save flows gate the
+  insert with `components/SagSaveModal.tsx` (optional field, empty by
+  default, 50-150 mm sanity bounds) — a value saves `sag_mm` +
+  `sag_measured: true`, blank saves null + false, and the engine's
+  recommended sag is NEVER written to sessions (it lives on the
+  setup_version, whose writers still stamp `sag_measured: false`).
+  **Step 3 (client + edge + migration, staged NOT pushed):** coarse
+  location capture at tune time — `lib/tuneLocation.ts` (expo-location
+  behind a require guard; ONE permission ask ever, at first tune
+  generation, latched in AsyncStorage `tune_location_prompted_v1`; input
+  screens prewarm, generate does a 3 s-capped read) attaches
+  `input.location = {lat, lng, accuracy_m}` (~110 m rounding) inside BOTH
+  `lib/ai.ts` builders; key omitted when unavailable; the rider's elevation
+  input is NOT auto-filled from it yet. Edge `sanitizeLocation` normalizes
+  to exactly that shape or strips the key; generation never reads it.
+  Migration `20260807150000` (STAGED, not pushed; ai-tune NOT redeployed)
+  drops the never-written columns — sessions `terrain`/`rating_1_5`/
+  `tire_pressure_f/r`/`elevation_ft` (0 non-null of 6,223; `elev_ft` is the
+  live one) and bikes `current_fork_comp/reb`/`current_shock_comp/reb`/
+  `current_sag_mm` (0 non-null of 20,104) — and rebuilds
+  `v_bikes_with_stock` without the `current_*` columns (drop+create:
+  security_invoker=true and the authenticated-SELECT/service_role-ALL
+  grants restored explicitly; TrialMomentCard's column set unaffected).
 - **bike_models spring convention (2026-07-28): `stock_shock_spring_nmm`
   stores the TRUE engineering rate on every row, PDS included.** PDS has no
   linkage reduction, so true PDS rates are ~60-72 N/mm (K-Tech progressive
@@ -214,7 +252,8 @@ candidate in a 2h window).
 
 - **Native modules → dev-client required.** expo-notifications,
   react-native-view-shot, expo-sharing, expo-apple-authentication, expo-crypto,
-  @react-native-google-signin. A fresh dev-client / EAS build is needed
+  @react-native-google-signin, expo-location (v2.4.0; `lib/tuneLocation.ts`
+  require-guards it — unavailable, not broken, in older binaries). A fresh dev-client / EAS build is needed
   after any config-plugin change; **notifications are inert in binaries built
   before the plugin existed.** Social sign-in buttons feature-gate on module
   presence (`lib/socialAuth.ts` require guards) — absent, not broken, in old

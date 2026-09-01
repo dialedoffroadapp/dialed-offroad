@@ -88,6 +88,19 @@ const config: ExpoConfig = {
     // a new dev client / EAS build is required before notifications work;
     // they are inert in older binaries.
     "expo-notifications",
+    // Coarse tune-time location (lib/tuneLocation.ts, v2.4.0 data capture).
+    // Foreground-only, one-shot fix; the single permission ask fires at the
+    // rider's first tune generation, never app launch. ⚠️ Native module —
+    // same dev-client rule: unavailable (not broken) in older binaries via
+    // the require guard.
+    [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "Dialed uses your location to auto-detect elevation and local conditions for more accurate tunes.",
+        isAndroidBackgroundLocationEnabled: false,
+      },
+    ],
     // Sign in with Apple (lib/socialAuth.ts). ⚠️ Native module — same
     // dev-client rule as expo-notifications: inert in older binaries; the
     // signup screen feature-gates the button on module presence.
