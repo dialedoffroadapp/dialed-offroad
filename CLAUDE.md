@@ -149,7 +149,7 @@ candidate in a 2h window).
   `sag_measured: true`, blank saves null + false, and the engine's
   recommended sag is NEVER written to sessions (it lives on the
   setup_version, whose writers still stamp `sag_measured: false`).
-  **Step 3 (client + edge + migration, staged NOT pushed):** coarse
+  **Step 3 (client + edge + migration, SHIPPED 2026-08-31):** coarse
   location capture at tune time — `lib/tuneLocation.ts` (expo-location
   behind a require guard; ONE permission ask ever, at first tune
   generation, latched in AsyncStorage `tune_location_prompted_v1`; input
@@ -158,7 +158,8 @@ candidate in a 2h window).
   `lib/ai.ts` builders; key omitted when unavailable; the rider's elevation
   input is NOT auto-filled from it yet. Edge `sanitizeLocation` normalizes
   to exactly that shape or strips the key; generation never reads it.
-  Migration `20260807150000` (STAGED, not pushed; ai-tune NOT redeployed)
+  Migration `20260807150000` (APPLIED to prod 2026-08-31; ai-tune v26
+  deployed same day with `sanitizeLocation` live)
   drops the never-written columns — sessions `terrain`/`rating_1_5`/
   `tire_pressure_f/r`/`elevation_ft` (0 non-null of 6,223; `elev_ft` is the
   live one) and bikes `current_fork_comp/reb`/`current_shock_comp/reb`/
@@ -311,7 +312,7 @@ candidate in a 2h window).
   server-computed.
 
 ## Current state — update this section when structure changes
-*(As of 2026-07-27. Standing rule: any commit that changes branch structure,
+*(As of 2026-08-31. Standing rule: any commit that changes branch structure,
 canonical data shapes, applied migrations, established conventions, or sprint
 focus updates the relevant section of this file IN THE SAME COMMIT; commits
 that change none of those skip it.)*
@@ -327,7 +328,17 @@ that change none of those skip it.)*
   schema + backfill, security hardening), plus the v2.3.0 batch
   `20260724090000`–`20260727110000` (applied 2026-07-27), plus the
   spec-expansion batch `20260728100000`–`20260728120000` (applied
-  2026-07-28 from `feat/bike-specs-expansion`, cut off `release/v2.3.0`).
+  2026-07-28 from `feat/bike-specs-expansion`, cut off `release/v2.3.0`),
+  plus the v2.4.0 pair `20260807120000` (applied 2026-08-07) and
+  `20260807150000` (applied 2026-08-31 from `release/v2.4.0`).
+- **`release/v2.4.0` is the v2.4.0 release branch** (cut 2026-08-31 off
+  `main` = `e7fbb34`; merged `feature/v2.4.0-data-capture` `--no-ff`).
+  Ship sequence executed 2026-08-31: migration `20260807150000` pushed,
+  `ai-tune` redeployed (v26, `sanitizeLocation` verified in deployed code,
+  model string unchanged `gpt-4o-mini`), app version bumped to 2.4.0,
+  production EAS builds kicked off (new native build REQUIRED: the
+  expo-location config plugin is new in this release). `main`
+  fast-forwards to this branch at release per convention.
 - **bike_models coverage (2026-07-28, spec-expansion sprint):** 116
   generation rows (was 24): Stage 1 WP platform (KTM/Husqvarna/GasGas, all
   verified), Stage 2 Japanese/Beta/Sherco/Stark (mixed verified/provisional).
