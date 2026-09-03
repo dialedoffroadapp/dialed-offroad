@@ -616,6 +616,23 @@ export default function GarageScreen() {
     }, [refreshProStatus])
   );
 
+  // Single-bike shortcut (ride-day plan 4.1, promoted to Phase 1): a one-bike
+  // garage opens straight into the bike; the list itself stays one Back away.
+  // Once per mount so returning from Bike Home shows the real garage instead
+  // of bouncing straight back in.
+  const singleBikeShortcutDone = useRef(false);
+  useEffect(() => {
+    if (singleBikeShortcutDone.current || loading || isOnboarding) return;
+    if (bikes.length === 1 && isUuid(bikes[0].id)) {
+      singleBikeShortcutDone.current = true;
+      router.push({
+        pathname: "/bike-home",
+        params: { bikeId: bikes[0].id },
+      } as any);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bikes, loading, isOnboarding]);
+
   // Persist guest garage whenever bikes/default change (ONLY when not logged in)
   useEffect(() => {
     (async () => {
