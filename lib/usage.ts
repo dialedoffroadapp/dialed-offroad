@@ -88,7 +88,16 @@ export type UsageEvent =
   // analytics-dark rule. Meta: paywall_position (stamped), paywall_trigger_action.
   | "paywall_shown"
   | "paywall_dismissed"
-  | "paywall_purchased";
+  | "paywall_purchased"
+  // Home + Garage v3 (feat/home-garage-v3). ANALYTICS-DARK until
+  // 20260904110000_usage_events_home_garage_v3_types.sql is pushed; logged
+  // signed-in only, so no pre-auth queue-poison hazard — rows just drop.
+  | "home_module_viewed"
+  | "goal_set"
+  | "next_ride_set"
+  | "sheet_row_expanded"
+  | "story_opened"
+  | "run_setup_switched";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

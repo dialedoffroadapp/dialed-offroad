@@ -13,3 +13,15 @@
  */
 export const QUIZ_ONBOARDING_ENABLED =
   process.env.EXPO_PUBLIC_QUIZ_ONBOARDING === "1";
+
+/**
+ * Home + Garage rebuild (the 3.0 core screens the quiz lands on,
+ * feat/home-garage-v3). ON: the Home and Garage tabs render the v3 screens
+ * (design/mockups 01-07) and their sub-routes. OFF: the shipped screens.
+ * Unset, it follows the 3.0 quiz flag so one env var lights the whole 3.0
+ * experience on a dev client; set EXPO_PUBLIC_HOME_GARAGE_V3=0|1 to split.
+ */
+export const HOME_GARAGE_V3_ENABLED =
+  process.env.EXPO_PUBLIC_HOME_GARAGE_V3 === undefined
+    ? QUIZ_ONBOARDING_ENABLED
+    : process.env.EXPO_PUBLIC_HOME_GARAGE_V3 === "1";

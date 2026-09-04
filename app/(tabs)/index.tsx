@@ -1,5 +1,7 @@
 // app/(tabs)/index.tsx
 import { paywallHref } from "../../lib/paywall";
+import { HomeV3 } from "../../components/home/HomeV3";
+import { HOME_GARAGE_V3_ENABLED } from "../../lib/featureFlags";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -122,7 +124,16 @@ function hexToRgba(hex: string, alpha: number) {
 // decliner_home_landed fires once per app session, across remounts.
 let declinerLandingLoggedThisSession = false;
 
-export default function HomeScreen() {
+// ─── 3.0 Home (feat/home-garage-v3) ────────────────────────────────────────
+// Behind HOME_GARAGE_V3_ENABLED the tab renders the v3 screen
+// (components/home/HomeV3.tsx, design/mockups/01+02). The shipped screen
+// below is untouched. The flag is a build constant, so hook order is stable.
+export default function HomeTab() {
+  if (HOME_GARAGE_V3_ENABLED) return <HomeV3 />;
+  return <LegacyHomeScreen />;
+}
+
+function LegacyHomeScreen() {
   const router = useRouter();
   const toast = useToast();
   const { colors } = useTheme();

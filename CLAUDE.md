@@ -42,6 +42,7 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
 | Quiz onboarding (3.0 first-run, flagged) | `lib/featureFlags.ts` (`EXPO_PUBLIC_QUIZ_ONBOARDING=1`), `lib/quizOnboarding.ts` (answers store, engine-input mappings, model classification/ordering, catalog search, `logQuizEvent`), `lib/quizContext.tsx` (provider + `useQuizStepView`), `lib/guestGarage.ts` (the guest bike store the garage sheet + signup migration already use), `components/quiz/*` (fixed Carbon palette, Barlow Condensed via `-google-fonts/barlow-condensed` runtime load, `useAnswerRhythm` = the one tap→hold→advance rhythm), `app/quiz/*` (one screen per question; `_layout` owns fonts + slide stack) |
+| Home + Garage v3 (3.0 core screens, flagged) | `lib/featureFlags.ts` (`HOME_GARAGE_V3_ENABLED`, follows the quiz flag when unset), `components/v3/*` (dialed.css tokens/primitives, Barlow Condensed headings + Inter 700 numbers via runtime `useFonts`), `components/home/*` + `lib/homeV3.ts` (Home view model; rides = `ride_feedback` rows), `components/garage/*` + `lib/garageV3.ts` + `lib/bikeSetups.ts` (named setups, default = `setup_id` null), `app/garage-bike.tsx` / `app/setup-sheet.tsx` / `app/setup-story.tsx`, pure logic in `lib/dialedMeter.ts`, `lib/homeCopy.ts`, `lib/setupStory.ts`, `lib/rideRules.ts`, `lib/adjusterCopy.ts`; local-first stores `lib/bikeExtras.ts`, `lib/seasonGoals.ts`, `lib/nextRide.ts`, `lib/bikePhoto.ts`. Mockups: `design/mockups/` (visual source of truth) |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
 | Analytics | `lib/usage.ts` (`logEvent`, `UsageEvent` union) |
 | Legacy sessions | `lib/sessions.ts` + many screens (see Data model) |
@@ -294,6 +295,13 @@ candidate in a 2h window).
   `action_gated` on this branch); nothing breaks, the remote read fails open.
   Push it before the 3.0 store build. Both staged migrations must go from a
   superset branch.
+- **Two branches each stage a drop/re-add of `usage_events_event_type_check`**
+  (`feat/quiz-onboarding` `20260902100000`, `feat/home-garage-v3`
+  `20260904110000`). Whichever pushes second narrows the constraint back —
+  fold both lists into ONE re-add at assembly before pushing either.
+- **`bike_models.fork_comp_max` etc. are seed defaults (30 on all 116 rows),
+  not data.** Never treat them as "known"; the v3 setup sheet renders a
+  range bar only when `click_range_verified` is true.
 - **`loop_preview_shown` / `hook_ride_armed` are unwhitelisted until the
   assembly migration** (see checklist item in Data model). Guest sessions on
   dev/TestFlight builds of `feat/loop-surfacing` will queue
@@ -326,7 +334,7 @@ candidate in a 2h window).
   server-computed.
 
 ## Current state — update this section when structure changes
-*(As of 2026-09-02. Standing rule: any commit that changes branch structure,
+*(As of 2026-09-04. Standing rule: any commit that changes branch structure,
 canonical data shapes, applied migrations, established conventions, or sprint
 focus updates the relevant section of this file IN THE SAME COMMIT; commits
 that change none of those skip it.)*
@@ -544,6 +552,21 @@ that change none of those skip it.)*
   TrialPromptModal waits for a first gate-presented paywall when
   action-gated. Interstitial-only surfaces (Home decliner banner,
   `decliner_*`, Tune-tab trial lock, Sessions lock) stay for the switch-back.
+- **`feat/home-garage-v3` (3.0 Home + Garage, cut 2026-09-04 off
+  `release/v2.4.0` = `6dab399`; `main` still at `e7fbb34`):** the quiz branch
+  was parked as `4c26af8` on `feat/quiz-onboarding` first. Spec =
+  `design/mockups/PROMPT.md` (transcribed to plan section 17). Home and
+  Garage tabs switch on `HOME_GARAGE_V3_ENABLED` at the top of
+  `app/(tabs)/index.tsx` / `garage.tsx` (legacy screens renamed, untouched).
+  All five slices built 2026-09-04, none device-verified. Two migrations
+  STAGED, NOT PUSHED: `20260904100000` (bikes hours/tires/springs/photo/
+  interval, `bike_models.click_range_verified` + `shock_hsc_turns_max`,
+  `profiles.next_ride_date` + column grant, `season_goals`, `bike_setups` +
+  `setup_versions.setup_id` + per-setup numbering trigger, `bike-photos`
+  bucket) and `20260904110000` (6 event types). Every v3-only read is
+  fail-open in its own query with a device cache, so the screens run before
+  the push. `lib/featureFlags.ts` and `package.json` are add/add conflicts
+  with the quiz branch at merge (identical quiz flag; union the rest).
 
 ## Sprint focus (in order)
 
