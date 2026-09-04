@@ -1,4 +1,5 @@
 // app/(tabs)/sessions.tsx
+import { paywallHref } from "../../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -248,7 +249,7 @@ export default function SessionsScreen() {
           </Text>
           <View style={{ height: 20 }} />
           <Pressable
-            onPress={() => router.push("/premium")}
+            onPress={() => router.push(paywallHref("sessions_tab", "back") as any)}
             style={styles.btnPrimary}
           >
             <Text style={styles.btnPrimaryText}>Start Free Trial</Text>

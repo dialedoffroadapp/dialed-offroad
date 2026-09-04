@@ -36,10 +36,12 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Post-ride check-in card | `components/OutcomeCheckinCard.tsx`, `lib/checkinLogic.ts` |
 | Ride-arm cards (Setup + Home) | `components/RideCheckinCard.tsx`, `lib/rideArmCard.ts` (per-version lifecycle: armed latch, 24h snooze, 14d window; Home slot mutually exclusive with check-in cards via `homeArmSlotVisible` + OutcomeCheckinCard's `onEligibility`) |
 | Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts`, `lib/guestRecovery.ts` (30h guest-abandon nudge — armed when a guest backgrounds off locked results, cancelled on any auth session; NEVER prompts for permission; analytics-dark until a `usage_events` CHECK migration adds `guest_recovery_*` types) |
+| Paywall position + triggers (3.0) | `lib/paywallPosition.ts` (remote flag: prod `app_config.paywall_position` > device cache > `EXPO_PUBLIC_PAYWALL_POSITION` > `action_gated`; migration `20260902110000` STAGED), `lib/paywall.ts` (`paywallHref(trigger, "back")` is the ONE way to open `/premium`; `paywall_trigger_action` on every paywall event), `lib/onboardingCompletion.ts` (the ONE completion sequence: paywall success in the interstitial world, signup in the action-gated one), `lib/usage.ts` stamps `paywall_position` on every paywall-related event |
 | Paywall / Pro / IAP | `app/premium.tsx`, `lib/purchases.ts`, `hooks/usePro.ts`, `supabase/functions/revenuecat-webhook` (`verify_jwt = false` — it's a public webhook; acks FK-23503 upsert failures with 200 so RC stops retrying deleted users) |
 | Account deletion | `supabase/functions/delete-account` (auth-user delete + avatar cleanup; DB rows cascade). The legacy typo slug `delete-acount` was RETIRED (deleted from prod) 2026-08-31 after zero invocations across the full log-retention window — `app/(tabs)/profile.tsx` still tries correct name then typo (fallback harmless: correct name succeeds first); drop the typo entry from its `names` array in a v2.5.x client pass |
 | Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
+| Quiz onboarding (3.0 first-run, flagged) | `lib/featureFlags.ts` (`EXPO_PUBLIC_QUIZ_ONBOARDING=1`), `lib/quizOnboarding.ts` (answers store, engine-input mappings, model classification/ordering, catalog search, `logQuizEvent`), `lib/quizContext.tsx` (provider + `useQuizStepView`), `lib/guestGarage.ts` (the guest bike store the garage sheet + signup migration already use), `components/quiz/*` (fixed Carbon palette, Barlow Condensed via `-google-fonts/barlow-condensed` runtime load, `useAnswerRhythm` = the one tap→hold→advance rhythm), `app/quiz/*` (one screen per question; `_layout` owns fonts + slide stack) |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
 | Analytics | `lib/usage.ts` (`logEvent`, `UsageEvent` union) |
 | Legacy sessions | `lib/sessions.ts` + many screens (see Data model) |
@@ -280,6 +282,18 @@ candidate in a 2h window).
   signup-time `created_at`. Generation time is unrecoverable; only
   `meta.app_version` reflects the generating binary. Don't "fix" these in
   passing — changing either alters analytics semantics.
+- **`quiz_*` event types (8, `lib/usage.ts`) are analytics-dark until
+  `20260902100000_usage_events_quiz_event_types.sql` is pushed** — and ALL
+  of them queue pre-auth, so a dev-client signup with the quiz flag on
+  before that migration lands loses that user's whole queued funnel batch.
+  Accepted for dev; no store build may ship with the flag on before it.
+  The 25-event pre-auth queue cap is also tight for the quiz (~18-20 queued
+  events per run) — not changed, flagged.
+- **`app_config` (migration `20260902110000`) is STAGED, NOT PUSHED** — until it
+  lands the paywall position is NOT remotely switchable (build default
+  `action_gated` on this branch); nothing breaks, the remote read fails open.
+  Push it before the 3.0 store build. Both staged migrations must go from a
+  superset branch.
 - **`loop_preview_shown` / `hook_ride_armed` are unwhitelisted until the
   assembly migration** (see checklist item in Data model). Guest sessions on
   dev/TestFlight builds of `feat/loop-surfacing` will queue
@@ -312,7 +326,7 @@ candidate in a 2h window).
   server-computed.
 
 ## Current state — update this section when structure changes
-*(As of 2026-08-31. Standing rule: any commit that changes branch structure,
+*(As of 2026-09-02. Standing rule: any commit that changes branch structure,
 canonical data shapes, applied migrations, established conventions, or sprint
 focus updates the relevant section of this file IN THE SAME COMMIT; commits
 that change none of those skip it.)*
@@ -498,6 +512,38 @@ that change none of those skip it.)*
   suites cover each hop, not the live RPC); on-device visual pass of the
   locked-screen LoopPreview (~200pt budget) and the post-reveal hook, plus
   the hook's reminder arming end-to-end.
+
+- **`feat/quiz-onboarding` (3.0 first-run, cut 2026-09-02 off `release/v2.4.0`
+  = `6dab399`; `main` still at `e7fbb34`, NOT yet fast-forwarded to v2.4.0 —
+  same situation as `feat/ride-day-current-setup`, whose slice-1 WIP was
+  parked as `5b93605` on its own branch):** the quiz is a RESKIN of the
+  onboarding state machine, not a rewrite — Q1 (discipline) + Q2 (bike) run
+  under `garage_locked`, the year tap runs the garage sheet's exact
+  transition (`setGuestBikeId` → `setStep("tune")` + `onboarding_bike_added`
+  with `source_route: "/quiz/bike"`), Q3–Q5 run under `tune`, and the build
+  step will write the same pending tune + `results_locked` as `tune.tsx`.
+  Behind `EXPO_PUBLIC_QUIZ_ONBOARDING` (default OFF; the flag only changes
+  the intro's finish route and the `garage_locked`/`tune` cold-start
+  targets in `app/index.tsx` → `/quiz`). Every answer maps onto an EXISTING
+  engine input: discipline → `rider.style`, 4 skill cards → 3 `rider.skill`
+  levels (Fast shares intermediate) + derived `rider.goals`, terrain label
+  → `terrain`, weight → `weight_lbs`, free text → `issues`; no ai-tune
+  change. Slice 1 (Q1–Q3) built 2026-09-02, Q4 is a placeholder screen.
+  **Migration `20260902100000` (quiz event types) is STAGED, NOT PUSHED** —
+  all `quiz_*` events queue pre-auth, so it is queue-poison until applied
+  (see Landmines). No `profiles.discipline` column exists yet: the answer
+  lives in the local quiz store until a migration + column grant lands.
+  **Sep 2 flip decision (River): reveal-first + action-gated paywall.**
+  Slices 2 (Q4 terrain tiles, Q5 weight dial + free text + RiskGate) and 3
+  (drumroll `building`, account `gate`, `reveal` with the meter card) are
+  built. The paywall position is remote-switchable (see repo map);
+  `completeAuthSuccess` completes onboarding at signup when action-gated
+  (test-pinned), `/premium` reads `trigger` + honors `returnTo: "back"`,
+  every Pro gate names its trigger, Tune Two submit is now Pro-gated
+  (`app/tune-feedback.tsx`, the refine choke point), and the cold-start
+  TrialPromptModal waits for a first gate-presented paywall when
+  action-gated. Interstitial-only surfaces (Home decliner banner,
+  `decliner_*`, Tune-tab trial lock, Sessions lock) stay for the switch-back.
 
 ## Sprint focus (in order)
 

@@ -12,6 +12,7 @@
 // trial proves value. One showing lifetime: the X writes an AsyncStorage
 // flag and it never returns.
 
+import { paywallHref } from "../lib/paywall";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -254,7 +255,7 @@ function CountdownCard({
     void logEvent("trial_countdown_cta_tapped", {
       days_remaining: status.daysRemaining,
     });
-    router.push("/premium");
+    router.push(paywallHref("trial_moment_card", "back") as any);
   };
 
   return (

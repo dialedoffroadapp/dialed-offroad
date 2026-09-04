@@ -1,4 +1,5 @@
 // app/(tabs)/index.tsx
+import { paywallHref } from "../../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -455,7 +456,7 @@ export default function HomeScreen() {
     });
     if (target === "cta") {
       // /premium auto-presents the RevenueCat paywall.
-      router.push("/premium");
+      router.push(paywallHref("home_decliner_banner", "back") as any);
       return;
     }
     // Body tap: back to the blurred results while the pending tune survives
@@ -464,7 +465,7 @@ export default function HomeScreen() {
     if (hasPendingTune) {
       router.push("/tune-results" as any);
     } else {
-      router.push("/premium");
+      router.push(paywallHref("home_decliner_banner", "back") as any);
     }
   };
 
@@ -514,7 +515,7 @@ export default function HomeScreen() {
   const handlePresetGate = (cb: () => void) => {
     if (!isPro) {
       toast.show("Pro feature: save and use presets anytime.", { kind: "info" });
-      router.push("/premium");
+      router.push(paywallHref("save_preset", "back") as any);
       return;
     }
     cb();

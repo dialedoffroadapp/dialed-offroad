@@ -21,6 +21,9 @@ import {
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
 import { completeAuthSuccess } from "../lib/authSuccess";
+import { QUIZ_ONBOARDING_ENABLED } from "../lib/featureFlags";
+import { completeOnboardingSequence } from "../lib/onboardingCompletion";
+import { isActionGatedPaywall } from "../lib/paywallPosition";
 import type { OnboardingStep } from "../lib/onboarding";
 import {
   readLocalOnboardingState,
@@ -57,7 +60,7 @@ function LoginInner() {
   const toast = useToast();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { state, markAccountCreated, setStep } = useOnboarding();
+  const { state, markAccountCreated, setStep, completeOnboarding } = useOnboarding();
   const params = useLocalSearchParams<{ email?: string }>();
 
   const [email, setEmail] = useState(
@@ -202,6 +205,22 @@ function LoginInner() {
                 target = pendingTune ? "/tune-results" : "/(tabs)/tune";
                 break;
               case "signup":
+                if (isActionGatedPaywall()) {
+                  // Reveal-first world: complete now, no funnel paywall
+                  // (mirrors app/index.tsx and completeAuthSuccess).
+                  const done = await completeOnboardingSequence({
+                    completeOnboarding,
+                    onboardingStep: "signup",
+                    accountCreated: true,
+                    trialStarted: state.trialStarted,
+                    ageMinutesSinceLastStep: 0,
+                    sourceRoute: "/login",
+                    viaPaywall: false,
+                    returnTo: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
+                  });
+                  target = done.target;
+                  break;
+                }
                 // Already signed in — advance past signup to trial in BOTH
                 // stores, then send to the paywall. Garage stranded the user:
                 // tabs hidden mid-onboarding and no funnel CTA there (S4).
@@ -279,6 +298,8 @@ function LoginInner() {
           ),
         markAccountCreated,
         setStep,
+        completeOnboarding,
+        revealRoute: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
         replace: (route) => router.replace(route as never),
         returnTo: "/(tabs)",
       });

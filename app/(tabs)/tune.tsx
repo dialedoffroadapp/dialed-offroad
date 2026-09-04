@@ -15,6 +15,7 @@
 // - Skip claim_free_tune RPC when guest
 // - Pass meta.guest to results so we can blur + "Unlock for free" later
 
+import { paywallHref } from "../../lib/paywall";
 import Ionicons from "@expo/vector-icons/Ionicons";
 // import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -818,7 +819,7 @@ export default function TuneScreen() {
           toast.show("Your free AI tune is used. Go Pro for unlimited tunes.", {
             kind: "info",
           });
-          router.push("/premium");
+          router.push(paywallHref("second_tune", "back") as any);
           return;
         }
 
@@ -1294,7 +1295,7 @@ export default function TuneScreen() {
                 }
                 return;
               }
-              router.push("/premium");
+              router.push(paywallHref("tune_tab_locked", "back") as any);
             }}
             style={{
               backgroundColor: C.ACCENT,
@@ -1858,7 +1859,7 @@ export default function TuneScreen() {
                 // If trial is exhausted and they’re not Pro, this button is a pure paywall CTA
                 if (trialExhausted) {
                   Haptics.selectionAsync();
-                  router.push("/premium");
+                  router.push(paywallHref("second_tune", "back") as any);
                   return;
                 }
                 onGenerate();

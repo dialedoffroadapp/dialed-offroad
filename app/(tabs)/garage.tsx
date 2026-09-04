@@ -1,4 +1,5 @@
 // app/(tabs)/garage.tsx
+import { paywallHref } from "../../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
@@ -675,7 +676,7 @@ export default function GarageScreen() {
         { kind: "info" }
       );
       Haptics.selectionAsync();
-      router.push("/premium");
+      router.push(paywallHref("second_bike", "back") as any);
       return;
     }
 

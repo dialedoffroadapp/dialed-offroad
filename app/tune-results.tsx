@@ -1,4 +1,5 @@
 // app/tune-results.tsx
+import { paywallHref } from "../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -891,7 +892,7 @@ export default function TuneResultScreen() {
             `Free plan: up to ${FREE_BASELINE_LIMIT} saved baselines. Unlock Pro for unlimited history.`,
             { kind: "info" }
           );
-          router.push("/premium");
+          router.push(paywallHref("save_baseline_limit", "back") as any);
           return;
         }
       }
@@ -1126,7 +1127,7 @@ export default function TuneResultScreen() {
         toast.show("Pro feature: save custom presets and load them anytime.", {
           kind: "info",
         });
-        router.push("/premium");
+        router.push(paywallHref("save_preset", "back") as any);
         return;
       }
 
@@ -1156,7 +1157,7 @@ export default function TuneResultScreen() {
         toast.show("Pro feature: save custom presets and load them anytime.", {
           kind: "info",
         });
-        router.push("/premium");
+        router.push(paywallHref("save_preset", "back") as any);
         return;
       }
 

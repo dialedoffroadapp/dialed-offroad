@@ -1,6 +1,7 @@
 // lib/usage.ts
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import { getPaywallPosition } from "./paywallPosition";
 import { supabase } from "./supabase";
 
 const FUNNEL_ID_KEY = "dialed_onboarding_funnel_id_v1";
@@ -69,7 +70,25 @@ export type UsageEvent =
   // queues pre-auth, so no store build may ship before that migration
   // lands (queue-poison hazard).
   | "loop_preview_shown"
-  | "hook_ride_armed";
+  | "hook_ride_armed"
+  // Quiz onboarding (3.0 first-run, feat/quiz-onboarding). Same rule:
+  // ANALYTICS-DARK until 20260902100000_usage_events_quiz_event_types.sql
+  // is pushed, and ALL of these queue pre-auth (guest riders), so no store
+  // build with EXPO_PUBLIC_QUIZ_ONBOARDING=1 may ship before it lands.
+  | "quiz_step_viewed"
+  | "quiz_step_answered"
+  | "quiz_abandoned"
+  | "quiz_gate_viewed"
+  | "quiz_signin_method_chosen"
+  | "quiz_reveal_viewed"
+  | "quiz_freetext_expanded"
+  | "quiz_freetext_filled"
+  // Paywall presentation events for EVERY position/trigger (the onboarding_*
+  // ones above stay funnel-only, exactly as shipped). Same migration, same
+  // analytics-dark rule. Meta: paywall_position (stamped), paywall_trigger_action.
+  | "paywall_shown"
+  | "paywall_dismissed"
+  | "paywall_purchased";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see
@@ -137,6 +156,47 @@ const APP_VERSION: string | null =
 function withAppVersion(meta: Record<string, any>): Record<string, any> {
   if (APP_VERSION && meta.app_version === undefined) {
     return { ...meta, app_version: APP_VERSION };
+  }
+  return meta;
+}
+
+// Paywall-position variant (lib/paywallPosition.ts, 2026-09-02): every
+// paywall-related event carries which world it happened in, stamped here so
+// no call site can forget it. Callers add paywall_trigger_action themselves
+// (they know which Pro action summoned the paywall). Never overrides a
+// caller-provided value.
+const PAYWALL_EVENTS: ReadonlySet<UsageEventType> = new Set<UsageEventType>([
+  "onboarding_paywall_shown",
+  "onboarding_paywall_dismissed",
+  "onboarding_trial_started",
+  "onboarding_completed",
+  "onboarding_signup_completed",
+  "onboarding_unlock_clicked",
+  "sign_up",
+  "paywall_shown",
+  "paywall_dismissed",
+  "paywall_purchased",
+  "decliner_home_landed",
+  "decliner_banner_tapped",
+  "decliner_converted",
+  "trial_countdown_shown",
+  "trial_countdown_cta_tapped",
+  "trial_value_card_shown",
+  "trial_value_card_dismissed",
+  "winback_screen_shown",
+  "winback_cta_tapped",
+  "history_gate_hit",
+  "quiz_gate_viewed",
+  "quiz_signin_method_chosen",
+  "quiz_reveal_viewed",
+]);
+
+function withPaywallPosition(
+  event_type: UsageEventType,
+  meta: Record<string, any>
+): Record<string, any> {
+  if (PAYWALL_EVENTS.has(event_type) && meta.paywall_position === undefined) {
+    return { ...meta, paywall_position: getPaywallPosition() };
   }
   return meta;
 }
@@ -233,7 +293,10 @@ export async function logEvent(
   options?: LogEventOptions
 ): Promise<void> {
   try {
-    const cleaned = withAppVersion((meta ? (pruneMeta(meta) as any) : {}) ?? {});
+    const cleaned = withPaywallPosition(
+      event_type,
+      withAppVersion((meta ? (pruneMeta(meta) as any) : {}) ?? {})
+    );
     const { data: auth } = await supabase.auth.getUser();
     if (!auth?.user?.id) {
       if (options?.allowAnonymous && options?.queueIfAnonymous) {
