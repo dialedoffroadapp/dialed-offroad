@@ -1,4 +1,6 @@
 // app/(tabs)/garage.tsx
+import { GarageV3 } from "../../components/garage/GarageV3";
+import { HOME_GARAGE_V3_ENABLED } from "../../lib/featureFlags";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
@@ -399,7 +401,16 @@ async function writeGuestDefaultBikeId(id: string | null) {
 }
 
 /* --------------------------------- Screen --------------------------------- */
-export default function GarageScreen() {
+// ─── 3.0 Garage (feat/home-garage-v3) ──────────────────────────────────────
+// Behind HOME_GARAGE_V3_ENABLED the tab renders the v3 garage
+// (components/garage/GarageV3.tsx, design/mockups/03+04). The shipped screen
+// below is untouched. Build constant → stable hook order.
+export default function GarageTab() {
+  if (HOME_GARAGE_V3_ENABLED) return <GarageV3 />;
+  return <LegacyGarageScreen />;
+}
+
+function LegacyGarageScreen() {
   const toast = useToast();
   const router = useRouter();
   const insets = useSafeAreaInsets();

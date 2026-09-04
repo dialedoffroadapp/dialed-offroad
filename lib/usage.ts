@@ -69,7 +69,16 @@ export type UsageEvent =
   // queues pre-auth, so no store build may ship before that migration
   // lands (queue-poison hazard).
   | "loop_preview_shown"
-  | "hook_ride_armed";
+  | "hook_ride_armed"
+  // Home + Garage v3 (feat/home-garage-v3). ANALYTICS-DARK until
+  // 20260904110000_usage_events_home_garage_v3_types.sql is pushed; logged
+  // signed-in only, so no pre-auth queue-poison hazard — rows just drop.
+  | "home_module_viewed"
+  | "goal_set"
+  | "next_ride_set"
+  | "sheet_row_expanded"
+  | "story_opened"
+  | "run_setup_switched";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see
