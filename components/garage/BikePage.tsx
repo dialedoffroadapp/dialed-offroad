@@ -20,7 +20,7 @@ import { createNamedSetup, runningSetup } from "../../lib/bikeSetups";
 import { meterCaption } from "../../lib/dialedMeter";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../../lib/garageV3";
 import { shortDate } from "../../lib/homeCopy";
-import { paywallHref } from "../../lib/paywall";
+import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 
 export const SETUP_SHEET_ROUTE = "/setup-sheet";
@@ -85,7 +85,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   const gatePro = (source: string, trigger: "setup_history" | "second_setup" = "setup_history"): boolean => {
     if (isPro) return true;
     void logEvent("history_gate_hit", { bike_id: bike.id, version_count: versions.length, source, paywall_trigger_action: trigger });
-    router.push(paywallHref(trigger, "back") as never);
+    showProGate({ trigger, bikeId: bike.id, hasBaseline: versions.length > 0 });
     return false;
   };
 

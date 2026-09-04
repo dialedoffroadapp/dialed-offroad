@@ -97,7 +97,25 @@ export type UsageEvent =
   | "next_ride_set"
   | "sheet_row_expanded"
   | "story_opened"
-  | "run_setup_switched";
+  | "run_setup_switched"
+  // Ride day (feat/ride-day-flow). ANALYTICS-DARK until
+  // 20260904130000_usage_events_ride_day_types.sql is pushed; signed-in only.
+  | "ride_day_started"
+  | "moto_logged"
+  | "adjust_shown"
+  | "adjust_confirmed"
+  | "retune_applied"
+  | "ride_day_ended"
+  | "baseline_saved"
+  | "session_resumed"
+  | "session_autoclosed"
+  | "track_created"
+  | "track_match_confirmed"
+  | "sync_queue_flushed"
+  // Pro gate sheet (free-tune reconciliation): shown before the paywall,
+  // names the Pro action, offers the free alternative. Same staged CHECK.
+  | "pro_gate_shown"
+  | "pro_gate_alternative";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

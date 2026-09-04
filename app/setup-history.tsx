@@ -4,7 +4,7 @@
 // non-destructive restore. Pro-only (the garage entry point gates free users;
 // this screen re-checks defensively).
 
-import { paywallHref } from "../lib/paywall";
+import { showProGate } from "../lib/proGate";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -342,8 +342,8 @@ export default function SetupHistoryScreen() {
       const lapsed = deriveIsLapsed(prof);
       if (!proNow && !lapsed) {
         // Free tier (never paid): full gate, exactly as before.
-        void logEvent("history_gate_hit", { source: "screen_direct" });
-        router.replace(paywallHref("setup_history", "back") as any);
+        void logEvent("history_gate_hit", { source: "screen_direct", paywall_trigger_action: "setup_history" });
+        showProGate({ trigger: "setup_history", bikeId: String(bikeId ?? ""), onDismiss: () => router.back() });
         return;
       }
       setRestricted(!proNow);

@@ -4,6 +4,7 @@ import { Tabs } from "expo-router";
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ThemeTokens } from "../../constants/theme";
+import { HOME_GARAGE_V3_ENABLED } from "../../lib/featureFlags";
 import { useOnboarding } from "../../lib/onboarding";
 import { useTheme } from "../../lib/theme";
 
@@ -127,7 +128,9 @@ export default function TabsLayout() {
         }}
       />
 
-      <Tabs.Screen name="sessions" options={{ title: "Sessions" }} />
+      {/* 3.0: the ride day replaces the Sessions tab (four tabs). The route
+          stays reachable for old links; it just leaves the bar. */}
+      <Tabs.Screen name="sessions" options={HOME_GARAGE_V3_ENABLED ? { href: null } : { title: "Sessions" }} />
       <Tabs.Screen name="profile" options={{ title: "Profile" }} />
 
       <Tabs.Screen name="sessions/[id]" options={{ href: null }} />

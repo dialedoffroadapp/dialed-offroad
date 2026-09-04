@@ -7,6 +7,7 @@
 import { generateTune, type ZeroTuneResult } from "./ai";
 import { computeSpringCheck, fetchModelSpecs, type ModelSpecs } from "./modelSpecs";
 import { writePendingTune } from "./onboarding";
+import { claimBaselineCredit, refundBaselineCredit, type ClaimResult } from "./freeTune";
 import { deriveIsPro } from "./proUtils";
 import {
   bikeDisplayName,
@@ -61,7 +62,10 @@ export async function generateQuizTune(params: {
   // Signed-in non-Pro riders spend the free baseline credit exactly like the
   // Tune tab (claim BEFORE generating; refund on failure). Guests are the
   // funnel's normal case and claim nothing.
-  let claimedTrialCredit = false;
+  // Free rule (2026-09-04): one baseline per bike, regenerable. The quiz
+  // bike is usually a guest-local id (no claim); a signed-in rider's garage
+  // bike claims per bike (first counted, regenerate not consumed).
+  let claimResult: ClaimResult | null = null;
   if (user?.id) {
     const { data: prof } = await supabase
       .from("profiles")
@@ -69,14 +73,13 @@ export async function generateQuizTune(params: {
       .eq("user_id", user.id)
       .maybeSingle();
     if (!deriveIsPro(prof)) {
-      const { data: claim, error: claimErr } = await supabase.rpc("claim_free_tune").single();
-      if (claimErr) throw new QuizGenerateError("claim_failed", "Couldn't check your free tune. Try again.");
-      const c = claim as any;
-      if (!c?.ok && c?.reason === "no_trial") {
-        throw new QuizGenerateError("no_trial", "Your free AI tune is used. Go Pro for unlimited tunes.");
+      const claim = await claimBaselineCredit(answers.bikeLocalId ?? null);
+      if (claim.reason === "error") throw new QuizGenerateError("claim_failed", "Couldn't check your free tune. Try again.");
+      if (!claim.ok && claim.reason === "no_trial") {
+        throw new QuizGenerateError("no_trial", "Another baseline on this account is a Pro thing. Update your bike's baseline instead.");
       }
-      if (!c?.ok) throw new QuizGenerateError("claim_failed", "Couldn't claim your tune right now. Try again.");
-      claimedTrialCredit = c?.reason === "trial";
+      if (!claim.ok) throw new QuizGenerateError("claim_failed", "Couldn't claim your tune right now. Try again.");
+      claimResult = claim;
     }
   }
 
@@ -225,14 +228,7 @@ export async function generateQuizTune(params: {
 
     return { tune, specs: modelSpecs, encodedResult, encodedMeta, signedIn };
   } catch (e: any) {
-    if (claimedTrialCredit) {
-      void supabase
-        .rpc("refund_free_tune")
-        .single()
-        .then(({ error }) => {
-          if (error) console.error("refund_free_tune failed", error);
-        });
-    }
+    void refundBaselineCredit(claimResult);
     if (e instanceof QuizGenerateError) throw e;
     throw new QuizGenerateError(
       "generate_failed",

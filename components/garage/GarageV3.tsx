@@ -16,7 +16,7 @@ import { AddBikeSheet } from "./GarageSheets";
 import { createBike, normalizeBikeStrings, resolveModelId } from "../../lib/bikes";
 import { loadBikeList, loadUserAndPro, type BikeListItem } from "../../lib/garageV3";
 import { supabase } from "../../lib/supabase";
-import { paywallHref } from "../../lib/paywall";
+import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 import { Text } from "react-native";
 
@@ -44,8 +44,7 @@ export function GarageV3() {
   const onAddPress = () => {
     if (!state?.userId) return router.push("/login" as never);
     if (state.bikes.length >= 1 && !state.isPro) {
-      toast.show("A second bike is a Pro thing. Your first one is all yours.", { kind: "info" });
-      router.push(paywallHref("second_bike", "back") as never);
+      showProGate({ trigger: "second_bike" });
       return;
     }
     setAddOpen(true);

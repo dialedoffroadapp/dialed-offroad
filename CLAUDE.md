@@ -36,12 +36,14 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Post-ride check-in card | `components/OutcomeCheckinCard.tsx`, `lib/checkinLogic.ts` |
 | Ride-arm cards (Setup + Home) | `components/RideCheckinCard.tsx`, `lib/rideArmCard.ts` (per-version lifecycle: armed latch, 24h snooze, 14d window; Home slot mutually exclusive with check-in cards via `homeArmSlotVisible` + OutcomeCheckinCard's `onEligibility`) |
 | Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts`, `lib/guestRecovery.ts` (30h guest-abandon nudge — armed when a guest backgrounds off locked results, cancelled on any auth session; NEVER prompts for permission; analytics-dark until a `usage_events` CHECK migration adds `guest_recovery_*` types) |
+| Free baseline credit + Pro gate (3.0, 2026-09-04) | `lib/freeTune.ts` (`claimBaselineCredit(bikeId)` → `claim_free_tune(p_bike_id)`, migration `20260904140000` STAGED: one baseline per bike, `regenerate` NOT consumed / never refunded, no bike = legacy single credit; both new cases stamp `trial_claimed_at` so the UNCHANGED edge admits the request through its interim grace window), `lib/proGate.ts` + `components/v3/ProGateSheet.tsx` (imperative locked-row gate mounted once in the root layout; names the Pro action, offers "Update my baseline instead" → `/(tabs)/tune?bikeId&regenerate=1`; `createBaselineVersion({parentVersionId})` parents the regenerate onto the running version). All four Pro gates (refine, history, second setup, second bike) call `showProGate`, never `/premium` directly |
 | Paywall position + triggers (3.0) | `lib/paywallPosition.ts` (remote flag: prod `app_config.paywall_position` > device cache > `EXPO_PUBLIC_PAYWALL_POSITION` > `action_gated`; migration `20260902110000` STAGED), `lib/paywall.ts` (`paywallHref(trigger, "back")` is the ONE way to open `/premium`; `paywall_trigger_action` on every paywall event), `lib/onboardingCompletion.ts` (the ONE completion sequence: paywall success in the interstitial world, signup in the action-gated one), `lib/usage.ts` stamps `paywall_position` on every paywall-related event |
 | Paywall / Pro / IAP | `app/premium.tsx`, `lib/purchases.ts`, `hooks/usePro.ts`, `supabase/functions/revenuecat-webhook` (`verify_jwt = false` — it's a public webhook; acks FK-23503 upsert failures with 200 so RC stops retrying deleted users) |
 | Account deletion | `supabase/functions/delete-account` (auth-user delete + avatar cleanup; DB rows cascade). The legacy typo slug `delete-acount` was RETIRED (deleted from prod) 2026-08-31 after zero invocations across the full log-retention window — `app/(tabs)/profile.tsx` still tries correct name then typo (fallback harmless: correct name succeeds first); drop the typo entry from its `names` array in a v2.5.x client pass |
 | Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
 | Quiz onboarding (3.0 first-run, flagged) | `lib/featureFlags.ts` (`EXPO_PUBLIC_QUIZ_ONBOARDING=1`), `lib/quizOnboarding.ts` (answers store, engine-input mappings, model classification/ordering, catalog search, `logQuizEvent`), `lib/quizContext.tsx` (provider + `useQuizStepView`), `lib/guestGarage.ts` (the guest bike store the garage sheet + signup migration already use), `components/quiz/*` (fixed Carbon palette, Barlow Condensed via `-google-fonts/barlow-condensed` runtime load, `useAnswerRhythm` = the one tap→hold→advance rhythm), `app/quiz/*` (one screen per question; `_layout` owns fonts + slide stack) |
+| Ride day (3.0, `feat/ride-day-flow` off the integration branch) | `lib/rideDay.ts` (on-disk session + idempotent outbox; pending deltas reuse `lib/currentSetup.ts` shapes; settle rule = ONE manual version at End ride), `lib/conditionsRules.ts` (deterministic conditions rule base, v1 text), `lib/rideAdjust.ts` (Adjust change set = Tune Two diff, reasons from engine notes; NO hardcoded symptom→adjuster mapping; two-change PRESENTATION cap), `lib/rideSymptoms.ts` (4 + More over the existing 11 engine ids; qualifiers = `where`), `lib/tracks.ts` (recent / nearby via `match_tracks` / new-track-here), `lib/rideEnd.ts`, `lib/rideLiveActivity.ts` (require-guarded no-op until native), `components/ride/*`, `app/ride/*` (start, track, conditions, today, mode, retune, log, adjust, end). Mockups: `design/mockups/ride/` |
 | Home + Garage v3 (3.0 core screens, flagged) | `lib/featureFlags.ts` (`HOME_GARAGE_V3_ENABLED`, follows the quiz flag when unset), `components/v3/*` (dialed.css tokens/primitives, Barlow Condensed headings + Inter 700 numbers via runtime `useFonts`), `components/home/*` + `lib/homeV3.ts` (Home view model; rides = `ride_feedback` rows), `components/garage/*` + `lib/garageV3.ts` + `lib/bikeSetups.ts` (named setups, default = `setup_id` null), `app/garage-bike.tsx` / `app/setup-sheet.tsx` / `app/setup-story.tsx`, pure logic in `lib/dialedMeter.ts`, `lib/homeCopy.ts`, `lib/setupStory.ts`, `lib/rideRules.ts`, `lib/adjusterCopy.ts`; local-first stores `lib/bikeExtras.ts`, `lib/seasonGoals.ts`, `lib/nextRide.ts`, `lib/bikePhoto.ts`. Mockups: `design/mockups/` (visual source of truth) |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
 | Analytics | `lib/usage.ts` (`logEvent`, `UsageEvent` union) |
@@ -298,7 +300,14 @@ candidate in a 2h window).
 - **Staged 3.0 events CHECK re-adds are a coherent ordered set (consolidated
   2026-09-04 on `feat/v3-integration`):** `20260902100000` (live 54 + quiz 8
   + paywall 3 = 65) then `20260904110000` (65 + Home/Garage 6 = 71). Never
-  add a third re-add without carrying the full 71.
+  add a third re-add without carrying the full list — `20260904130000`
+  (ride day) is the current superset at 83.
+- **`claim_free_tune()` (zero-arg) is DROPPED by staged `20260904140000`;** the
+  defaulted `claim_free_tune(p_bike_id uuid default null)` replaces it, so
+  old clients' `rpc("claim_free_tune")` still resolves. `ai-tune`'s
+  `CLIENT_CLAIM_GRACE_MS` (2 min) is now load-bearing for regenerates and
+  first-baselines-on-a-second-bike — do NOT drop it to 0 until the edge's
+  `server_claim_free_tune` takes a bike id.
 - **`bike_models.fork_comp_max` etc. are seed defaults (30 on all 116 rows),
   not data.** Never treat them as "known"; the v3 setup sheet renders a
   range bar only when `click_range_verified` is true.
@@ -583,6 +592,19 @@ that change none of those skip it.)*
   work happens on this branch (or short-lived branches off it); `main` moves
   only for v2.4.x hotfixes. The three feature branches were deleted locally
   after the push (their history lives in the merge commits).
+
+- **`feat/ride-day-flow` (Ride day, cut 2026-09-04 off `feat/v3-integration`
+  = `f765eb1`):** spec = `design/mockups/ride/PROMPT.md` (plan section 18).
+  All four slices built 2026-09-04, none device-verified, UNCOMMITTED at
+  session end. Home's Start Riding now routes to `/ride/start`; an open
+  session (AsyncStorage `ride_day_open_v1`) takes Home over into
+  `/ride/mode`; the Sessions tab leaves the bar behind the v3 flag. Two more
+  STAGED migrations: `20260904120000` (tracks + `match_tracks`, ride_days,
+  track_sessions, `setup_versions.ride_day_id`, `bikes.hours_updated_at`)
+  and `20260904130000` (events CHECK, now the full 83). No notification of
+  any kind is tied to ride days; the only prompt is the in-app "Still
+  riding?" after 12 h idle. Native lock-screen presence (Live Activity /
+  foreground service) and voice are adapter stubs pending a native build.
 
 ## Sprint focus (in order)
 

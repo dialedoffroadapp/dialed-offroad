@@ -23,7 +23,7 @@ import { useToast } from "../components/Toast";
 import { supabase } from "../lib/supabase";
 import { deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
-import { paywallHref } from "../lib/paywall";
+import { showProGate } from "../lib/proGate";
 import {
     generateTuneTwo,
     Tune2Context,
@@ -616,7 +616,9 @@ export default function TuneFeedbackScreen() {
           .maybeSingle();
         if (!deriveIsPro(prof)) {
           void Haptics.selectionAsync();
-          router.push(paywallHref("refine", "back") as any);
+          // The Pro gate names the action and offers "Update my baseline
+          // instead"; it opens the paywall with paywall_trigger_action=refine.
+          showProGate({ trigger: "refine" });
           return;
         }
       }

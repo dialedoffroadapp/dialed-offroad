@@ -1,0 +1,65 @@
+/* Dialed Offroad 3.0 mockup styles. Source of truth for spacing, type, color. */
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@1,900&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.30.0/dist/tabler-icons.min.css');
+:root{
+  --carbon:#0B0C10; --panel:#111318; --panel2:#1B1E24; --hair:#1B1E24; --line:#2A2E36;
+  --blue:#1D9BF0; --blue-dim:#0B3A5C; --white:#F5F7FC; --steel:#8A93A6; --muted:#3A4150;
+  --ktm:#FF6600; --yamaha:#3D7BFF;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#15171c;font-family:Inter,sans-serif;display:flex;justify-content:center;padding:24px}
+.phone{width:393px;min-height:852px;background:var(--carbon);border-radius:44px;padding:56px 20px 24px;color:var(--white);display:flex;flex-direction:column}
+.eyebrow{font-size:11px;letter-spacing:2px;color:var(--steel);text-transform:uppercase;margin-bottom:4px}
+.eyebrow.brand-ktm{color:var(--ktm)} .eyebrow.brand-yamaha{color:var(--yamaha)}
+.h1{font-family:'Barlow Condensed',sans-serif;font-style:italic;font-weight:900;font-size:32px;line-height:1;margin:0 0 14px}
+.h1 .accent{color:var(--blue)}
+.card{background:var(--panel);border-radius:16px;padding:16px;margin-bottom:12px}
+.card.hero{padding:16px}
+.card.dashed{border:1px dashed var(--line)} .card.ghost{opacity:.55;border:1px dashed var(--line)}
+.card.active{border:1px solid var(--blue)} .card.callout{border-left:3px solid var(--blue)}
+.label{font-size:11px;letter-spacing:1.5px;color:var(--steel);text-transform:uppercase}
+.row{display:flex;justify-content:space-between;align-items:center}
+.big{font-family:'Barlow Condensed',sans-serif;font-style:italic;font-weight:900;color:var(--blue);line-height:.95}
+.big.xl{font-size:76px} .big.lg{font-size:34px} .big.md{font-size:26px}
+.num{font-family:Inter,sans-serif;font-weight:700;color:var(--white);line-height:1}
+.num.lg{font-size:30px} .num.md{font-size:26px} .unit{font-size:12px;color:var(--steel);font-weight:400}
+.bar{background:var(--panel2);border-radius:999px;height:6px;overflow:hidden;margin:12px 0 8px}
+.bar>div{background:var(--blue);height:6px}
+.text{font-size:14px;color:var(--white)} .sub{font-size:13px;color:var(--steel);margin-top:3px}
+.small{font-size:12px;color:var(--steel)}
+.btn{background:var(--blue);color:var(--carbon);border-radius:16px;padding:18px;text-align:center;font-size:17px;font-weight:600}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--white)}
+.divider{display:flex;align-items:center;gap:8px;margin:8px 0 16px}
+.divider div{flex:1;height:1px;background:var(--hair)}
+.photo{width:72px;height:72px;border-radius:12px;background:var(--panel2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);font-size:9px}
+.tabbar{margin-top:auto;border-top:1px solid var(--hair);padding-top:12px;display:flex;justify-content:space-around}
+.tab{text-align:center;color:var(--steel);font-size:10px} .tab i{font-size:22px;display:block;margin-bottom:2px} .tab.on{color:var(--blue)}
+.step{display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:14px}
+.dot{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+.dot.done{background:var(--blue);color:var(--carbon)} .dot.now{border:2px solid var(--blue);color:var(--blue)} .dot.todo{border:1px solid var(--line);color:var(--steel)}
+.stats{display:flex;justify-content:space-between} .stat{text-align:center} .stat .v{font-family:'Barlow Condensed',sans-serif;font-style:italic;font-weight:900;font-size:26px;color:var(--white)} .stat .k{font-size:11px;color:var(--steel)}
+.story-row{display:flex;gap:12px;margin-bottom:9px;font-size:13px} .story-row .v{color:var(--blue);font-weight:600;width:24px} .story-row .d{margin-left:auto;color:var(--steel);font-size:12px}
+.sheet{background:var(--panel);border-radius:16px;padding:2px 16px;margin-bottom:12px}
+.srow{display:flex;justify-content:space-between;align-items:center;padding:15px 0;border-bottom:1px solid var(--hair);min-height:56px}
+.srow:last-child{border-bottom:none}
+.srow .name{font-size:15px;display:flex;align-items:center;gap:10px} .srow .name i{font-size:17px;color:var(--muted)}
+.srow.open .name{font-weight:600} .srow.open .name i{color:var(--blue)} .srow.open .num{color:var(--blue)}
+.range{position:relative;background:var(--panel2);border-radius:999px;height:6px;margin:16px 0 8px}
+.range .knob{position:absolute;top:-4px;width:14px;height:14px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 3px var(--panel)}
+.ends{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:12px}
+.block{background:var(--carbon);border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.block .label{margin-bottom:4px} .block p{margin:0;font-size:13px;line-height:1.45}
+.block.why{border-left:2px solid var(--blue)} .block.why .label{color:var(--blue)}
+.chip{display:inline-block;border-radius:999px;padding:5px 11px;font-size:11px;background:var(--panel);border:1px solid var(--line);color:var(--steel);margin-right:6px}
+.chip.on{background:var(--blue);color:var(--carbon);border-color:var(--blue);font-weight:600}
+.chip.alt{background:var(--line);color:var(--white);border-color:var(--line);font-weight:600}
+.badge{font-size:10px;color:var(--blue);background:var(--blue-dim);border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:2px}
+.setup{display:flex;justify-content:space-between;align-items:center;background:var(--panel);border-radius:14px;padding:12px 14px;margin-bottom:8px}
+.setup.running{border:1px solid var(--blue)} .setup .t{font-size:15px;font-weight:600} .setup .s{font-size:12px;color:var(--steel);margin-top:2px}
+.setup i{color:var(--steel);font-size:18px}
+.locked{opacity:.6} .stripe-ktm{border-left:4px solid var(--ktm)} .stripe-yamaha{border-left:4px solid var(--yamaha)}
+.tiles{display:flex;gap:10px;margin-bottom:12px} .tile{flex:1;background:var(--panel);border-radius:14px;padding:12px 14px}
+.tile .v{font-family:'Barlow Condensed',sans-serif;font-style:italic;font-weight:900;font-size:26px;margin:4px 0 2px}
+.coming{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--hair);font-size:13px;color:var(--steel)} .coming:last-child{border-bottom:none} .coming span:last-child{color:var(--muted);font-size:11px}
+.icons{display:flex;gap:16px;color:var(--steel);font-size:18px}
+.note{font-size:11px;color:var(--muted);text-align:center;margin-top:16px}

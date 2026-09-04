@@ -205,6 +205,10 @@ export async function createBaselineVersion(params: {
   context?: Tune2Context | null;
   // Engine-context capture: recorded in recommended_settings.context.
   recommendedContext?: RecommendedContext | null;
+  /** Regenerated baseline (free rule, 2026-09-04): parents onto the running
+   *  version so the lineage reads "regenerated" and the delta trigger diffs
+   *  it; rows stay immutable, the free UI shows current values only. */
+  parentVersionId?: string | null;
 }): Promise<SetupVersionRow> {
   const userId = await requireUserId();
 
@@ -218,7 +222,7 @@ export async function createBaselineVersion(params: {
       user_id: userId,
       bike_id: bikeId,
       source: "baseline",
-      parent_version_id: null,
+      parent_version_id: params.parentVersionId ?? null,
       terrain: params.terrain ?? null,
       context: params.context ?? null,
       ...tuneColumns(params.tune),

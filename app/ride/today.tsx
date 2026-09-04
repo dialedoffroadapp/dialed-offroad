@@ -1,0 +1,172 @@
+// app/ride/today.tsx — Today's setup (design/mockups/ride/05): the running
+// setup adjusted for conditions by the deterministic rule base. Plain list,
+// 32pt numbers, changed rows old → new with a blue arrow, one sentence under
+// the headline. Tapping a changed row shows the reason. Applying creates no
+// version: the tweaks become the day's starting pending deltas.
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BottomSheet } from "../../components/v3/BottomSheet";
+import { Eyebrow, Label, Small, Sub } from "../../components/v3/primitives";
+import { V3 } from "../../components/v3/theme";
+import { Cta, RideH1, RideScreenBg, RowSet, ValueRow } from "../../components/ride/ridePrimitives";
+import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
+import { previewValue, todaysSetupRules, type RuleResult } from "../../lib/conditionsRules";
+import { CIRCUIT_STEPS, snapshotFromVersion, type CircuitKey } from "../../lib/currentSetup";
+import { conditionsSummary, surfaceLabel } from "../../lib/rideConditions";
+import { applyDeltas, readDraft, readOpenSession, startSession, type RideDraft } from "../../lib/rideDay";
+import { startRideActivity } from "../../lib/rideLiveActivity";
+import { supabase } from "../../lib/supabase";
+import { logEvent } from "../../lib/usage";
+
+const ROWS: { group: "Fork" | "Shock"; key: CircuitKey; label: string; unit?: string; air?: boolean }[] = [
+  { group: "Fork", key: "fork_air", label: "Air", unit: "bar", air: true },
+  { group: "Fork", key: "fork_comp", label: "Compression" },
+  { group: "Fork", key: "fork_reb", label: "Rebound" },
+  { group: "Shock", key: "shock_lsc", label: "Low speed" },
+  { group: "Shock", key: "shock_hsc", label: "High speed", unit: "turns" },
+  { group: "Shock", key: "shock_reb", label: "Rebound" },
+];
+
+const fmt = (v: number | null, k: CircuitKey) => (typeof v === "number" ? v.toFixed(k === "fork_air" ? 1 : k === "shock_hsc" ? 1 : 0) : "—");
+
+export default function RideTodayScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { from } = useLocalSearchParams<{ from?: string }>();
+  const [draft, setDraft] = useState<RideDraft | null>(null);
+  const [extras, setExtras] = useState<BikeExtras | null>(null);
+  const [reason, setReason] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const open = await readOpenSession();
+      if (open) return router.replace("/ride/mode" as never);
+      const d = await readDraft();
+      if (!d.bike || !d.startingVersion) return router.replace("/ride/start" as never);
+      const e = await readBikeExtras(d.bike.id);
+      if (!alive) return;
+      setDraft(d);
+      setExtras(e);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [router, from]);
+
+  const base = useMemo(() => (draft?.startingVersion ? snapshotFromVersion(draft.startingVersion) : null), [draft]);
+  const rules: RuleResult | null = useMemo(
+    () => (draft && base ? todaysSetupRules(draft.conditions, base, draft.setupName ?? "setup", draft.hasAirFork) : null),
+    [draft, base]
+  );
+
+  if (!draft || !base || !rules || !extras) {
+    return (
+      <View style={[RideScreenBg({}), styles.center]}>
+        <ActivityIndicator color={V3.steel} />
+      </View>
+    );
+  }
+
+  const deltaFor = (k: CircuitKey) => rules.deltas.find((d) => d.circuit === k) ?? null;
+  const rows = ROWS.filter((r) => !r.air || draft.hasAirFork || typeof base.fork_air === "number");
+  const tiresF = extras.tireFrontPsi;
+  const tiresR = extras.tireRearPsi;
+  const tireNew = (v: number | null) => (typeof v === "number" && rules.tirePsiDelta ? v + rules.tirePsiDelta : v);
+
+  const onStart = async () => {
+    if (starting) return;
+    setStarting(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      let s = await startSession(draft, auth?.user?.id ?? null);
+      s = { ...s, suggestionShown: rules.deltas.length > 0 || rules.tirePsiDelta !== 0, suggestionApplied: rules.deltas.length > 0 || rules.tirePsiDelta !== 0 };
+      if (rules.deltas.length) s = await applyDeltas(s, rules.deltas, "conditions");
+      if (rules.tirePsiDelta && (typeof tiresF === "number" || typeof tiresR === "number")) {
+        await saveBikeExtras(draft.bike!.id, {
+          tireFrontPsi: typeof tiresF === "number" ? tiresF + rules.tirePsiDelta : tiresF,
+          tireRearPsi: typeof tiresR === "number" ? tiresR + rules.tirePsiDelta : tiresR,
+        });
+      }
+      void startRideActivity({ startedAt: s.startedAt, track: s.trackName });
+      void logEvent("ride_day_started", {
+        bike_id: draft.bike!.id,
+        setup_id: draft.setupId,
+        track_id: draft.trackId,
+        track_named: !!draft.trackName,
+        entry: "start_riding_button",
+        suggestion_shown: s.suggestionShown,
+        suggestion_applied: s.suggestionApplied,
+        tweaks: rules.deltas.length,
+        conditions: draft.conditions,
+      });
+      router.replace("/ride/mode" as never);
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return (
+    <View style={RideScreenBg({})}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 12, paddingBottom: 24 + insets.bottom }]} showsVerticalScrollIndicator={false}>
+        <Eyebrow>{[draft.trackName, conditionsSummary(draft.conditions)].filter(Boolean).join(" · ")}</Eyebrow>
+        <RideH1>Set this before moto 1</RideH1>
+        <Small style={{ fontSize: 14, marginTop: -4, marginBottom: 14 }}>{rules.summary}</Small>
+
+        {(["Fork", "Shock"] as const).map((group) => {
+          const gr = rows.filter((r) => r.group === group);
+          return (
+            <View key={group}>
+              <Label style={{ marginBottom: 6 }}>{group}</Label>
+              <RowSet>
+                {gr.map((r, i) => {
+                  const d = deltaFor(r.key);
+                  const cur = base[r.key];
+                  const next = d ? previewValue(cur, d.delta, CIRCUIT_STEPS[r.key].decimals) : cur;
+                  return (
+                    <ValueRow
+                      key={r.key}
+                      label={r.label}
+                      value={fmt(next, r.key)}
+                      old={d ? fmt(cur, r.key) : null}
+                      unit={r.unit}
+                      last={i === gr.length - 1}
+                      onPress={d ? () => setReason(d.reason) : undefined}
+                    />
+                  );
+                })}
+              </RowSet>
+            </View>
+          );
+        })}
+
+        <RowSet>
+          <ValueRow
+            label="Tires"
+            value={`${typeof tiresF === "number" ? String(tireNew(tiresF)) : "—"} / ${typeof tiresR === "number" ? String(tireNew(tiresR)) : "—"}`}
+            old={rules.tirePsiDelta && typeof tiresF === "number" ? `${tiresF} / ${tiresR ?? "—"}` : null}
+            unit="psi"
+            last
+            onPress={rules.tirePsiDelta ? () => setReason("Watered track: half a psi out front and rear for grip.") : undefined}
+          />
+        </RowSet>
+
+        <View style={{ flex: 1 }} />
+        <Cta label={starting ? "Starting…" : "Bike's set. Start the clock"} onPress={() => void onStart()} disabled={starting} />
+      </ScrollView>
+
+      <BottomSheet open={!!reason} onClose={() => setReason(null)} title="Why">
+        <Sub style={{ marginTop: 0, fontSize: 15, color: V3.white }}>{reason}</Sub>
+        <Small style={{ marginTop: 10 }}>{surfaceLabel(draft.conditions.surface) ?? "Today"} · rule base, deterministic. One change at a time; re-test after moto 1.</Small>
+      </BottomSheet>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  center: { alignItems: "center", justifyContent: "center" },
+  content: { paddingHorizontal: V3.screenPadX, flexGrow: 1 },
+});
