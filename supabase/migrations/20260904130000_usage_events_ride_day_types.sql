@@ -2,10 +2,10 @@
 -- constraint (design/mockups/ride/PROMPT.md DATA). STAGED, NOT PUSHED.
 --
 -- Carries the FULL list: live 54 + quiz 8 + paywall 3 + Home/Garage 6 (the
--- 20260904110000 set, 71) + 12 ride-day + 2 Pro-gate = 85. The staged 3.0 re-adds apply in
+-- 20260904110000 set, 71) + 12 ride-day + 2 Pro-gate + 9 conversion = 94. The staged 3.0 re-adds apply in
 -- order and only ever widen: 20260902100000 (65) → 20260904110000 (71) →
--- this file (85: +12 ride day, +2 Pro gate). Never add another re-add
--- without carrying all 85.
+-- this file (94: +12 ride day, +2 Pro gate, +9 conversion). Never add
+-- another re-add without carrying all 94.
 --
 -- Event semantics (meta in lib/rideDay.ts and the ride screens):
 --   ride_day_started     {bike_id, setup_id, track_id, suggestion_shown, suggestion_applied, entry}
@@ -22,6 +22,15 @@
 --   sync_queue_flushed   {jobs, remaining}
 --   pro_gate_shown       {paywall_trigger_action, has_alternative, bike_id}
 --   pro_gate_alternative {paywall_trigger_action}  "Update my baseline instead" taken
+--   trial_started        {reason: reveal|launch_3_0, ride_day_limit, ends_at}
+--   trial_ended          {reason: ride_days|clock|purchase, ride_days}
+--   downgraded           {from: trial_active|pro}
+--   gate_shown           {paywall_trigger_action, entitlement_state}
+--   gate_dismissed       {paywall_trigger_action}
+--   gate_converted       {paywall_trigger_action, tier}
+--   pricing_page_viewed  {paywall_trigger_action, tier_selected, lifetime_visible}
+--   lifetime_offered     {ride_days}
+--   qualified_trial      {ride_day_local_id}   first logged ride day (ad optimization)
 
 alter table public.usage_events
   drop constraint usage_events_event_type_check;
@@ -113,5 +122,14 @@ alter table public.usage_events
     'track_match_confirmed',
     'sync_queue_flushed',
     'pro_gate_shown',
-    'pro_gate_alternative'
+    'pro_gate_alternative',
+    'trial_started',
+    'trial_ended',
+    'downgraded',
+    'gate_shown',
+    'gate_dismissed',
+    'gate_converted',
+    'pricing_page_viewed',
+    'lifetime_offered',
+    'qualified_trial'
   ));

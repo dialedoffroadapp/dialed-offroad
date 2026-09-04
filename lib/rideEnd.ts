@@ -7,10 +7,13 @@
 import { readBikeExtras, saveBikeExtras } from "./bikeExtras";
 import { createManualVersion, createNamedSetup, readNamedSetups } from "./bikeSetups";
 import { computeMeter, type MeterInputs } from "./dialedMeter";
-import { archiveSession, elapsedMs, enqueue, flushOutbox, rideEffective, writeSession, type RideSession } from "./rideDay";
+import { archiveSession, elapsedMs, enqueue, flushOutbox, readHistory, rideEffective, writeSession, type RideSession } from "./rideDay";
 import { endRideActivity } from "./rideLiveActivity";
 import type { SettingsSnapshot, SetupVersionRow } from "./setupVersions";
 import { supabase } from "./supabase";
+import { resolveEntitlement, trialNearEnd } from "./entitlement";
+import { emitLifecycleEvent } from "./lifecycle";
+import { setSubscriberAttributes } from "./purchases";
 import { logEvent } from "./usage";
 import { isUuid } from "./uuid";
 
@@ -136,8 +139,27 @@ export async function saveTrackBaseline(s: RideSession, settled: SetupVersionRow
   return { created: true, setupId: res.setup.id };
 }
 
-export async function finishRideDay(s: RideSession, extra: Record<string, unknown> = {}): Promise<void> {
+export async function finishRideDay(s: RideSession, extra: Record<string, unknown> = {}, meterPct: number | null = null): Promise<void> {
   const elapsed = elapsedMs(s);
   void logEvent("ride_day_ended", { elapsed_min: Math.round(elapsed / 60000), motos: s.motos.length, settled_delta_count: Object.keys(settledDelta(s)).length, ...extra });
-  await archiveSession(s);
+  await archiveSession({ ...s, meterPct });
+  // Conversion hooks (playbook Stage 3 / §5): the first logged ride day is
+  // the qualified-trial signal for ad optimization; the ride-day leg of the
+  // reverse trial advances here; the near-end email fires from the app.
+  try {
+    const history = await readHistory();
+    const loggedDays = history.filter((h) => h.endedAt).length;
+    if (loggedDays === 1) {
+      void logEvent("qualified_trial", { ride_day_local_id: s.localId, motos: s.motos.length });
+      void setSubscriberAttributes({ qualified_trial: "true", qualified_trial_at: new Date().toISOString() });
+      void emitLifecycleEvent("first_ride_day_logged", { track: s.trackName, motos: s.motos.length });
+    }
+    const e = await resolveEntitlement();
+    if (e.state === "trial_active" && trialNearEnd(e)) {
+      void emitLifecycleEvent("trial_ending", { leg: "ride_days", rides_left: Math.max(0, e.trialRideDayLimit - e.trialRideDays), trial_ends_at: e.trialEndsAt });
+    }
+    if (e.justEnded) void emitLifecycleEvent("downgraded", { leg: "immediate", reason: e.trialEndReason });
+  } catch {
+    // never block the wrap
+  }
 }

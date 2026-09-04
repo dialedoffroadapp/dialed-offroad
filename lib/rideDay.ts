@@ -95,6 +95,8 @@ export type RideSession = {
   suggestionShown: boolean;
   suggestionApplied: boolean;
   lastActiveAt: string;
+  /** Meter % after End ride (meter-stall detection reads the last two). */
+  meterPct?: number | null;
 };
 
 export function newLocalId(prefix = "ride"): string {

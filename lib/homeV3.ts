@@ -10,6 +10,7 @@ import { publicUrlForPath, readCachedBikePhotoUrl } from "./bikePhoto";
 import { computeMeter, type MeterCategory, type MeterInputs } from "./dialedMeter";
 import { seasonYear, startOfDay } from "./homeCopy";
 import { isoToLocalDate, readNextRideDate } from "./nextRide";
+import { isEntitled, resolveEntitlement } from "./entitlement";
 import { deriveIsPro } from "./proUtils";
 import { hasPurchasedThisSession } from "./purchases";
 import { suggestionFor, type RideSuggestion } from "./rideRules";
@@ -100,6 +101,8 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
   } catch {
     base.isPro = hasPurchasedThisSession();
   }
+  // Reverse trial: trial_active is entitled (server-resolved, cached).
+  if (!base.isPro) base.isPro = isEntitled(await resolveEntitlement());
 
   // Bikes: primary first, else oldest.
   let bikes: HomeBike[] = [];

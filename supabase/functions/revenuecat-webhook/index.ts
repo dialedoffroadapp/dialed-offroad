@@ -151,6 +151,25 @@ serve(async (req: Request): Promise<Response> => {
   const type = event.type;
   console.log("RevenueCat webhook event:", type, "for user", userId);
 
+  // Revenue log for the conversion dashboards (migration 20260904150000,
+  // analytics.revenue_per_account_day60). Additive and fail-silent: the
+  // entitlement write below is unchanged and never waits on this.
+  try {
+    await supabase.from("rc_events").insert({
+      user_id: userId,
+      event_type: type,
+      product_id: event.product_id ?? null,
+      price: typeof event.price === "number" ? event.price : (typeof event.price_in_purchased_currency === "number" ? event.price_in_purchased_currency : null),
+      currency: event.currency ?? null,
+      period_type: event.period_type ?? null,
+      store: event.store ?? null,
+      event_at: typeof event.event_timestamp_ms === "number" ? new Date(event.event_timestamp_ms).toISOString() : new Date().toISOString(),
+      raw: event,
+    });
+  } catch (e) {
+    console.warn("Webhook: rc_events insert skipped", String((e as any)?.message ?? e).slice(0, 120));
+  }
+
   let is_pro: boolean | null = null;
   let pro_until: string | null = null;
 

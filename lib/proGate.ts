@@ -6,7 +6,9 @@
 // retired "Free tune already used" toast / card. Any screen calls
 // showProGate(); components/v3/ProGateSheet.tsx renders it from the root
 // layout. paywall_trigger_action flows into the paywall via paywallHref.
+import { isEntitled, resolveEntitlement } from "./entitlement";
 import { paywallHref, type PaywallTrigger } from "./paywall";
+import { gateTriggerFor } from "./placements";
 
 export type ProGateRequest = {
   trigger: PaywallTrigger;
@@ -48,6 +50,21 @@ export function proActionFor(trigger: PaywallTrigger): ProAction {
 
 /** What stays free, stated plainly under the rows. */
 export const FREE_LINE = "Free keeps your bike, one setup, its current numbers, and a fresh baseline whenever you want one.";
+
+/** Gate helper: resolves entitlement (server, cached fallback) and shows
+ *  the gate ONLY in the free state (playbook §2: the paywall fires at the
+ *  first Pro tap, never during the trial). Returns true when the action may
+ *  proceed. */
+export async function gateIfLocked(req: ProGateRequest): Promise<boolean> {
+  const e = await resolveEntitlement();
+  if (isEntitled(e)) return true;
+  showProGate(req);
+  return false;
+}
+
+export function pricingHref(trigger: PaywallTrigger): string {
+  return `/pricing?trigger=${encodeURIComponent(gateTriggerFor(trigger))}`;
+}
 
 export function regenerateHref(bikeId: string): string {
   return `/(tabs)/tune?bikeId=${encodeURIComponent(bikeId)}&regenerate=1`;

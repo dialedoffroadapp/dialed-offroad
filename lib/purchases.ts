@@ -298,3 +298,16 @@ export async function syncProFromRevenueCat(opts?: {
     return false;
   }
 }
+
+/**
+ * Subscriber attributes (qualified_trial after the first logged ride day, for
+ * ad optimization via RevenueCat's integrations). Never throws.
+ */
+export async function setSubscriberAttributes(attrs: Record<string, string>): Promise<void> {
+  if (isWeb) return;
+  try {
+    await Purchases.setAttributes(attrs);
+  } catch (e) {
+    if (__DEV__) console.warn("[RC] setAttributes error:", e);
+  }
+}

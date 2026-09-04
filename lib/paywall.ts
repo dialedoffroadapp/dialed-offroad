@@ -25,6 +25,12 @@ export type PaywallTrigger =
   | "winback_fallback"
   | "tune_tab_locked"
   | "quiz_reveal_locked" // interstitial world: reveal declined, CTA re-opens
+  // Conversion model gate placements (lib/placements.ts): the ride-day loop
+  // and tire pressure. "history" aliases setup_history for the placement id.
+  | "log_moto"
+  | "adjust"
+  | "tire_pressure"
+  | "history"
   | "unspecified";
 
 /** "/premium?trigger=…[&returnTo=…]". returnTo "back" pops the paywall
@@ -55,6 +61,10 @@ export function parsePaywallTrigger(v: unknown): PaywallTrigger {
     "winback_fallback",
     "tune_tab_locked",
     "quiz_reveal_locked",
+    "log_moto",
+    "adjust",
+    "tire_pressure",
+    "history",
   ];
   return typeof v === "string" && (known as string[]).includes(v)
     ? (v as PaywallTrigger)

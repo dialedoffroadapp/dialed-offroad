@@ -24,6 +24,7 @@ import { supabase } from "../lib/supabase";
 import { deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
 import { showProGate } from "../lib/proGate";
+import { isEntitled, resolveEntitlement } from "../lib/entitlement";
 import {
     generateTuneTwo,
     Tune2Context,
@@ -614,10 +615,10 @@ export default function TuneFeedbackScreen() {
           .select("pro_until, is_pro")
           .eq("user_id", auth.user.id)
           .maybeSingle();
-        if (!deriveIsPro(prof)) {
+        if (!deriveIsPro(prof) && !isEntitled(await resolveEntitlement())) {
           void Haptics.selectionAsync();
           // The Pro gate names the action and offers "Update my baseline
-          // instead"; it opens the paywall with paywall_trigger_action=refine.
+          // instead"; it opens the paywall with paywall_trigger_action=adjust.
           showProGate({ trigger: "refine" });
           return;
         }

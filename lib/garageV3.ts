@@ -7,6 +7,7 @@ import { readNamedSetups, readVersionSetupMap, setupsForBike, type SetupWithVers
 import { computeMeter, type MeterCategory, type MeterInputs } from "./dialedMeter";
 import type { HomeBike } from "./homeV3";
 import { fetchModelSpecs, type ModelSpecs } from "./modelSpecs";
+import { isEntitled, resolveEntitlement } from "./entitlement";
 import { deriveIsPro } from "./proUtils";
 import { hasPurchasedThisSession } from "./purchases";
 import { buildStory, type StoryEntry } from "./setupStory";
@@ -50,10 +51,14 @@ export async function readClickRanges(modelId: string | null | undefined): Promi
   }
 }
 
+/** isPro here means ENTITLED: pro OR trial_active (reverse trial), the
+ *  server-resolved state with a device cache (lib/entitlement.ts). */
 export async function loadUserAndPro(): Promise<{ userId: string | null; isPro: boolean }> {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id ?? null;
   if (!userId) return { userId, isPro: false };
+  const ent = await resolveEntitlement();
+  if (isEntitled(ent)) return { userId, isPro: true };
   try {
     const { data: prof } = await supabase.from("profiles").select("is_pro, pro_until").eq("user_id", userId).maybeSingle();
     return { userId, isPro: deriveIsPro(prof as any) || hasPurchasedThisSession() };

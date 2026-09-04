@@ -25,6 +25,7 @@ import {
   type RideSession,
 } from "../../lib/rideDay";
 import { updateRideActivity } from "../../lib/rideLiveActivity";
+import { gateIfLocked } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 
 const fmt = (v: number | null, d = 0) => (typeof v === "number" ? v.toFixed(d) : "—");
@@ -128,15 +129,15 @@ export default function RideModeScreen() {
           <Small style={{ marginTop: 4 }}>{lastLine}</Small>
         </View>
 
-        <Pressable onPress={() => router.push("/ride/retune" as never)} accessibilityRole="button" style={styles.retune}>
+        <Pressable onPress={() => void gateIfLocked({ trigger: "adjust", bikeId: s.bike.id }).then((ok) => ok && router.push("/ride/retune" as never))} accessibilityRole="button" style={styles.retune}>
           <Text style={[styles.retuneText, interFont(400)]}>Track changed?</Text>
           <Text style={[styles.retuneLink, interFont(600)]}>Retune</Text>
         </Pressable>
 
         <View style={{ flex: 1 }} />
-        <Cta huge label="Log moto" onPress={() => router.push("/ride/log" as never)} style={{ marginBottom: 10 }} />
+        <Cta huge label="Log moto" onPress={() => void gateIfLocked({ trigger: "log_moto", bikeId: s.bike.id }).then((ok) => ok && router.push("/ride/log" as never))} style={{ marginBottom: 10 }} />
         <View style={{ flexDirection: "row", gap: 10 }}>
-          <Ghost label="Adjust" onPress={() => router.push({ pathname: "/ride/adjust", params: { manual: "1" } } as never)} />
+          <Ghost label="Adjust" onPress={() => void gateIfLocked({ trigger: "adjust", bikeId: s.bike.id }).then((ok) => ok && router.push({ pathname: "/ride/adjust", params: { manual: "1" } } as never))} />
           <Ghost label="End ride" dim onPress={() => router.push("/ride/end" as never)} />
         </View>
       </ScrollView>

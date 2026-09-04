@@ -5,6 +5,7 @@
 // Garage; the old per-bike overflow actions (delete) live in the header menu.
 
 import { showProGate } from "../lib/proGate";
+import { isEntitled, resolveEntitlement } from "../lib/entitlement";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -155,8 +156,8 @@ export default function BikeHomeScreen() {
     } as any);
   };
 
-  const onHistory = () => {
-    if (isPro || hasPurchasedThisSession() || isLapsed) {
+  const onHistory = async () => {
+    if (isPro || hasPurchasedThisSession() || isLapsed || isEntitled(await resolveEntitlement())) {
       // Lapsed subscribers see the list + stats strip (their own data IS the
       // winback hook); setup-history enforces the detail/restore gate with
       // winback CTAs.

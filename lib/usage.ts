@@ -115,7 +115,17 @@ export type UsageEvent =
   // Pro gate sheet (free-tune reconciliation): shown before the paywall,
   // names the Pro action, offers the free alternative. Same staged CHECK.
   | "pro_gate_shown"
-  | "pro_gate_alternative";
+  | "pro_gate_alternative"
+  // Conversion model (reverse trial + action gates + pricing page).
+  | "trial_started"
+  | "trial_ended"
+  | "downgraded"
+  | "gate_shown"
+  | "gate_dismissed"
+  | "gate_converted"
+  | "pricing_page_viewed"
+  | "lifetime_offered"
+  | "qualified_trial";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see
@@ -216,6 +226,16 @@ const PAYWALL_EVENTS: ReadonlySet<UsageEventType> = new Set<UsageEventType>([
   "quiz_gate_viewed",
   "quiz_signin_method_chosen",
   "quiz_reveal_viewed",
+  "pro_gate_shown",
+  "pro_gate_alternative",
+  "trial_started",
+  "trial_ended",
+  "downgraded",
+  "gate_shown",
+  "gate_dismissed",
+  "gate_converted",
+  "pricing_page_viewed",
+  "lifetime_offered",
 ]);
 
 function withPaywallPosition(
