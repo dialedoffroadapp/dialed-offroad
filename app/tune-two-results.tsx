@@ -1,4 +1,5 @@
 // app/tune-two-results.tsx
+import { paywallHref } from "../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -527,7 +528,7 @@ export default function TuneTwoResultScreen() {
             `Free plan: up to ${FREE_BASELINE_LIMIT} saved setups. Unlock Pro for unlimited history.`,
             { kind: "info" }
           );
-          router.push("/premium");
+          router.push(paywallHref("save_refinement_limit", "back") as any);
           return;
         }
       }

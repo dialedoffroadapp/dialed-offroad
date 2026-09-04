@@ -6,11 +6,12 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
-import { autoCreateBaselineFromPendingTune } from "../lib/autoBaseline";
 import {
   readPendingTune,
   useOnboarding,
 } from "../lib/onboarding";
+import { completeOnboardingSequence } from "../lib/onboardingCompletion";
+import { PAYWALL_SEEN_KEY, parsePaywallTrigger } from "../lib/paywall";
 import {
   getCustomerInfo,
   hasPurchasedThisSession,
@@ -19,11 +20,9 @@ import {
   syncProFromRevenueCat,
   withTimeout,
 } from "../lib/purchases";
-import { shouldLogDeclinerConversion } from "../lib/paywallDecliner";
-import { scheduleRideReminder } from "../lib/rideReminder";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
-import { clearFunnelId, getOrCreateFunnelId, logEvent } from "../lib/usage";
+import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 
 const DEV_FORCE_PRO_KEY = "dev_force_pro_v1";
 
@@ -39,15 +38,27 @@ export default function PremiumScreen() {
   } = useOnboarding();
 
   // ✅ Where to go after the paywall closes
-  const params = useLocalSearchParams<{ returnTo?: string; dev?: string }>();
-  const returnTo =
-    typeof params.returnTo === "string" && params.returnTo.length > 0
-      ? params.returnTo
-      : "/tune-results";
+  const params = useLocalSearchParams<{
+    returnTo?: string;
+    dev?: string;
+    trigger?: string;
+  }>();
+  const hasReturnTo =
+    typeof params.returnTo === "string" && params.returnTo.length > 0;
+  const returnTo = hasReturnTo ? (params.returnTo as string) : "/tune-results";
 
   // ✅ Dev override (use /premium?dev=1)
   const devMode = __DEV__ && params.dev === "1";
   const isOnboardingTrial = state.onboardingStep === "trial";
+  // Which Pro action summoned the paywall (lib/paywall.ts). The funnel's
+  // auto-present is "onboarding_interstitial"; every gate names itself, and
+  // every paywall event below carries it (paywall_position is stamped
+  // centrally in lib/usage.ts).
+  const parsedTrigger = parsePaywallTrigger(params.trigger);
+  const trigger =
+    parsedTrigger === "unspecified" && isOnboardingTrial
+      ? "onboarding_interstitial"
+      : parsedTrigger;
   const onboardingAgeMs = React.useMemo(() => {
     const parsed = Date.parse(state.lastUpdatedAt);
     return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
@@ -76,83 +87,33 @@ export default function PremiumScreen() {
     const go = (dest: string) => {
       if (navigatedRef.current) return;
       navigatedRef.current = true;
+      // "back": action-gated triggers return to the screen that summoned
+      // the paywall instead of replacing to a route (lib/paywall.ts).
+      if (dest === "back") {
+        if (router.canGoBack()) router.back();
+        else router.replace("/(tabs)" as any);
+        return;
+      }
       router.replace(dest as any);
     };
 
+    // The completion sequence itself lives in lib/onboardingCompletion.ts
+    // (shared with the action-gated world, where it runs at signup).
     const handleOnboardingSuccess = async () => {
-      const funnelId = await getOrCreateFunnelId();
-      await logEvent("onboarding_trial_started", {
-        funnel_id: funnelId,
-        onboarding_step: state.onboardingStep,
-        signed_in: true,
-        account_created: state.accountCreated,
-        trial_started: true,
-        onboarding_complete: false,
-        pending_tune_exists: !!(await readPendingTune()).tune,
-        resume: ageMinutesSinceLastStep >= 5,
-        age_minutes_since_last_step: ageMinutesSinceLastStep,
-        source_route: "/premium",
+      const done = await completeOnboardingSequence({
+        completeOnboarding,
+        onboardingStep: state.onboardingStep,
+        accountCreated: state.accountCreated,
+        trialStarted: state.trialStarted,
+        ageMinutesSinceLastStep,
+        sourceRoute: "/premium",
+        viaPaywall: true,
+        // A caller-supplied returnTo (the quiz reveal) wins; absent, the
+        // shipped destinations apply.
+        returnTo: hasReturnTo ? returnTo : undefined,
+        extraMeta: { paywall_trigger_action: trigger },
       });
-
-      // Recovery-funnel metric. EVERY purchase passes through the trial step
-      // (signup sets it minutes before the day-0 paywall), so "prior state
-      // was trial" alone would count normal funnel conversions too — the
-      // >=5min resume gate inside shouldLogDeclinerConversion separates a
-      // decliner who came back from a straight-through funnel purchase.
-      if (
-        shouldLogDeclinerConversion(state.onboardingStep, ageMinutesSinceLastStep)
-      ) {
-        void logEvent("decliner_converted", {
-          funnel_id: funnelId,
-          age_minutes_since_last_step: ageMinutesSinceLastStep,
-        });
-      }
-
-      await completeOnboarding();
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user?.id) {
-        await supabase.from("profiles").upsert(
-          {
-            user_id: authData.user.id,
-            onboarding_complete: true,
-            onboarding_step: "complete",
-          },
-          { onConflict: "user_id" }
-        );
-      }
-      const { tune: pending } = await readPendingTune();
-
-      // Auto-save the onboarding tune as v1 so Home's ActiveSetupCard, the
-      // tune tab's RunningSetupRow, and Bike Home all render real state on
-      // Day 1 without the rider having to tap "Save Setup". Returns null on
-      // any failure/skip — never blocks onboarding completion. The manual
-      // Save button stays idempotent against this row (tune-results.tsx).
-      const autoBaseline = await autoCreateBaselineFromPendingTune();
-      if (autoBaseline) {
-        // No-op unless notification permission is already granted — for a
-        // brand-new user the inline ask on the results screen (which follows
-        // this navigation) grants and schedules instead.
-        void scheduleRideReminder({
-          versionId: autoBaseline.version.id,
-          versionNumber: autoBaseline.version.version_number,
-          bikeName: autoBaseline.bikeTitle,
-        });
-      }
-
-      await logEvent("onboarding_completed", {
-        funnel_id: funnelId,
-        onboarding_step: "complete",
-        signed_in: true,
-        account_created: true,
-        trial_started: true,
-        onboarding_complete: true,
-        pending_tune_exists: !!pending,
-        resume: ageMinutesSinceLastStep >= 5,
-        age_minutes_since_last_step: ageMinutesSinceLastStep,
-        source_route: "/premium",
-      });
-      await clearFunnelId();
-      return pending ? "/tune-results" : "/(tabs)";
+      return done.target;
     };
 
     const forceProForDev = async () => {
@@ -227,8 +188,17 @@ export default function PremiumScreen() {
             resume: ageMinutesSinceLastStep >= 5,
             age_minutes_since_last_step: ageMinutesSinceLastStep,
             source_route: "/premium",
+            paywall_trigger_action: trigger,
           });
         }
+
+        // Position-agnostic presentation events: every trigger, every world
+        // (the onboarding_* events above stay funnel-only, as shipped).
+        void AsyncStorage.setItem(PAYWALL_SEEN_KEY, "1").catch(() => {});
+        void logEvent("paywall_shown", {
+          paywall_trigger_action: trigger,
+          onboarding: isOnboardingTrial,
+        });
 
         const result = await RevenueCatUI.presentPaywall({
           dismissAutomatically: true,
@@ -241,6 +211,11 @@ export default function PremiumScreen() {
           // Flag FIRST — synchronously, before any state advance or await —
           // so no gate anywhere can re-present this session.
           markPurchasedThisSession();
+          void logEvent("paywall_purchased", {
+            paywall_trigger_action: trigger,
+            onboarding: isOnboardingTrial,
+            result: result === PAYWALL_RESULT.RESTORED ? "restored" : "purchased",
+          });
           // Best-effort profile sync (self-timeboxed inside). A miss is fine:
           // the session flag already unlocks the client and the RevenueCat
           // webhook heals the profile server-side. Never block the unlock.
@@ -261,10 +236,20 @@ export default function PremiumScreen() {
             markPurchasedThisSession();
             void syncProFromRevenueCat(); // best-effort; webhook heals
             toast.show("Pro unlocked", { kind: "success" });
+            void logEvent("paywall_purchased", {
+              paywall_trigger_action: trigger,
+              onboarding: true,
+              result: "entitled",
+            });
             target = await withTimeout(handleOnboardingSuccess(), 8000, "/(tabs)");
             // Skip the dismissal log — this is a success, not a dismissal.
             return;
           }
+          void logEvent("paywall_dismissed", {
+            paywall_trigger_action: trigger,
+            onboarding: true,
+            result: "dismissed",
+          });
 
           const funnelId = await getOrCreateFunnelId();
           const { tune: pending } = await readPendingTune();
@@ -279,10 +264,17 @@ export default function PremiumScreen() {
             resume: ageMinutesSinceLastStep >= 5,
             age_minutes_since_last_step: ageMinutesSinceLastStep,
             source_route: "/premium",
+            paywall_trigger_action: trigger,
             paywall_result: "dismissed",
           });
           await setStep("trial");
           target = pending ? "/tune-results" : "/(tabs)/tune";
+        } else {
+          void logEvent("paywall_dismissed", {
+            paywall_trigger_action: trigger,
+            onboarding: false,
+            result: "dismissed",
+          });
         }
       } catch (e: any) {
         if (!isMounted) return;
@@ -312,6 +304,7 @@ export default function PremiumScreen() {
             resume: ageMinutesSinceLastStep >= 5,
             age_minutes_since_last_step: ageMinutesSinceLastStep,
             source_route: "/premium",
+            paywall_trigger_action: trigger,
             paywall_result: "error",
             error_code: e?.code ?? e?.message ?? "unknown",
           });
@@ -337,6 +330,8 @@ export default function PremiumScreen() {
     completeOnboarding,
     isOnboardingTrial,
     returnTo,
+    hasReturnTo,
+    trigger,
     router,
     setStep,
     state.accountCreated,

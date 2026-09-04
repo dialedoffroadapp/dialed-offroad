@@ -7,6 +7,12 @@
 //   queue inside logEvent) → onboarding_signup_completed funnel event
 //   → markAccountCreated → setStep("trial") → replace("/premium")
 //
+// Paywall position (lib/paywallPosition.ts, River 2026-09-02): the tail
+// above is the INTERSTITIAL ordering and stays byte-identical. In the
+// ACTION-GATED world the same sequence runs, then onboarding completes right
+// here (lib/onboardingCompletion.ts) and the rider lands on the reveal; the
+// paywall presents later, on the first Pro action.
+//
 // Callers own everything provider-specific: establishing the session,
 // deciding isNewAccount (email uses the identities[] enumeration-protection
 // heuristic, OAuth uses created_at ≈ last_sign_in_at), and the toast copy.
@@ -19,6 +25,8 @@ import {
   remapPendingTuneBikeId,
   type OnboardingStep,
 } from "./onboarding";
+import { completeOnboardingSequence } from "./onboardingCompletion";
+import { getPaywallPosition, type PaywallPosition } from "./paywallPosition";
 import { supabase } from "./supabase";
 import { claimAnonTuneCalls } from "./tuneAttribution";
 import { getOrCreateFunnelId, logEvent } from "./usage";
@@ -54,6 +62,18 @@ export type AuthSuccessParams = {
   setStep: (step: OnboardingStep) => Promise<unknown>;
   replace: (route: string) => void;
   returnTo: string;
+  /** Where the trial paywall sits. Defaults to the live remote/cached value
+   *  (lib/paywallPosition.ts); tests pin it explicitly. */
+  paywallPosition?: PaywallPosition;
+  /** Quiz reveal route. Interstitial: handed to /premium as its returnTo so
+   *  the paywall lands on the reveal. Action-gated: the post-completion
+   *  destination. Absent = the shipped destinations ("/tune-results"). */
+  revealRoute?: string;
+  /** OnboardingProvider's completeOnboarding — needed by the action-gated
+   *  completion. Falls back to setStep("complete") when a caller omits it. */
+  completeOnboarding?: () => Promise<unknown>;
+  /** Extra meta for the completion events (quiz markers). */
+  completionMeta?: Record<string, unknown>;
 };
 
 export async function completeAuthSuccess(params: AuthSuccessParams): Promise<void> {
@@ -71,7 +91,16 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
     setStep,
     replace,
     returnTo,
+    revealRoute,
+    completeOnboarding,
+    completionMeta,
   } = params;
+  const paywallPosition = params.paywallPosition ?? getPaywallPosition();
+  // Signup-mode funnel exits complete onboarding HERE in the action-gated
+  // world; the profile row must say so from the first write, or a completion
+  // failure would strand the profile at "trial" (= paywall decliner routing).
+  const actionGatedFunnelExit =
+    paywallPosition === "action_gated" && onboardingStep === "signup";
 
   // 3) Ensure a profiles row exists so downstream screens never hit null.
   //    Retry up to 2 times to handle transient RLS/timing issues where the
@@ -91,8 +120,8 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
           }
         : {
             user_id: userId,
-            onboarding_step: "trial",
-            onboarding_complete: false,
+            onboarding_step: actionGatedFunnelExit ? "complete" : "trial",
+            onboarding_complete: actionGatedFunnelExit,
             // Provider name beats handle_new_user's email-prefix default (which
             // is relay garbage for Apple private-relay signups). New accounts
             // only — auto-linked returning users keep their chosen name.
@@ -229,8 +258,31 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
 
   if (onboardingStep === "signup") {
     await markAccountCreated();
+
+    if (paywallPosition === "action_gated") {
+      // Reveal first. Complete onboarding now (v1 auto-baseline, events);
+      // the paywall waits for the first Pro action (lib/paywall.ts).
+      const result = await completeOnboardingSequence({
+        completeOnboarding: completeOnboarding ?? (() => setStep("complete")),
+        onboardingStep,
+        accountCreated: true,
+        trialStarted: false,
+        ageMinutesSinceLastStep,
+        sourceRoute: "/signup",
+        viaPaywall: false,
+        returnTo: revealRoute,
+        extraMeta: { signup_method: method, ...(completionMeta ?? {}) },
+      });
+      replace(result.target);
+      return;
+    }
+
     await setStep("trial");
-    replace("/premium");
+    replace(
+      revealRoute
+        ? `/premium?returnTo=${encodeURIComponent(revealRoute)}`
+        : "/premium"
+    );
     return;
   }
 

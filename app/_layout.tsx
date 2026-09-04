@@ -19,6 +19,12 @@ import { OnboardingProvider, useOnboarding } from "../lib/onboarding";
 import { markReminderArrival } from "../lib/reminderArrival";
 import { hasPurchasedThisSession, initPurchases } from "../lib/purchases";
 import { deriveIsPro } from "../lib/proUtils";
+import { QUIZ_ONBOARDING_ENABLED } from "../lib/featureFlags";
+import { PAYWALL_SEEN_KEY } from "../lib/paywall";
+import {
+  hydratePaywallPosition,
+  isActionGatedPaywall,
+} from "../lib/paywallPosition";
 import { supabase } from "../lib/supabase";
 import { getOrCreateFunnelId, logEvent } from "../lib/usage";
 import { darkTheme } from "../constants/theme";
@@ -241,6 +247,16 @@ function RootInner() {
           return;
         }
 
+        // Action-gated world (lib/paywallPosition.ts): the FIRST paywall a
+        // rider meets must be summoned by a Pro action, never by a cold
+        // start — a brand-new free account would otherwise get this modal
+        // on its second launch. It stays a follow-up nudge once a gate has
+        // presented the paywall at least once on this device.
+        if (isActionGatedPaywall()) {
+          const seen = await AsyncStorage.getItem(PAYWALL_SEEN_KEY);
+          if (!seen) return;
+        }
+
         setShowTrialModal(true);
       } catch {
         // Silently ignore — modal is non-critical
@@ -298,6 +314,12 @@ function RootInner() {
       sub.remove();
     };
   }, [router]);
+
+  // Paywall position: device cache now, prod app_config in the background
+  // (lib/paywallPosition.ts). Flippable without a store release.
+  useEffect(() => {
+    void hydratePaywallPosition();
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -366,7 +388,11 @@ function RootInner() {
               // calls after the awaits so React 18 batches them in one render.
               // This means the overlay never disappears before the new screen
               // is committed, eliminating the blank "/" flash.
-              router.replace("/(tabs)/garage");
+              // Quiz onboarding (feat/quiz-onboarding): same state-machine step,
+              // different UI for it — the quiz owns garage_locked + tune.
+              router.replace(
+                (QUIZ_ONBOARDING_ENABLED ? "/quiz" : "/(tabs)/garage") as never
+              );
               setShowOnboardingOverlay(false);
             }}
           />

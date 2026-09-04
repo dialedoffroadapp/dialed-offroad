@@ -40,6 +40,19 @@ const getOrCreateFunnelId = jest.fn(async () => "funnel_test_1");
 jest.mock("../lib/usage", () => ({
   logEvent: (...args: any[]) => logEvent(...(args as [string, any])),
   getOrCreateFunnelId: () => getOrCreateFunnelId(),
+  clearFunnelId: async () => {},
+}));
+
+// Paywall position (2026-09-02): the action-gated tail completes onboarding
+// through lib/onboardingCompletion.ts. Mocked here so this file keeps
+// asserting the auth sequence alone; the sequence has its own contract.
+const completeOnboardingSequence = jest.fn(async (_p: any) => ({
+  target: "/tune-results",
+  pendingExists: true,
+  autoBaseline: null,
+}));
+jest.mock("../lib/onboardingCompletion", () => ({
+  completeOnboardingSequence: (p: any) => completeOnboardingSequence(p),
 }));
 
 jest.mock("../lib/bikes", () => ({
@@ -62,6 +75,7 @@ jest.mock("../lib/tuneAttribution", () => ({
 /* eslint-disable import/first -- these imports must follow the jest.mock
    factories above: the factories close over the mock fns (TDZ otherwise). */
 import { completeAuthSuccess, type AuthSuccessParams } from "../lib/authSuccess";
+import { __setPaywallPositionForTests } from "../lib/paywallPosition";
 import {
   PENDING_GUEST_BIKE_SYNC_KEY,
   PENDING_TUNE_STORAGE_KEY,
@@ -111,6 +125,81 @@ beforeEach(async () => {
   calls.length = 0;
   jest.clearAllMocks();
   await AsyncStorage.clear();
+  // Every pre-existing expectation below is the INTERSTITIAL contract
+  // (signup → trial → /premium). The action-gated tail is covered at the end.
+  __setPaywallPositionForTests("interstitial");
+});
+
+describe("action-gated paywall position (reveal first)", () => {
+  beforeEach(() => __setPaywallPositionForTests("action_gated"));
+  afterAll(() => __setPaywallPositionForTests(null));
+
+  test("signup step: profile stamped complete, completion runs, lands on its target", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+    const completeOnboarding = jest.fn(async () => {});
+    completeOnboardingSequence.mockResolvedValueOnce({
+      target: "/quiz/reveal",
+      pendingExists: true,
+      autoBaseline: null,
+    });
+
+    await completeAuthSuccess(
+      makeParams({ completeOnboarding, revealRoute: "/quiz/reveal", method: "apple" })
+    );
+
+    expect(profileUpsert.mock.calls[0][0]).toEqual({
+      user_id: USER_ID,
+      onboarding_step: "complete",
+      onboarding_complete: true,
+    });
+    // Same migration + events as the interstitial world, then completion
+    // instead of the trial step, and NO /premium.
+    expect(calls).toEqual([
+      "profiles.upsert",
+      "bikes.insert",
+      "notify",
+      "logEvent:sign_up",
+      "logEvent:onboarding_signup_completed",
+      "markAccountCreated",
+      "replace:/quiz/reveal",
+    ]);
+    expect(completeOnboardingSequence).toHaveBeenCalledTimes(1);
+    expect(completeOnboardingSequence.mock.calls[0][0]).toMatchObject({
+      completeOnboarding,
+      onboardingStep: "signup",
+      viaPaywall: false,
+      returnTo: "/quiz/reveal",
+      sourceRoute: "/signup",
+      extraMeta: { signup_method: "apple" },
+    });
+  });
+
+  test("explicit paywallPosition param overrides the live value", async () => {
+    await completeAuthSuccess(makeParams({ paywallPosition: "interstitial" }));
+    expect(calls.slice(-3)).toEqual(["markAccountCreated", "setStep:trial", "replace:/premium"]);
+    expect(completeOnboardingSequence).not.toHaveBeenCalled();
+  });
+
+  test("interstitial + revealRoute hands the reveal to /premium as returnTo", async () => {
+    await completeAuthSuccess(
+      makeParams({ paywallPosition: "interstitial", revealRoute: "/quiz/reveal" })
+    );
+    expect(calls[calls.length - 1]).toBe("replace:/premium?returnTo=%2Fquiz%2Freveal");
+  });
+
+  test("non-signup steps never complete here (routing unchanged)", async () => {
+    await completeAuthSuccess(makeParams({ onboardingStep: "results_locked" }));
+    expect(completeOnboardingSequence).not.toHaveBeenCalled();
+    expect(calls[calls.length - 1]).toBe("replace:/premium?returnTo=/tune-results");
+  });
+
+  test("login mode, returning user: heal-only write, no completion", async () => {
+    await completeAuthSuccess(
+      makeParams({ mode: "login", isNewAccount: false, onboardingStep: "complete", onboardingComplete: true })
+    );
+    expect(profileUpsert.mock.calls[0][0]).toEqual({ user_id: USER_ID });
+    expect(completeOnboardingSequence).not.toHaveBeenCalled();
+  });
 });
 
 describe("email happy path — pre-refactor sequence preserved", () => {

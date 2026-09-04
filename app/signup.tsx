@@ -21,6 +21,9 @@ import {
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
 import { completeAuthSuccess } from "../lib/authSuccess";
+import { QUIZ_ONBOARDING_ENABLED } from "../lib/featureFlags";
+import { completeOnboardingSequence } from "../lib/onboardingCompletion";
+import { isActionGatedPaywall } from "../lib/paywallPosition";
 import { readPendingTune, useOnboarding } from "../lib/onboarding";
 import {
   isAppleSignInAvailable,
@@ -48,7 +51,7 @@ function SignupInner() {
   const toast = useToast();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { state, markAccountCreated, setStep } = useOnboarding();
+  const { state, markAccountCreated, setStep, completeOnboarding } = useOnboarding();
 
   // ✅ allow caller to specify where to go after signup
   // If nothing provided, default to Paywall
@@ -248,7 +251,12 @@ function SignupInner() {
               user_id: recoveryData.user.id,
             };
             if (local !== "intro") {
-              const resolvedStep = local === "signup" ? "trial" : local;
+              const resolvedStep =
+                local === "signup"
+                  ? isActionGatedPaywall()
+                    ? "complete"
+                    : "trial"
+                  : local;
               payload.onboarding_step = resolvedStep;
               payload.onboarding_complete = resolvedStep === "complete";
             }
@@ -269,8 +277,25 @@ function SignupInner() {
 
           if (state.onboardingStep === "signup") {
             await markAccountCreated();
-            await setStep("trial");
-            router.replace("/premium");
+            if (isActionGatedPaywall()) {
+              // Reveal-first world (lib/paywallPosition.ts): complete now,
+              // paywall on the first Pro action — mirrors completeAuthSuccess.
+              const done = await completeOnboardingSequence({
+                completeOnboarding,
+                onboardingStep: "signup",
+                accountCreated: true,
+                trialStarted: state.trialStarted,
+                ageMinutesSinceLastStep,
+                sourceRoute: "/signup",
+                viaPaywall: false,
+                returnTo: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
+                extraMeta: { signup_method: "email", recovered: true },
+              });
+              router.replace(done.target as never);
+            } else {
+              await setStep("trial");
+              router.replace("/premium");
+            }
           } else {
             router.replace("/(tabs)");
           }
@@ -322,6 +347,10 @@ function SignupInner() {
           }),
         markAccountCreated,
         setStep,
+        completeOnboarding,
+        // Quiz funnel: the reveal is the post-auth destination (action-gated)
+        // or the paywall's returnTo (interstitial).
+        revealRoute: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
         replace: (route) => router.replace(route as never),
         returnTo,
       });
@@ -370,6 +399,10 @@ function SignupInner() {
           ),
         markAccountCreated,
         setStep,
+        completeOnboarding,
+        // Quiz funnel: the reveal is the post-auth destination (action-gated)
+        // or the paywall's returnTo (interstitial).
+        revealRoute: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
         replace: (route) => router.replace(route as never),
         returnTo,
       });

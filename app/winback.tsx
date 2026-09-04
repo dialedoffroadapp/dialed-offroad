@@ -7,6 +7,7 @@
 // History gate. Purchases go through the RevenueCat SDK directly; if
 // offerings can't load, the CTA falls back to /premium (remote paywall).
 
+import { paywallHref } from "../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -163,7 +164,7 @@ export default function WinbackScreen() {
 
   const onFallbackPaywall = () => {
     void logEvent("winback_cta_tapped", { package: "fallback_paywall" });
-    router.push("/premium");
+    router.push(paywallHref("winback_fallback", "back") as any);
   };
 
   const hookLine = hook

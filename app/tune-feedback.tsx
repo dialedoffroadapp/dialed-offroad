@@ -20,6 +20,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../components/Toast";
+import { supabase } from "../lib/supabase";
+import { deriveIsPro } from "../lib/proUtils";
+import { hasPurchasedThisSession } from "../lib/purchases";
+import { paywallHref } from "../lib/paywall";
 import {
     generateTuneTwo,
     Tune2Context,
@@ -594,6 +598,30 @@ export default function TuneFeedbackScreen() {
       });
       router.back();
       return;
+    }
+
+    // Refine after ride is Pro (3.0 Free/Pro flip, action-gated paywall —
+    // lib/paywall.ts). Gated at submit, the one choke point every refine
+    // entry funnels into (results, garage, Bike Home, check-in cards), so the
+    // picker stays explorable and a dismissed paywall returns right here.
+    // Fails OPEN only on a thrown read (offline Pro rider); a successful
+    // "not Pro" read gates.
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth?.user?.id && !hasPurchasedThisSession()) {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("pro_until, is_pro")
+          .eq("user_id", auth.user.id)
+          .maybeSingle();
+        if (!deriveIsPro(prof)) {
+          void Haptics.selectionAsync();
+          router.push(paywallHref("refine", "back") as any);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("[tune-feedback] pro check failed open", e);
     }
 
     try {

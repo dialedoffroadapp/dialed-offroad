@@ -11,6 +11,12 @@ import {
 } from "../lib/onboarding";
 import { reconcileGuestBikes } from "../lib/bikeReconcile";
 import { deriveIsPro } from "../lib/proUtils";
+import { QUIZ_ONBOARDING_ENABLED } from "../lib/featureFlags";
+import { completeOnboardingSequence } from "../lib/onboardingCompletion";
+import {
+  hydratePaywallPositionFromCache,
+  isActionGatedPaywall,
+} from "../lib/paywallPosition";
 import { supabase } from "../lib/supabase";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -35,6 +41,15 @@ const SPLASH_WATCHDOG_MS = 8000;
 setTimeout(() => {
   SplashScreen.hideAsync().catch(() => {});
 }, SPLASH_WATCHDOG_MS + 2000);
+
+// Quiz onboarding (feat/quiz-onboarding): the quiz route group owns the
+// garage_locked + tune steps when the flag is on. Same steps, same
+// transitions — only the screen that renders them changes.
+const quizOr = (fallback: string) =>
+  QUIZ_ONBOARDING_ENABLED ? "/quiz" : fallback;
+/** results_locked with a pending tune: the quiz's account gate owns it. */
+const quizGateOr = (fallback: string) =>
+  QUIZ_ONBOARDING_ENABLED ? "/quiz/gate" : fallback;
 
 type ProfileBootRow = {
   onboarding_complete?: boolean | null;
@@ -61,7 +76,8 @@ export default function IndexGate() {
   const [readyToHide, setReadyToHide] = useState(false);
   const hidOnce = useRef(false);
   const didNavigateRef = useRef(false);
-  const { hydrated, replaceState, setStep } = useOnboarding();
+  const { hydrated, replaceState, setStep, completeOnboarding, state } =
+    useOnboarding();
 
   // Component watchdog: armed on MOUNT, independent of the `hydrated` gate
   // below (so it also covers provider hydration never completing). If the
@@ -126,6 +142,14 @@ export default function IndexGate() {
           }
         })();
         let pendingTune: unknown = null;
+        try {
+          // Paywall position (remote flag, device cache): awaited so the
+          // signup-resume branch below routes for the right world. The remote
+          // refresh itself runs in the root layout, fire-and-forget.
+          await hydratePaywallPositionFromCache();
+        } catch {
+          // build default stands
+        }
         try {
           const [s, p] = await Promise.all([
             supabase.auth.getSession(),
@@ -299,15 +323,41 @@ export default function IndexGate() {
                 target = "/";
                 break;
               case "garage_locked":
-                target = "/(tabs)/garage";
+                target = quizOr("/(tabs)/garage");
                 break;
               case "tune":
-                target = "/(tabs)/tune";
+                target = quizOr("/(tabs)/tune");
                 break;
               case "results_locked":
-                target = pendingTune ? "/tune-results" : "/(tabs)/tune";
+                target = pendingTune
+                  ? quizGateOr("/tune-results")
+                  : quizOr("/(tabs)/tune");
                 break;
               case "signup":
+                if (isActionGatedPaywall()) {
+                  // Action-gated world: a signed-in rider stranded at "signup"
+                  // (app killed between auth and completion) simply completes
+                  // now and lands on their tune — no paywall in the funnel.
+                  try {
+                    const done = await completeOnboardingSequence({
+                      completeOnboarding,
+                      onboardingStep: "signup",
+                      accountCreated: true,
+                      trialStarted: state.trialStarted,
+                      ageMinutesSinceLastStep: Math.round(
+                        Math.max(0, Date.now() - Date.parse(localState.lastUpdatedAt || "")) / 60000
+                      ),
+                      sourceRoute: "/",
+                      viaPaywall: false,
+                      returnTo: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
+                    });
+                    target = done.target;
+                  } catch (e) {
+                    console.warn("[IndexGate] action-gated completion failed", e);
+                    target = "/(tabs)";
+                  }
+                  break;
+                }
                 // Already signed in — advance past signup to trial in BOTH
                 // stores, then send to the paywall. Garage stranded the user:
                 // tabs hidden mid-onboarding and no funnel CTA there (S4).
@@ -349,16 +399,20 @@ export default function IndexGate() {
               target = "/";
               break;
             case "garage_locked":
-              target = "/(tabs)/garage";
+              target = quizOr("/(tabs)/garage");
               break;
             case "tune":
-              target = "/(tabs)/tune";
+              target = quizOr("/(tabs)/tune");
               break;
             case "results_locked":
-              target = pendingTune ? "/tune-results" : "/(tabs)/tune";
+              target = pendingTune
+                ? quizGateOr("/tune-results")
+                : quizOr("/(tabs)/tune");
               break;
             case "signup":
-              target = localState.accountCreated ? "/login" : "/signup";
+              target = localState.accountCreated
+                ? "/login"
+                : quizGateOr("/signup");
               break;
             case "trial":
               target = localState.accountCreated ? "/login" : "/signup";
@@ -418,6 +472,8 @@ export default function IndexGate() {
     return () => {
       mounted = false;
     };
+    // completeOnboarding/state are read only inside the signup-resume branch
+    // (once per boot); listing them would re-run the boot resolver.
   }, [router, hydrated, replaceState, setStep]);
 
   // Hide splash after first layout of the routed screen

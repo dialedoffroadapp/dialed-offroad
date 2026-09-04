@@ -1,4 +1,5 @@
 // components/TrialPromptModal.tsx
+import { paywallHref } from "../lib/paywall";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import React from "react";
@@ -54,7 +55,9 @@ export default function TrialPromptModal({
     onRequestClose();
     // Lapsed subscribers get the dedicated winback screen (their own data as
     // the hook, annual-first); trial-eligible users go to the paywall.
-    router.push(lapsed ? ("/winback" as any) : "/premium");
+    router.push(
+      lapsed ? ("/winback" as any) : (paywallHref("trial_prompt_modal", "back") as any)
+    );
   };
 
   if (!visible) return null;
