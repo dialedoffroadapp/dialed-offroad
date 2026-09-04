@@ -481,7 +481,7 @@ export default function SetupHistoryScreen() {
             {bikeTitle}
           </Text>
         </View>
-        {current && !restricted ? (
+        {current && !restricted && canShare ? (
           <Pressable
             onPress={() =>
               share(
