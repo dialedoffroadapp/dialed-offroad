@@ -5,6 +5,7 @@
 // (claim_free_tune); this wraps the RPC, maps "regenerate" to "nothing
 // consumed" so no refund is ever issued for it, and answers "does this bike
 // already have a baseline?" for the gate's free alternative.
+import { isDevBuild } from "./featureFlags";
 import { supabase } from "./supabase";
 import { isUuid } from "./uuid";
 
@@ -42,8 +43,32 @@ export function mapClaim(raw: unknown): ClaimResult {
 export async function claimBaselineCredit(bikeId: string | null | undefined): Promise<ClaimResult> {
   const args = bikeId && isUuid(bikeId) ? { p_bike_id: bikeId } : {};
   const { data, error } = await supabase.rpc("claim_free_tune", args).single();
-  if (error) return { ok: false, reason: "error", consumed: false, trialTunesUsed: 0, isPro: false };
+  if (error) {
+    if (isDevBuild() && isMissingPerBikeClaim(error)) {
+      // DEV-ONLY FAIL-OPEN. The per-bike signature claim_free_tune(p_bike_id)
+      // comes from staged migration 20260904140000; against a project that
+      // has not applied it (prod today) PostgREST answers PGRST202 and the
+      // quiz reveal dies with "Couldn't check your free tune". Treat it as a
+      // no-consume regenerate so the device pass can proceed. Unreachable in
+      // release builds (isDevBuild is a literal false there) and only for
+      // THIS error, so a real claim failure still fails closed.
+      console.warn(
+        "[freeTune] DEV FAIL-OPEN: claim_free_tune(p_bike_id) is missing on this Supabase project " +
+          "(staged migration 20260904140000 not applied). Treating the claim as a no-consume regenerate."
+      );
+      return { ok: true, reason: "regenerate", consumed: false, trialTunesUsed: 0, isPro: false };
+    }
+    return { ok: false, reason: "error", consumed: false, trialTunesUsed: 0, isPro: false };
+  }
   return mapClaim(data);
+}
+
+/** PostgREST "no function matches these arguments" (schema-cache miss) or
+ *  Postgres undefined_function: exactly the un-migrated-server case. */
+function isMissingPerBikeClaim(error: { code?: string; message?: string } | null | undefined): boolean {
+  const code = error?.code ?? "";
+  const msg = error?.message ?? "";
+  return code === "PGRST202" || code === "42883" || /could not find the function .*claim_free_tune/i.test(msg);
 }
 
 /** Give back a consumed credit after a failed generation. No-op for

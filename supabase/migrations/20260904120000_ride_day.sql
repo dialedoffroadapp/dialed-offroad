@@ -35,34 +35,6 @@ create policy "tracks_insert_own" on public.tracks
 revoke all on public.tracks from anon, authenticated;
 grant select, insert on public.tracks to authenticated;
 
--- Haversine match, plain SQL (no PostGIS). rider_count = distinct riders
--- with a ride day at the track ("ridden by N others").
-create or replace function public.match_tracks(p_lat numeric, p_lng numeric, p_radius_m integer default 2000)
-returns table (id uuid, name text, distance_m integer, verified boolean, rider_count integer)
-language sql
-security invoker
-stable
-set search_path = public
-as $$
-  with d as (
-    select t.id, t.name, t.verified,
-      (2 * 6371000 * asin(sqrt(
-        power(sin(radians(t.lat - p_lat) / 2), 2) +
-        cos(radians(p_lat)) * cos(radians(t.lat)) *
-        power(sin(radians(t.lng - p_lng) / 2), 2)
-      )))::integer as distance_m
-    from public.tracks t
-  )
-  select d.id, d.name, d.distance_m, d.verified,
-    (select count(distinct r.user_id) from public.ride_days r where r.track_id = d.id)::integer as rider_count
-  from d
-  where d.distance_m <= p_radius_m
-  order by d.distance_m
-  limit 5;
-$$;
-revoke execute on function public.match_tracks(numeric, numeric, integer) from public, anon;
-grant execute on function public.match_tracks(numeric, numeric, integer) to authenticated;
-
 -- ---------------------------------------------------------------------------
 -- ride_days (plan 5.2 + PROMPT: conditions on the ride day; setup_id;
 -- local_id for idempotent offline upserts)
@@ -97,6 +69,37 @@ drop policy if exists "ride_days_own_update" on public.ride_days;
 create policy "ride_days_own_update" on public.ride_days for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 revoke all on public.ride_days from anon, authenticated;
 grant select, insert, update on public.ride_days to authenticated;
+
+-- (Placed AFTER ride_days: this is a SQL-language function, so Postgres
+-- validates its body at CREATE time and the table it counts from must
+-- already exist. Creating it before ride_days failed on the dev branch.)
+-- Haversine match, plain SQL (no PostGIS). rider_count = distinct riders
+-- with a ride day at the track ("ridden by N others").
+create or replace function public.match_tracks(p_lat numeric, p_lng numeric, p_radius_m integer default 2000)
+returns table (id uuid, name text, distance_m integer, verified boolean, rider_count integer)
+language sql
+security invoker
+stable
+set search_path = public
+as $$
+  with d as (
+    select t.id, t.name, t.verified,
+      (2 * 6371000 * asin(sqrt(
+        power(sin(radians(t.lat - p_lat) / 2), 2) +
+        cos(radians(p_lat)) * cos(radians(t.lat)) *
+        power(sin(radians(t.lng - p_lng) / 2), 2)
+      )))::integer as distance_m
+    from public.tracks t
+  )
+  select d.id, d.name, d.distance_m, d.verified,
+    (select count(distinct r.user_id) from public.ride_days r where r.track_id = d.id)::integer as rider_count
+  from d
+  where d.distance_m <= p_radius_m
+  order by d.distance_m
+  limit 5;
+$$;
+revoke execute on function public.match_tracks(numeric, numeric, integer) from public, anon;
+grant execute on function public.match_tracks(numeric, numeric, integer) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- track_sessions: one row per logged moto (PROMPT §7): sentiment, symptoms

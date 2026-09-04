@@ -25,3 +25,12 @@ export const HOME_GARAGE_V3_ENABLED =
   process.env.EXPO_PUBLIC_HOME_GARAGE_V3 === undefined
     ? QUIZ_ONBOARDING_ENABLED
     : process.env.EXPO_PUBLIC_HOME_GARAGE_V3 === "1";
+
+/** True only in a development bundle. Metro inlines `__DEV__` as a literal
+ *  `false` in release builds, so any branch behind this is dead code there
+ *  (the minifier strips it); jest sets the global to false in
+ *  `__tests__/stubs/jest-setup.js`. Read at call time, not import time, so
+ *  tests can flip it. */
+export function isDevBuild(): boolean {
+  return typeof __DEV__ !== "undefined" && __DEV__ === true;
+}

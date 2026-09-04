@@ -47,3 +47,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Supabase preview-branch env (scripts/dev-branch.sh) and the prod backup it suggests
+.env.branch
+.env.prod

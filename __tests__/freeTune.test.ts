@@ -45,3 +45,28 @@ test("refund is a no-op unless the claim consumed a credit", async () => {
   await refundBaselineCredit(mapClaim({ ok: true, reason: "first_baseline" }));
   expect(rpc).toHaveBeenCalledWith("refund_free_tune");
 });
+
+test("DEV ONLY: a missing per-bike claim RPC fails open as a no-consume regenerate; never in a release build", async () => {
+  const UUID = "11111111-2222-4333-8444-555555555555";
+  const missing = {
+    data: null,
+    error: { code: "PGRST202", message: "Could not find the function public.claim_free_tune(p_bike_id) in the schema cache" },
+  };
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    rpc.mockResolvedValue(missing);
+    // release build (__DEV__ false, the jest default): fails closed
+    expect((await claimBaselineCredit(UUID)).reason).toBe("error");
+    (globalThis as any).__DEV__ = true;
+    expect(await claimBaselineCredit(UUID)).toMatchObject({ ok: true, reason: "regenerate", consumed: false, isPro: false });
+    expect(warn).toHaveBeenCalledTimes(1);
+    // any other failure still fails closed, even in dev
+    rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "permission denied for function claim_free_tune" } });
+    expect((await claimBaselineCredit(UUID)).reason).toBe("error");
+    rpc.mockResolvedValue({ data: { ok: false, reason: "no_trial" }, error: null });
+    expect((await claimBaselineCredit(UUID)).reason).toBe("no_trial");
+  } finally {
+    (globalThis as any).__DEV__ = false;
+    warn.mockRestore();
+  }
+});

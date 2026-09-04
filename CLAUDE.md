@@ -32,19 +32,21 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Setup-version lineage (v2 persistence) | `lib/setupVersions.ts`, `lib/refineFlow.ts` |
 | Per-model specs (sag bounds, spring check, fork type) | `lib/modelSpecs.ts`, `lib/sagBounds.ts` |
 | Symptom picker (post-ride debrief) | `app/tune-feedback.tsx` |
+| Tune tab (legacy input screen, stays for 3.0) | `app/(tabs)/tune.tsx`. RETIRED from it 2026-09-04: presets (link, param, banner, apply), the ride check-in card, and the "Use 1 free tune credit" label (free copy is "Update my baseline" / "Generate tune"; the server decides). No "modes" concept exists in its JSX |
 | Tune results | `app/tune-two-results.tsx` (baseline: `app/tune-results.tsx`) |
 | Post-ride check-in card | `components/OutcomeCheckinCard.tsx`, `lib/checkinLogic.ts` |
 | Ride-arm cards (Setup + Home) | `components/RideCheckinCard.tsx`, `lib/rideArmCard.ts` (per-version lifecycle: armed latch, 24h snooze, 14d window; Home slot mutually exclusive with check-in cards via `homeArmSlotVisible` + OutcomeCheckinCard's `onEligibility`) |
 | Local notifications | `lib/rideReminder.ts`, `lib/reminderArrival.ts`, `lib/trialReminder.ts`, `lib/guestRecovery.ts` (30h guest-abandon nudge — armed when a guest backgrounds off locked results, cancelled on any auth session; NEVER prompts for permission; analytics-dark until a `usage_events` CHECK migration adds `guest_recovery_*` types) |
-| Free baseline credit + Pro gate (3.0, 2026-09-04) | `lib/freeTune.ts` (`claimBaselineCredit(bikeId)` → `claim_free_tune(p_bike_id)`, migration `20260904140000` STAGED: one baseline per bike, `regenerate` NOT consumed / never refunded, no bike = legacy single credit; both new cases stamp `trial_claimed_at` so the UNCHANGED edge admits the request through its interim grace window), `lib/proGate.ts` + `components/v3/ProGateSheet.tsx` (imperative locked-row gate mounted once in the root layout; names the Pro action, offers "Update my baseline instead" → `/(tabs)/tune?bikeId&regenerate=1`; `createBaselineVersion({parentVersionId})` parents the regenerate onto the running version). All four Pro gates (refine, history, second setup, second bike) call `showProGate`, never `/premium` directly |
+| Conversion model (3.0, 2026-09-04; playbook compass_artifact_wf-8f89db56) | `lib/entitlement.ts` (client of `resolve_entitlement` / `start_reverse_trial`, migration `20260904150000` STAGED: `trial_active` → `free` → `pro`, usage-anchored reverse trial 3 ride days / 21 days, no card, downgrade never deletes; pro from the UNCHANGED RC webhook always wins; device cache), `lib/proGate.ts:gateIfLocked` (gate fires ONLY in free), `lib/placements.ts` (RC Placements `feature_gate_*` per trigger), `lib/gateCopy.ts` (name action + payoff + cost anchor), `app/pricing.tsx` (monthly anchor, annual default, lifetime after 3 ride days, config price), `components/home/TrialCards.tsx`, `lib/meterStall.ts`, `lib/remoteConfig.ts`, `lib/lifecycle.ts` + `supabase/functions/lifecycle-events` (Loops; NOT deployed; drafts in `docs/lifecycle-emails.md`), dashboards `20260904160000` (schema `analytics`) + `docs/analytics/conversion-dashboards.md` |
+| Free baseline credit + Pro gate (3.0, 2026-09-04) | `lib/freeTune.ts` (`claimBaselineCredit(bikeId)` → `claim_free_tune(p_bike_id)`, migration `20260904140000` STAGED: one baseline per bike, `regenerate` NOT consumed / never refunded, no bike = legacy single credit; both new cases stamp `trial_claimed_at` so the UNCHANGED edge admits the request through its interim grace window), `lib/proGate.ts` + `components/v3/ProGateSheet.tsx` (imperative locked-row gate mounted once in the root layout; names the Pro action, offers "Update my baseline instead" → `/(tabs)/tune?bikeId&regenerate=1`; `createBaselineVersion({parentVersionId})` parents the regenerate onto the running version). All four Pro gates (refine, history, second setup, second bike) call `showProGate`, never `/premium` directly. **Dev-only fail-open (2026-09-04):** against a project WITHOUT `20260904140000` (prod today) the per-bike signature is missing and PostgREST answers PGRST202, which killed the quiz reveal for signed-in riders ("Couldn't check your free tune"); `claimBaselineCredit` treats exactly that error as a no-consume regenerate when `isDevBuild()` (`lib/featureFlags.ts`, `__DEV__` = literal false in release bundles), logs a warning, and still fails closed on every other error |
 | Paywall position + triggers (3.0) | `lib/paywallPosition.ts` (remote flag: prod `app_config.paywall_position` > device cache > `EXPO_PUBLIC_PAYWALL_POSITION` > `action_gated`; migration `20260902110000` STAGED), `lib/paywall.ts` (`paywallHref(trigger, "back")` is the ONE way to open `/premium`; `paywall_trigger_action` on every paywall event), `lib/onboardingCompletion.ts` (the ONE completion sequence: paywall success in the interstitial world, signup in the action-gated one), `lib/usage.ts` stamps `paywall_position` on every paywall-related event |
 | Paywall / Pro / IAP | `app/premium.tsx`, `lib/purchases.ts`, `hooks/usePro.ts`, `supabase/functions/revenuecat-webhook` (`verify_jwt = false` — it's a public webhook; acks FK-23503 upsert failures with 200 so RC stops retrying deleted users) |
 | Account deletion | `supabase/functions/delete-account` (auth-user delete + avatar cleanup; DB rows cascade). The legacy typo slug `delete-acount` was RETIRED (deleted from prod) 2026-08-31 after zero invocations across the full log-retention window — `app/(tabs)/profile.tsx` still tries correct name then typo (fallback harmless: correct name succeeds first); drop the typo entry from its `names` array in a v2.5.x client pass |
-| Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
+| Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates), `lib/emailSignup.ts` (**the ONE email auth sequence**: signUp → already-registered recovery signIn → auto signIn, status result; `app/signup.tsx` and the quiz gate both call it, never reimplement it). **Under the quiz flag `app/signup.tsx` is a redirect** (pending tune → `/quiz/gate`, else `/quiz`; its blurred tease and `returnTo` retire with it): email sign-up happens INLINE on `app/quiz/gate.tsx`, and its recovered-account case goes through `completeAuthSuccess` (the legacy screen keeps its inline heal for the flag-off world). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
 | Quiz onboarding (3.0 first-run, flagged) | `lib/featureFlags.ts` (`EXPO_PUBLIC_QUIZ_ONBOARDING=1`), `lib/quizOnboarding.ts` (answers store, engine-input mappings, model classification/ordering, catalog search, `logQuizEvent`), `lib/quizContext.tsx` (provider + `useQuizStepView`), `lib/guestGarage.ts` (the guest bike store the garage sheet + signup migration already use), `components/quiz/*` (fixed Carbon palette, Barlow Condensed via `-google-fonts/barlow-condensed` runtime load, `useAnswerRhythm` = the one tap→hold→advance rhythm), `app/quiz/*` (one screen per question; `_layout` owns fonts + slide stack) |
 | Ride day (3.0, `feat/ride-day-flow` off the integration branch) | `lib/rideDay.ts` (on-disk session + idempotent outbox; pending deltas reuse `lib/currentSetup.ts` shapes; settle rule = ONE manual version at End ride), `lib/conditionsRules.ts` (deterministic conditions rule base, v1 text), `lib/rideAdjust.ts` (Adjust change set = Tune Two diff, reasons from engine notes; NO hardcoded symptom→adjuster mapping; two-change PRESENTATION cap), `lib/rideSymptoms.ts` (4 + More over the existing 11 engine ids; qualifiers = `where`), `lib/tracks.ts` (recent / nearby via `match_tracks` / new-track-here), `lib/rideEnd.ts`, `lib/rideLiveActivity.ts` (require-guarded no-op until native), `components/ride/*`, `app/ride/*` (start, track, conditions, today, mode, retune, log, adjust, end). Mockups: `design/mockups/ride/` |
-| Home + Garage v3 (3.0 core screens, flagged) | `lib/featureFlags.ts` (`HOME_GARAGE_V3_ENABLED`, follows the quiz flag when unset), `components/v3/*` (dialed.css tokens/primitives, Barlow Condensed headings + Inter 700 numbers via runtime `useFonts`), `components/home/*` + `lib/homeV3.ts` (Home view model; rides = `ride_feedback` rows), `components/garage/*` + `lib/garageV3.ts` + `lib/bikeSetups.ts` (named setups, default = `setup_id` null), `app/garage-bike.tsx` / `app/setup-sheet.tsx` / `app/setup-story.tsx`, pure logic in `lib/dialedMeter.ts`, `lib/homeCopy.ts`, `lib/setupStory.ts`, `lib/rideRules.ts`, `lib/adjusterCopy.ts`; local-first stores `lib/bikeExtras.ts`, `lib/seasonGoals.ts`, `lib/nextRide.ts`, `lib/bikePhoto.ts`. Mockups: `design/mockups/` (visual source of truth) |
+| Home + Garage v3 (3.0 core screens, flagged) | (2026-09-04 round 2: Garage ALWAYS opens to the list; the Tune tab slot leaves the bar under the flag and the flow is reached via Garage doors: Add a bike, New setup (Pro, `setupId` → `setup_versions.setup_id`), Update my baseline (`regenerate=1`), New tune; Home day-one CTA opens `/setup-sheet` and marks First Steps step 2 via `lib/firstSteps.ts`; `expo-sharing` is loaded lazily in `components/ShareSetupCard.tsx`, Share hides when absent) | `lib/featureFlags.ts` (`HOME_GARAGE_V3_ENABLED`, follows the quiz flag when unset), `components/v3/*` (dialed.css tokens/primitives, Barlow Condensed headings + Inter 700 numbers via runtime `useFonts`), `components/home/*` + `lib/homeV3.ts` (Home view model; rides = `ride_feedback` rows), `components/garage/*` + `lib/garageV3.ts` + `lib/bikeSetups.ts` (named setups, default = `setup_id` null), `app/garage-bike.tsx` / `app/setup-sheet.tsx` / `app/setup-story.tsx`, pure logic in `lib/dialedMeter.ts`, `lib/homeCopy.ts`, `lib/setupStory.ts`, `lib/rideRules.ts`, `lib/adjusterCopy.ts`; local-first stores `lib/bikeExtras.ts`, `lib/seasonGoals.ts`, `lib/nextRide.ts`, `lib/bikePhoto.ts`. Mockups: `design/mockups/` (visual source of truth) |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
 | Analytics | `lib/usage.ts` (`logEvent`, `UsageEvent` union) |
 | Legacy sessions | `lib/sessions.ts` + many screens (see Data model) |
@@ -213,6 +215,28 @@ candidate in a 2h window).
   shape from the linked project, don't infer it from code. *(Pre-`20260714`
   migrations are assumed applied to prod from commit history; not verified
   against the live DB.)*
+- **Supabase preview branch `dev-3-0` (created 2026-09-04, org on Pro):**
+  ref `rxbagshvbavrqtirprdz`, persistent, cloned WITH prod data (auth users,
+  bikes, setup_versions, bike_models, migration history). ALL nine staged
+  3.0 migrations (`20260902100000`..`20260904160000`) are APPLIED THERE
+  (33 total), `ai-tune` deployed from the repo (v28). `scripts/dev-branch.sh`
+  is idempotent and refuses prod. Connection rules learned the hard way:
+  the API-supplied branch password does not authenticate (a branch-scoped
+  Management API reset was done; the password lives ONLY in
+  `~/.supabase/dialed-dev-3-0-db-password`, mode 600, or `BRANCH_DB_PASSWORD`);
+  `db push` MUST use the SESSION pooler (`aws-0-us-west-1.pooler.supabase.com:5432`,
+  user `postgres.<ref>`): the transaction pooler on 6543 fails with
+  `prepared statement ... already exists`, and the direct host is IPv6-only.
+  Branch has NO `OPENAI_API_KEY` (set it in the branch project's dashboard
+  before a reveal test). `.env.branch` (gitignored) holds the branch URL and
+  anon key; its header has the one-line swap into `.env`. Enabling branching
+  also created a default "main" branch whose ref IS prod: never target it.
+  `supabase/.temp/*` is TRACKED in git (pooler-url holds only the
+  `[YOUR-PASSWORD]` placeholder); never write a real secret there.
+  Migration-order bug found by the branch push: `20260904120000` created
+  the SQL-language `match_tracks` before `ride_days` (validated at CREATE
+  time); the function now sits after the table. Migrations apply one
+  transaction each (four committed before the failing file, five after).
 - **Edge function deploy (observed workflow, not repo-documented):**
   `supabase functions deploy <name> --use-api` (no Docker). Confirm before use.
 
@@ -226,6 +250,14 @@ candidate in a 2h window).
   `shock.lsc_clicks/hsc_turns/reb_clicks/sag_mm`) ↔ `setup_versions` columns ↔
   `settings_delta` keys
   (`fork_comp/fork_reb/fork_air/shock_lsc/shock_hsc/shock_reb/shock_sag`).
+- **The engine's `fork.air_pressure_bar` is FINAL and is what `setup_versions` stores.**
+  It already carries the rider-weight adjustment (`defaultGuardrails`:
+  10.6 bar at 185 lb, 0.2 bar per 10 lb). Display code must show the saved
+  value verbatim; the weight estimate exists ONLY for rows with no air
+  value. `deriveAirBar` in `app/tune-results.tsx` and `app/tune-two-results.tsx`
+  re-applied the delta on top of the engine value until 2026-09-04 (reveal
+  10.2, legacy results 9.80 for the same tune). Every screen reads the
+  saved version; none re-derives.
 - **Engine output is frozen by a byte-identical v1 regression test.** Clamps:
   ±4 clicks/step, ±0.5 hsc turns, ±0.3 air bar; severities 1–10. Don't change
   engine math or note wording without updating the tests.
@@ -302,6 +334,13 @@ candidate in a 2h window).
   + paywall 3 = 65) then `20260904110000` (65 + Home/Garage 6 = 71). Never
   add a third re-add without carrying the full list — `20260904130000`
   (ride day) is the current superset at 83.
+- **Three different "trials" coexist:** the shipped onboarding `trial` step
+  (paywall shown/declined, interstitial world; untouched), RevenueCat's store
+  intro trial (`lib/trialStatus.ts`, legacy Home cards), and the 3.0
+  usage-anchored reverse trial (`profiles.entitlement_state`). Gates must
+  use `lib/entitlement.ts` (`isEntitled`), never `deriveIsPro` alone. Store
+  intro trials must be removed from the RC offering before "one tap to
+  purchase" is true (dashboard work).
 - **`claim_free_tune()` (zero-arg) is DROPPED by staged `20260904140000`;** the
   defaulted `claim_free_tune(p_bike_id uuid default null)` replaces it, so
   old clients' `rpc("claim_free_tune")` still resolves. `ai-tune`'s
@@ -529,6 +568,25 @@ that change none of those skip it.)*
   suites cover each hop, not the live RPC); on-device visual pass of the
   locked-screen LoopPreview (~200pt budget) and the post-reveal hook, plus
   the hook's reminder arming end-to-end.
+
+- **`hotfix/v2.4.1-air-display` (cut 2026-09-04 off `main` = `6dab399`; worktree
+  `../dialed-offroad-hotfix`):** ONE commit, the fork-air display fix only
+  (`lib/airDisplay.ts:displayAirBar` replaces the local `deriveAirBar` in
+  `app/tune-results.tsx` + `app/tune-two-results.tsx`, test
+  `__tests__/airDisplay.test.ts`), then `35e12be` (one-time
+  `components/AirDisplayNotice.tsx` on both results screens, air-fork tunes
+  only, latch `air_display_notice_v241_seen`), `58c00e1` (STAGED migration
+  `20260905100000_ride_feedback_suspect_flags.sql`: `ride_feedback.suspect_flags
+  text[]` + GIN index + `air_display_v241` backfill; mirrored on
+  `feat/v3-integration`; applied to dev-3-0, 39/138 flagged; prod push only on
+  explicit go-ahead), `786671e` (version 2.4.1). Nothing else merges into it.
+  Release artifacts in `~/Downloads/dialed-2.4.1-*` (expedited review text,
+  release notes, air-notice email + recipients CSV, 102 rows / 95 emails). Prod impact (read-only,
+  2026-09-04): since output capture began 2026-08-07, 192 of 768 tune calls
+  were air-fork (25%); of the 184 with a weight, display-vs-saved gap p50
+  0.51 bar, p90 1.38, max 2.70, 83% off by ≥0.1 bar. The same fix is
+  applied on `feat/v3-integration` inline (no shared helper there yet;
+  reconcile to `lib/airDisplay.ts` when the hotfix merges back to main).
 
 - **`feat/quiz-onboarding` (3.0 first-run, cut 2026-09-02 off `release/v2.4.0`
   = `6dab399`; `main` still at `e7fbb34`, NOT yet fast-forwarded to v2.4.0 —
