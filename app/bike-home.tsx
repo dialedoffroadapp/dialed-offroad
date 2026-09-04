@@ -270,6 +270,27 @@ export default function BikeHomeScreen() {
                 </Pressable>
               </View>
 
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: "/current-setup",
+                    params: { bikeId: String(bikeId) },
+                  } as any)
+                }
+                style={S.historyRow}
+              >
+                <Ionicons name="speedometer-outline" size={17} color={C.TEXT} />
+                <Text style={S.historyRowText}>Current Setup</Text>
+                <View style={{ flex: 1 }} />
+                <Text style={S.historyRowCount}>offline ready</Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={15}
+                  color={C.MUTED}
+                  style={{ marginLeft: 4 }}
+                />
+              </Pressable>
+
               <Pressable onPress={onHistory} style={S.historyRow}>
                 <Ionicons name="time-outline" size={17} color={C.TEXT} />
                 <Text style={S.historyRowText}>Setup history</Text>
