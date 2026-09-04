@@ -17,6 +17,7 @@ import { interFont, useV3Fonts, V3 } from "../components/v3/theme";
 import { runningSetup, type SetupWithVersions } from "../lib/bikeSetups";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../lib/garageV3";
 import { shortDate } from "../lib/homeCopy";
+import { paywallHref } from "../lib/paywall";
 import { hasPurchasedThisSession } from "../lib/purchases";
 import { deltaChangeLine, outcomeWord } from "../lib/setupStory";
 import { createRestoreVersion, type VersionWithFeedback } from "../lib/setupVersions";
@@ -42,7 +43,7 @@ export default function SetupStoryScreen() {
     if (!userId) return router.replace("/login" as never);
     if (!isPro && !hasPurchasedThisSession()) {
       void logEvent("history_gate_hit", { bike_id: id, source: "story_direct" });
-      router.replace("/premium?source=history_gate" as never);
+      router.replace(paywallHref("setup_history", "back") as never);
       return;
     }
     const bike = (await loadBikes(userId)).find((b) => b.id === id);

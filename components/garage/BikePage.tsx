@@ -20,6 +20,7 @@ import { createNamedSetup, runningSetup } from "../../lib/bikeSetups";
 import { meterCaption } from "../../lib/dialedMeter";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../../lib/garageV3";
 import { shortDate } from "../../lib/homeCopy";
+import { paywallHref } from "../../lib/paywall";
 import { logEvent } from "../../lib/usage";
 
 export const SETUP_SHEET_ROUTE = "/setup-sheet";
@@ -81,10 +82,10 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   const title = [bike.year, bike.model].filter(Boolean).join(" ") || bike.nickname || "Your bike";
   const bikeTitle = [bike.year, bike.make, bike.model].filter(Boolean).join(" ");
 
-  const gatePro = (source: string): boolean => {
+  const gatePro = (source: string, trigger: "setup_history" | "second_setup" = "setup_history"): boolean => {
     if (isPro) return true;
-    void logEvent("history_gate_hit", { bike_id: bike.id, version_count: versions.length, source });
-    router.push("/premium?source=history_gate" as never);
+    void logEvent("history_gate_hit", { bike_id: bike.id, version_count: versions.length, source, paywall_trigger_action: trigger });
+    router.push(paywallHref(trigger, "back") as never);
     return false;
   };
 
@@ -165,13 +166,13 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
               badge={s.isRunning ? "running" : undefined}
               locked={locked}
               onPress={() => {
-                if (locked && !gatePro("named_setup")) return;
+                if (locked && !gatePro("named_setup", "second_setup")) return;
                 router.push({ pathname: SETUP_SHEET_ROUTE, params: { bikeId: bike.id, setupId: s.id ?? "default" } } as never);
               }}
             />
           );
         })}
-        <Card variant="dashed" style={{ paddingVertical: 12, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6 }} onPress={() => gatePro("second_setup") && setNewOpen(true)} accessibilityLabel="New setup, Pro">
+        <Card variant="dashed" style={{ paddingVertical: 12, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6 }} onPress={() => gatePro("second_setup", "second_setup") && setNewOpen(true)} accessibilityLabel="New setup, Pro">
           <Ionicons name="add" size={16} color={V3.blue} />
           <Small style={{ fontSize: 13 }}>New setup</Small>
           {!isPro ? <Ionicons name="lock-closed" size={12} color={V3.steel} /> : null}

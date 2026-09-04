@@ -20,6 +20,7 @@ import { dayOneEyebrow, daysBetween, homeEyebrow, homeHeadline, seasonYear, setu
 import { useHomeV3 } from "../../lib/homeV3";
 import { dateToIso, saveNextRideDate } from "../../lib/nextRide";
 import { saveSeasonGoal, clearSeasonGoal } from "../../lib/seasonGoals";
+import { paywallHref } from "../../lib/paywall";
 import { logEvent } from "../../lib/usage";
 
 // Until the ride-mode workstream lands, Start riding routes to the shipped
@@ -90,7 +91,7 @@ export function HomeV3() {
     if (data.isPro) router.push({ pathname: STORY_ROUTE, params: { bikeId: data.bike.id } } as never);
     else {
       void logEvent("history_gate_hit", { bike_id: data.bike.id, version_count: data.versions.length, source: "home_story" });
-      router.push("/premium?source=history_gate" as never);
+      router.push(paywallHref("setup_history", "back") as never);
     }
   };
 

@@ -1,18 +1,20 @@
 -- Add the Home + Garage v3 event types to the usage_events event_type CHECK
--- constraint (feat/home-garage-v3, design/mockups/PROMPT.md DATA section).
+-- constraint. CONSOLIDATED on feat/v3-integration (2026-09-04): this re-add
+-- is the SUPERSET of 20260902100000 (quiz onboarding: 8 quiz types + 3
+-- paywall types) plus the six Home/Garage types, so the staged 3.0 migration
+-- set applies in order without ever narrowing the constraint:
+--   20260902100000  live 54 + quiz 8 + paywall 3          = 65
+--   20260902110000  app_config (paywall_position)          (different table)
+--   20260904100000  Home/Garage schema                     (different tables)
+--   20260904110000  this file: 65 + home/garage 6          = 71
 --
 -- STAGED, NOT PUSHED. List provenance: the LIVE prod constraint via
--- pg_get_constraintdef on 2026-09-04 (54 types) + these six.
+-- pg_get_constraintdef on 2026-09-04 (54 types), then the two branches'
+-- additions in commit order. Push only from feat/v3-integration (superset of
+-- prod through 20260807150000).
 --
--- ⚠️ ASSEMBLY RULE: feat/quiz-onboarding also stages a drop/re-add of this
--- constraint (20260902100000: +8 quiz types, +3 paywall types). Whichever
--- lands SECOND must carry the other's additions or it narrows the
--- constraint back — at release assembly, fold both lists into ONE re-add
--- (the WS-D precedent, 20260727100000) before pushing either. Home/Garage
--- events are logged signed-in only (no pre-auth queue), so unlike the quiz
--- there is no queue-poison hazard — just silently dropped rows until it lands.
---
--- Event semantics:
+-- Event semantics (Home/Garage; the quiz/paywall ones are documented in
+-- 20260902100000):
 --   home_module_viewed   {module, state}      once per module per Home focus
 --   goal_set             {type, target}       season goal saved
 --   next_ride_set        {days_out}           next ride date saved (no notification)
@@ -80,6 +82,17 @@ alter table public.usage_events
     'oauth_failed',
     'loop_preview_shown',
     'hook_ride_armed',
+    'quiz_step_viewed',
+    'quiz_step_answered',
+    'quiz_abandoned',
+    'quiz_gate_viewed',
+    'quiz_signin_method_chosen',
+    'quiz_reveal_viewed',
+    'quiz_freetext_expanded',
+    'quiz_freetext_filled',
+    'paywall_shown',
+    'paywall_dismissed',
+    'paywall_purchased',
     'home_module_viewed',
     'goal_set',
     'next_ride_set',

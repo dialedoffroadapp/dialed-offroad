@@ -295,10 +295,10 @@ candidate in a 2h window).
   `action_gated` on this branch); nothing breaks, the remote read fails open.
   Push it before the 3.0 store build. Both staged migrations must go from a
   superset branch.
-- **Two branches each stage a drop/re-add of `usage_events_event_type_check`**
-  (`feat/quiz-onboarding` `20260902100000`, `feat/home-garage-v3`
-  `20260904110000`). Whichever pushes second narrows the constraint back —
-  fold both lists into ONE re-add at assembly before pushing either.
+- **Staged 3.0 events CHECK re-adds are a coherent ordered set (consolidated
+  2026-09-04 on `feat/v3-integration`):** `20260902100000` (live 54 + quiz 8
+  + paywall 3 = 65) then `20260904110000` (65 + Home/Garage 6 = 71). Never
+  add a third re-add without carrying the full 71.
 - **`bike_models.fork_comp_max` etc. are seed defaults (30 on all 116 rows),
   not data.** Never treat them as "known"; the v3 setup sheet renders a
   range bar only when `click_range_verified` is true.
@@ -567,6 +567,22 @@ that change none of those skip it.)*
   fail-open in its own query with a device cache, so the screens run before
   the push. `lib/featureFlags.ts` and `package.json` are add/add conflicts
   with the quiz branch at merge (identical quiz flag; union the rest).
+
+- **`feat/v3-integration` is THE 3.0 integration branch (cut 2026-09-04 off
+  `main` = `6dab399`, right after `main` fast-forwarded to `release/v2.4.0`
+  and was pushed).** Merged `--no-ff` in dependency order:
+  `feat/ride-day-current-setup` (`724b808`), `feat/quiz-onboarding`
+  (clean), `feat/home-garage-v3` (`cd64db3`; conflicts resolved keep-both in
+  `.env.example`, both tab files' imports, `lib/usage.ts` union, CLAUDE.md,
+  `package.json`; `lib/featureFlags.ts` took the home-garage superset;
+  lockfile regenerated). Then the consolidation commit: events CHECK
+  superset (above), v3 Garage/Home gates routed through `paywallHref`
+  triggers (`setup_history` / `second_setup` / `second_bike`), flag-default
+  test. Staged 3.0 migrations, in order, NONE pushed: `20260902100000`,
+  `20260902110000`, `20260904100000`, `20260904110000`. From here all 3.0
+  work happens on this branch (or short-lived branches off it); `main` moves
+  only for v2.4.x hotfixes. The three feature branches were deleted locally
+  after the push (their history lives in the merge commits).
 
 ## Sprint focus (in order)
 
