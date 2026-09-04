@@ -132,7 +132,7 @@ export default function TuneTwoResultScreen() {
 
   // Share card: latest version number for this bike (the refinement that was
   // just created by the feedback screen's shadow write). Fail-soft.
-  const { shareView, share } = useShareSetup();
+  const { shareView, share, available: canShare } = useShareSetup();
   const [latestVersionNumber, setLatestVersionNumber] = useState<number | null>(null);
 
   useEffect(() => {
@@ -593,9 +593,11 @@ export default function TuneTwoResultScreen() {
           <Ionicons name="chevron-back-outline" size={24} color={C.TEXT} />
         </Pressable>
         <Text style={S.compactHeaderTitle}>Refined Setup</Text>
-        <Pressable onPress={onShare} hitSlop={8} style={S.headerIconBtn}>
-          <Ionicons name="share-outline" size={21} color={C.TEXT} />
-        </Pressable>
+        {canShare ? (
+          <Pressable onPress={onShare} hitSlop={8} style={S.headerIconBtn}>
+            <Ionicons name="share-outline" size={21} color={C.TEXT} />
+          </Pressable>
+        ) : null}
       </View>
 
       {shareView}
@@ -940,6 +942,13 @@ function deriveAirBar(res: ZeroTuneResult, rider?: number) {
     typeof res.fork.air_pressure_bar === "number"
       ? res.fork.air_pressure_bar
       : 10.6;
+
+  // The engine's air value is FINAL (already weight-adjusted, and exactly
+  // what setup_versions stores). The weight estimate applies ONLY when a
+  // result carries no air value (see app/tune-results.tsx, 2026-09-04).
+  if (typeof res.fork.air_pressure_bar === "number") {
+    return clamp(Number(aiBaseline.toFixed(2)), 7, 14);
+  }
 
   if (!Number.isFinite(Number(rider))) {
     return clamp(Number(aiBaseline.toFixed(2)), 7, 14);

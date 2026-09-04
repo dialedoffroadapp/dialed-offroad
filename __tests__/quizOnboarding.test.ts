@@ -28,6 +28,7 @@ import {
   engineSkillForQuizSkill,
   engineStyleForDiscipline,
   filterModels,
+  crossBrandModelHits,
   groupModelsForDiscipline,
   orderModelsForDiscipline,
   parseQuizAnswers,
@@ -231,27 +232,46 @@ describe("model classification across the whole catalog", () => {
     expect(classifyModel("Stark", "Varg EX")).toBe("offroad");
   });
 
-  test("MX discipline lists track bikes first, minis last, catalog order kept", () => {
+  test("MX discipline ORDERS track bikes first; every model stays listed", () => {
     const ordered = orderModelsForDiscipline("KTM", "mx");
     expect(ordered[0]).toBe("125 SX");
-    expect(ordered.slice(-4)).toEqual(["50 SX", "65 SX", "85 SX", "85 SX Big Wheel"]);
     expect(ordered).toHaveLength(BIKE_CATALOG.KTM.length);
     expect(new Set(ordered)).toEqual(new Set(BIKE_CATALOG.KTM));
     const groups = groupModelsForDiscipline("KTM", "mx");
-    expect(groups.map((g) => g.key)).toEqual(["mx", "offroad", "mini"]);
-    expect(groups[0].label).toBe("Track bikes");
+    expect(groups.map((g) => g.key)).toEqual(["matched", "all"]);
+    expect(groups[0].label).toBe("Track bikes first");
+    expect(groups[0].models.every((m) => classifyModel("KTM", m) === "mx")).toBe(true);
+    expect(groups[1].label).toBe("All KTM models");
+    expect(groups[1].models).toEqual(BIKE_CATALOG.KTM.filter((m) => classifyModel("KTM", m) !== "mx"));
   });
 
-  test("off-road discipline lists off-road bikes first", () => {
+  test("off-road discipline lists trail bikes first, then the rest", () => {
     const groups = groupModelsForDiscipline("Yamaha", "offroad");
-    expect(groups.map((g) => g.key)).toEqual(["offroad", "mx", "mini"]);
+    expect(groups.map((g) => g.key)).toEqual(["matched", "all"]);
+    expect(groups[0].label).toBe("Trail bikes first");
     expect(groups[0].models[0]).toBe("YZ125X");
+    expect(groups.flatMap((g) => g.models)).toHaveLength(BIKE_CATALOG.Yamaha.length);
     expect(orderModelsForDiscipline("Honda", "offroad")[0]).toBe("CRF250RX");
+  });
+
+  test("a brand with no match for the discipline is never hidden: one 'All' section", () => {
+    const groups = groupModelsForDiscipline("Beta", "mx");
+    expect(groups.map((g) => g.key)).toEqual(["all"]);
+    expect(groups[0].label).toBe("All Beta models");
+    expect(groups[0].models).toEqual([...BIKE_CATALOG.Beta]);
   });
 
   test("unknown make → empty list, null discipline defaults to MX ordering", () => {
     expect(orderModelsForDiscipline("Fantic", "mx")).toEqual([]);
     expect(orderModelsForDiscipline("KTM", null)[0]).toBe("125 SX");
+  });
+
+  test("model search covers the full catalog: other-brand hits, own brand excluded", () => {
+    const hits = crossBrandModelHits("KTM", "yz250f");
+    expect(hits[0]).toEqual({ make: "Yamaha", model: "YZ250F" });
+    expect(hits.some((h) => h.make === "KTM")).toBe(false);
+    expect(crossBrandModelHits("KTM", "   ")).toEqual([]);
+    expect(crossBrandModelHits(null, "crf450r").some((h) => h.make === "Honda")).toBe(true);
   });
 });
 

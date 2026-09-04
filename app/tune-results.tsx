@@ -971,6 +971,7 @@ export default function TuneResultScreen() {
             // Regenerated baseline (free rule): replaces the running one on
             // the lineage; rows stay immutable, free UI shows current only.
             parentVersionId: metaObj?.regenerate && latest ? (latest as any).id : null,
+            setupId: typeof metaObj?.setupId === "string" ? metaObj.setupId : null,
             terrain: Array.isArray(metaObj?.context?.terrain)
               ? metaObj.context.terrain[0] ?? null
               : metaObj?.context?.terrain ?? null,
@@ -1058,6 +1059,7 @@ export default function TuneResultScreen() {
           bikeId,
           tune: result,
           parentVersionId: metaObj?.regenerate && latest ? (latest as any).id : null,
+          setupId: typeof metaObj?.setupId === "string" ? metaObj.setupId : null,
           terrain: Array.isArray(metaObj?.context?.terrain)
             ? metaObj.context.terrain[0] ?? null
             : metaObj?.context?.terrain ?? null,
@@ -1954,13 +1956,21 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+// The engine's air value is FINAL: it already applied the rider-weight
+// adjustment (guardrails aer_pressure_bar_default 10.6 at 185 lb, 0.2 bar per
+// 10 lb, lib/ai.ts defaultGuardrails), and it is exactly what setup_versions
+// stores. Re-applying the weight delta here double-adjusted every air fork
+// (found 2026-09-04: engine 10.2 for 165 lb, this screen 9.80). The weight
+// estimate now runs ONLY when a result carries no air value at all (legacy
+// rows), so this screen displays the saved number, never a re-derived one.
 function deriveAirBar(res: ZeroTuneResult, rider?: number) {
-  const aiBaseline = typeof res.fork.air_pressure_bar === "number" ? res.fork.air_pressure_bar : 10.6;
-
+  if (typeof res.fork.air_pressure_bar === "number") {
+    return clamp(Number(res.fork.air_pressure_bar.toFixed(2)), 7, 14);
+  }
+  const aiBaseline = 10.6;
   if (!Number.isFinite(Number(rider))) {
     return clamp(Number(aiBaseline.toFixed(2)), 7, 14);
   }
-
   const w = Number(rider);
   const est = aiBaseline + 0.2 * ((w - 185) / 10);
   return clamp(Number(est.toFixed(2)), 7, 14);

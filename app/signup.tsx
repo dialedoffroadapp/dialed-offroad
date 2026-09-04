@@ -21,6 +21,7 @@ import {
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
 import { completeAuthSuccess } from "../lib/authSuccess";
+import { signUpWithEmail } from "../lib/emailSignup";
 import { QUIZ_ONBOARDING_ENABLED } from "../lib/featureFlags";
 import { completeOnboardingSequence } from "../lib/onboardingCompletion";
 import { isActionGatedPaywall } from "../lib/paywallPosition";
@@ -203,115 +204,90 @@ function SignupInner() {
 
     setLoadingUp(true);
     try {
-      // 1) Create the account
-      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: password.trim(),
-      });
+      // Auth calls (create → already-registered recovery → auto sign-in)
+      // live in lib/emailSignup.ts, shared with the quiz gate's inline form.
+      // This screen keeps its own routing per status.
+      const result = await signUpWithEmail(email, password);
 
-      // If the user already exists (half-created state from a prior failed attempt),
-      // try to sign them in and create the missing profile instead of dead-ending.
-      if (signUpErr) {
-        const isAlreadyRegistered =
-          signUpErr.message?.toLowerCase().includes("already registered") ||
-          signUpErr.message?.toLowerCase().includes("already been registered") ||
-          signUpErr.message?.toLowerCase().includes("user already exists");
-
-        if (isAlreadyRegistered) {
-          // Attempt to recover: sign in with these credentials
-          const { data: recoveryData, error: recoveryErr } =
-            await supabase.auth.signInWithPassword({
-              email: email.trim(),
-              password: password.trim(),
-            });
-
-          if (recoveryErr) {
-            // Credentials don't match the existing account — send to login
-            toast.show("An account with this email already exists. Please sign in.", { kind: "info" });
-            setLoadingUp(false);
-            router.replace({ pathname: "/login", params: { email: email.trim() } } as never);
-            return;
-          }
-
-          // Signed in successfully — ensure the profile row exists (it may be missing)
-          // is_pro is intentionally NOT in the payload: it's server-only
-          // (webhook/service role) since 20260710170000, and including it
-          // would fail the whole upsert on column grants.
-          //
-          // Write the user's ACTUAL local funnel position. The old default of
-          // "complete" for every non-signup step let a mid-funnel re-signup
-          // (e.g. results_locked) skip the paywall once the onboarding
-          // columns began persisting (20260710200000). "signup" maps to
-          // "trial" (the account now exists); "intro" carries no funnel info
-          // — a fresh install recovering an old account — so only the row's
-          // existence is ensured, never a step downgrade.
-          if (recoveryData?.user?.id) {
-            const local = state.onboardingStep;
-            const payload: Record<string, unknown> = {
-              user_id: recoveryData.user.id,
-            };
-            if (local !== "intro") {
-              const resolvedStep =
-                local === "signup"
-                  ? isActionGatedPaywall()
-                    ? "complete"
-                    : "trial"
-                  : local;
-              payload.onboarding_step = resolvedStep;
-              payload.onboarding_complete = resolvedStep === "complete";
-            }
-            await supabase.from("profiles").upsert(payload, {
-              onConflict: "user_id",
-              ignoreDuplicates: false,
-            });
-          }
-
-          toast.show("Welcome back! Signed in ✅", { kind: "success" });
-          // This recovered sign-in bypasses completeAuthSuccess (inline heal
-          // + custom routing), so it claims pre-auth tune_calls directly —
-          // the gap WS-C flagged: without this, a guest who tunes, hits
-          // "already registered", and recovers into their account never
-          // attributes their pre-auth rows.
-          await claimAnonTuneCalls();
-          await logEvent("sign_in");
-
-          if (state.onboardingStep === "signup") {
-            await markAccountCreated();
-            if (isActionGatedPaywall()) {
-              // Reveal-first world (lib/paywallPosition.ts): complete now,
-              // paywall on the first Pro action — mirrors completeAuthSuccess.
-              const done = await completeOnboardingSequence({
-                completeOnboarding,
-                onboardingStep: "signup",
-                accountCreated: true,
-                trialStarted: state.trialStarted,
-                ageMinutesSinceLastStep,
-                sourceRoute: "/signup",
-                viaPaywall: false,
-                returnTo: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
-                extraMeta: { signup_method: "email", recovered: true },
-              });
-              router.replace(done.target as never);
-            } else {
-              await setStep("trial");
-              router.replace("/premium");
-            }
-          } else {
-            router.replace("/(tabs)");
-          }
-          return;
-        }
-
-        // Some other signup error (network, etc.) — surface it
-        throw signUpErr;
+      if (result.status === "exists_wrong_password") {
+        // Credentials don't match the existing account — send to login
+        toast.show("An account with this email already exists. Please sign in.", { kind: "info" });
+        setLoadingUp(false);
+        router.replace({ pathname: "/login", params: { email: email.trim() } } as never);
+        return;
       }
 
-      // 2) Immediately sign them in (no email verification required for now)
-      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: password.trim(),
-      });
-      if (signInErr) {
+      if (result.status === "recovered") {
+        // Signed in successfully — ensure the profile row exists (it may be missing)
+        // is_pro is intentionally NOT in the payload: it's server-only
+        // (webhook/service role) since 20260710170000, and including it
+        // would fail the whole upsert on column grants.
+        //
+        // Write the user's ACTUAL local funnel position. The old default of
+        // "complete" for every non-signup step let a mid-funnel re-signup
+        // (e.g. results_locked) skip the paywall once the onboarding
+        // columns began persisting (20260710200000). "signup" maps to
+        // "trial" (the account now exists); "intro" carries no funnel info
+        // — a fresh install recovering an old account — so only the row's
+        // existence is ensured, never a step downgrade.
+        if (result.userId) {
+          const local = state.onboardingStep;
+          const payload: Record<string, unknown> = {
+            user_id: result.userId,
+          };
+          if (local !== "intro") {
+            const resolvedStep =
+              local === "signup"
+                ? isActionGatedPaywall()
+                  ? "complete"
+                  : "trial"
+                : local;
+            payload.onboarding_step = resolvedStep;
+            payload.onboarding_complete = resolvedStep === "complete";
+          }
+          await supabase.from("profiles").upsert(payload, {
+            onConflict: "user_id",
+            ignoreDuplicates: false,
+          });
+        }
+
+        toast.show("Welcome back! Signed in ✅", { kind: "success" });
+        // This recovered sign-in bypasses completeAuthSuccess (inline heal
+        // + custom routing), so it claims pre-auth tune_calls directly —
+        // the gap WS-C flagged: without this, a guest who tunes, hits
+        // "already registered", and recovers into their account never
+        // attributes their pre-auth rows.
+        await claimAnonTuneCalls();
+        await logEvent("sign_in");
+
+        if (state.onboardingStep === "signup") {
+          await markAccountCreated();
+          if (isActionGatedPaywall()) {
+            // Reveal-first world (lib/paywallPosition.ts): complete now,
+            // paywall on the first Pro action — mirrors completeAuthSuccess.
+            const done = await completeOnboardingSequence({
+              completeOnboarding,
+              onboardingStep: "signup",
+              accountCreated: true,
+              trialStarted: state.trialStarted,
+              ageMinutesSinceLastStep,
+              sourceRoute: "/signup",
+              viaPaywall: false,
+              returnTo: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
+              extraMeta: { signup_method: "email", recovered: true },
+            });
+            router.replace(done.target as never);
+          } else {
+            await setStep("trial");
+            router.replace("/premium");
+          }
+        } else {
+          router.replace("/(tabs)");
+        }
+        return;
+      }
+
+      if (result.status === "created_signin_failed") {
         // Account was created but auto-login failed — send them to login with
         // email pre-filled. Record accountCreated first so the results CTA
         // routes this user to /login (not /signup) from here on.
@@ -322,21 +298,16 @@ function SignupInner() {
         return;
       }
 
+      // Some other signup error (network, etc.) — surface it
+      if (result.status === "error") throw new Error(result.message);
+
       // 3+) Shared post-auth sequence (lib/authSuccess.ts): profile upsert w/
       //     retries, guest-bike migration + remap, sign_up/sign_in + funnel
       //     events, onboarding advance, routing. Apple/Google sign-in call the
       //     SAME function — keep provider-specific logic out of it.
-      //
-      // Enumeration protection (email confirmation disabled) can make signUp()
-      // return no error for an EXISTING email, with an empty identities[]. That
-      // is a sign-in, not a new account — so sign_up only fires when identities
-      // is non-empty (genuinely new); otherwise log sign_in.
-      const isNewAccount =
-        !Array.isArray(signUpData?.user?.identities) ||
-        (signUpData?.user?.identities?.length ?? 0) > 0;
       await completeAuthSuccess({
-        userId: signInData?.user?.id ?? null,
-        isNewAccount,
+        userId: result.userId,
+        isNewAccount: result.isNewAccount,
         method: "email",
         onboardingStep: state.onboardingStep,
         onboardingComplete: state.onboardingComplete,
@@ -705,11 +676,32 @@ function SignupInner() {
 }
 
 export default function SignupScreen() {
+  // 3.0 (quiz flag on): account creation lives on the quiz gate, inline
+  // email included. This screen and its blurred tease are RETIRED there: a
+  // pending tune goes to the gate, anything else starts the quiz. The
+  // returnTo param is dropped on purpose; the reveal is the destination.
+  if (QUIZ_ONBOARDING_ENABLED) return <QuizSignupRedirect />;
   return (
     <ToastProvider>
       <SignupInner />
     </ToastProvider>
   );
+}
+
+function QuizSignupRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const { tune } = await readPendingTune();
+      if (!alive) return;
+      router.replace((tune ? "/quiz/gate" : "/quiz") as never);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [router]);
+  return <View style={{ flex: 1, backgroundColor: "#0B0C10" }} />;
 }
 
 const makeStyles = (C: ThemeTokens) =>

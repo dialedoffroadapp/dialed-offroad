@@ -28,6 +28,7 @@ import { useOnboarding } from "../../lib/onboarding";
 import { useQuiz, useQuizStepView } from "../../lib/quizContext";
 import {
   brandColor,
+  crossBrandModelHits,
   filterModels,
   groupModelsForDiscipline,
   logQuizEvent,
@@ -189,6 +190,9 @@ export default function QuizBikeScreen() {
     () => (modelQuery.trim() ? filterModels(allModels, modelQuery) : null),
     [allModels, modelQuery]
   );
+  // Search always covers the full catalog: the brand's own matches list
+  // first, then hits from every other brand (tapping one switches the brand).
+  const otherHits = useMemo(() => crossBrandModelHits(make, modelQuery), [make, modelQuery]);
   const freeTextModel = modelQuery.trim();
   const showFreeText =
     freeTextModel.length > 0 && (filteredModels?.length ?? 0) === 0;
@@ -467,9 +471,33 @@ export default function QuizBikeScreen() {
         </View>
 
         {filteredModels ? (
-          <View style={styles.list}>
-            {filteredModels.map((m) => renderModelRow(m))}
-            {showFreeText ? renderModelRow(freeTextModel, true) : null}
+          <View>
+            <View style={styles.list}>
+              {filteredModels.map((m) => renderModelRow(m))}
+              {showFreeText ? renderModelRow(freeTextModel, true) : null}
+            </View>
+            {otherHits.length > 0 ? (
+              <View style={styles.group}>
+                <Text style={styles.groupLabel}>Other brands</Text>
+                <View style={styles.list}>
+                  {otherHits.map((h) => (
+                    <Pressable
+                      key={`${h.make}|${h.model}`}
+                      onPress={() => void goToModelPhase(h.make, h.model)}
+                      style={styles.hitRow}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${h.make} ${h.model}`}
+                    >
+                      <Text style={[styles.hitMake, { color: brandColor(h.make) }, displayFont("bold")]}>
+                        {h.make}
+                      </Text>
+                      <Text style={[styles.hitModel, displayFont("bold")]}>{h.model}</Text>
+                      <Ionicons name="chevron-forward" size={16} color={Q.STEEL} />
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
           </View>
         ) : (
           groups.map((g) => (

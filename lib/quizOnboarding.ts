@@ -240,39 +240,32 @@ export function classifyModel(make: string, model: string): ModelDiscipline {
   }
 }
 
-const GROUP_RANK: Record<QuizDiscipline, Record<ModelDiscipline, number>> = {
-  mx: { mx: 0, offroad: 1, other: 2, mini: 3 },
-  offroad: { offroad: 0, mx: 1, other: 2, mini: 3 },
-};
+export type ModelGroupKey = "matched" | "all";
+export type ModelGroup = { key: ModelGroupKey; label: string; models: string[] };
 
-const GROUP_LABEL: Record<ModelDiscipline, string> = {
-  mx: "Track bikes",
-  offroad: "Off-road bikes",
-  other: "Other",
-  mini: "Minis",
-};
+export function matchedSectionLabel(d: QuizDiscipline | null | undefined): string {
+  return d === "offroad" ? "Trail bikes first" : "Track bikes first";
+}
 
-export type ModelGroup = { key: ModelDiscipline; label: string; models: string[] };
-
-/** 2b sections: the chosen discipline first, then the other, then other/minis.
- *  Catalog order is preserved inside each group. */
+/** 2b sections: ORDER, never filter. Every catalog model for the brand is
+ *  listed. The discipline-matched ones come first under "Track/Trail bikes
+ *  first"; everything else (the other discipline, minis, unclassified) sits
+ *  under "All <brand> models". Catalog order is preserved inside each
+ *  section, and an empty section is simply not emitted. Nothing is hidden
+ *  based on discipline. */
 export function groupModelsForDiscipline(
   make: string,
   discipline: QuizDiscipline | null | undefined
 ): ModelGroup[] {
   const models = BIKE_CATALOG[make] ?? [];
   const d: QuizDiscipline = discipline ?? "mx";
-  const buckets = new Map<ModelDiscipline, string[]>();
-  for (const m of models) {
-    const k = classifyModel(make, m);
-    const arr = buckets.get(k) ?? [];
-    arr.push(m);
-    buckets.set(k, arr);
-  }
-  return (Object.keys(GROUP_RANK[d]) as ModelDiscipline[])
-    .sort((a, b) => GROUP_RANK[d][a] - GROUP_RANK[d][b])
-    .filter((k) => (buckets.get(k) ?? []).length > 0)
-    .map((k) => ({ key: k, label: GROUP_LABEL[k], models: buckets.get(k)! }));
+  const matched: string[] = [];
+  const rest: string[] = [];
+  for (const m of models) (classifyModel(make, m) === d ? matched : rest).push(m);
+  const out: ModelGroup[] = [];
+  if (matched.length > 0) out.push({ key: "matched", label: matchedSectionLabel(d), models: matched });
+  if (rest.length > 0) out.push({ key: "all", label: `All ${make} models`, models: rest });
+  return out;
 }
 
 export function orderModelsForDiscipline(
@@ -311,6 +304,14 @@ export function searchCatalog(query: string, limit = 12): CatalogHit[] {
     .sort((a, b) => a.rank - b.rank)
     .slice(0, limit)
     .map((r) => r.hit);
+}
+
+/** 2b search always covers the FULL catalog: hits from every other brand,
+ *  ranked like searchCatalog, with the current brand's own rows excluded
+ *  (those are matched separately by filterModels so they list first). */
+export function crossBrandModelHits(make: string | null, query: string, limit = 12): CatalogHit[] {
+  if (!query.trim()) return [];
+  return searchCatalog(query, limit + 24).filter((h) => h.make !== make).slice(0, limit);
 }
 
 export function filterModels(models: readonly string[], query: string): string[] {
@@ -357,8 +358,8 @@ export function bikeDisplayName(a: {
 
 export function modelListSubline(d: QuizDiscipline | null | undefined): string {
   return d === "offroad"
-    ? "Off-road bikes first, since that's what we're tuning"
-    : "Track bikes first, since that's what we're tuning";
+    ? "Every model is here. Trail bikes are up top."
+    : "Every model is here. Track bikes are up top.";
 }
 
 /* ------------------------------ Answers store ---------------------------- */
