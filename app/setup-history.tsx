@@ -5,6 +5,7 @@
 // this screen re-checks defensively).
 
 import { showProGate } from "../lib/proGate";
+import { isEntitled, resolveEntitlement } from "../lib/entitlement";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -317,7 +318,7 @@ export default function SetupHistoryScreen() {
   // clicker values, trend chart, expansion, restore, and share stay gated
   // behind the winback CTA.
   const [restricted, setRestricted] = useState(false);
-  const { shareView, share } = useShareSetup();
+  const { shareView, share, available: canShare } = useShareSetup();
 
   const load = useCallback(async () => {
     if (typeof bikeId !== "string" || !bikeId) {
@@ -338,7 +339,7 @@ export default function SetupHistoryScreen() {
         .select("pro_until, is_pro")
         .eq("user_id", auth.user.id)
         .maybeSingle();
-      const proNow = deriveIsPro(prof) || hasPurchasedThisSession();
+      const proNow = deriveIsPro(prof) || hasPurchasedThisSession() || isEntitled(await resolveEntitlement());
       const lapsed = deriveIsLapsed(prof);
       if (!proNow && !lapsed) {
         // Free tier (never paid): full gate, exactly as before.

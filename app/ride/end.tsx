@@ -31,7 +31,7 @@ export default function RideEndScreen() {
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
-  const { shareView, share } = useShareSetup();
+  const { shareView, share, available: canShare } = useShareSetup();
   const [s, setS] = useState<RideSession | null>(null);
   const [extras, setExtras] = useState<BikeExtras | null>(null);
   const [meterBefore, setMeterBefore] = useState<MeterInputs | null>(null);
@@ -112,7 +112,7 @@ export default function RideEndScreen() {
           toast.show(r.created ? `${s.trackName} baseline saved` : `${s.trackName} baseline updated`, { kind: "success" });
         }
       }
-      await finishRideDay(s, { how, hours_edited: hours !== hoursFromMs(elapsedMs(s)) });
+      await finishRideDay(s, { how, hours_edited: hours !== hoursFromMs(elapsedMs(s)) }, delta?.to ?? null);
       router.replace("/(tabs)" as never);
     } finally {
       setBusy(false);
@@ -193,7 +193,7 @@ export default function RideEndScreen() {
         />
         <View style={{ flexDirection: "row", gap: 10 }}>
           <Ghost thin label="Just save" onPress={() => void done("just_save")} />
-          <Ghost thin label="Share" icon={<Ionicons name="share-outline" size={16} color="#FFFFFF" />} onPress={onShare} />
+          {canShare ? <Ghost thin label="Share" icon={<Ionicons name="share-outline" size={16} color="#FFFFFF" />} onPress={onShare} /> : null}
         </View>
       </ScrollView>
       {shareView}

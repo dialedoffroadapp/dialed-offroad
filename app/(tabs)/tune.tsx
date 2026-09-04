@@ -1,6 +1,8 @@
 // app/(tabs)/tune.tsx
 // Zero-based Tune flow + Garage selector -> navigates to a dedicated results page
-// Adds: 1-tune trial gate, My Presets link, preset param banner + "Use Preset Now"
+// 3.0 (2026-09-04): presets, the ride check-in card and the "free tune credit" label
+// are RETIRED from this tab (preset removal decision; ride day replaces check-ins;
+// free rule = one baseline per bike, regenerable, so the copy is "Update my baseline").
 // (This version adds safe-area top spacer, sticky Generate bar, compact weight input)
 // (Polish pass: cleaned top hero, outline actions, solid accent header (no gradient), blur sticky bar (iOS), haptics, 44pt tap targets)
 //
@@ -43,7 +45,6 @@ import Svg, { Circle as SvgCircle } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GarageCoachmark } from "../../components/GarageCoachmark";
 import { OnboardingProgress } from "../../components/OnboardingProgress";
-import { OutcomeCheckinCard } from "../../components/OutcomeCheckinCard";
 import { RiskGate } from "../../components/RiskGate";
 import { RunningSetupRow } from "../../components/RunningSetupRow";
 import { SettingRow } from "../../components/SettingRow";
@@ -86,18 +87,9 @@ type ProfileMeta = {
   trial_tunes_used: number | null;
 };
 
-type PresetMeta =
-  | {
-      id?: string;
-      name?: string;
-      track_name?: string | null;
-      terrain?: string[] | null;
-      bike_hint?: { year: number | null; make: string | null; model: string | null } | null;
-    }
-  | null;
-
 /* ----------------------------- Local constants ---------------------------- */
 const DEFAULT_GOALS = ["stability", "comfort", "playfulness", "grip", "jump support"] as const;
+const TERRAIN_TAG_SET = new Set(["hardpack", "sand", "mud", "rocks", "roots", "mixed", "mx"]);
 const normalizeGoal = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
 // bump this if you update RiskGate text/content to invalidate old consent
@@ -111,7 +103,6 @@ const STICKY_FOOTER_HEIGHT = 96;
 
 // TS-safe event names for analytics
 const AI_TUNE_GENERATED_ZERO: UsageEvent = "ai_tune_generated_zero" as UsageEvent;
-const PRESET_APPLIED: UsageEvent = "preset_applied" as UsageEvent;
 
 // Local storage keys (per-user)
 const riskKeyForUser = (uid: string) => `riskConsent:${uid}`;
@@ -264,7 +255,6 @@ export default function TuneScreen() {
   toastRef.current = toast;
   const router = useRouter();
   const {
-    preset,
     t,
     bikeId,
     onboarding,
@@ -274,8 +264,8 @@ export default function TuneScreen() {
     nickname: nicknameParam,
     prefill,
     regenerate,
+    setupId,
   } = useLocalSearchParams<{
-    preset?: string;
     t?: string;
     bikeId?: string;
     onboarding?: string; // ✅ from Garage: onboarding:"1"
@@ -286,6 +276,9 @@ export default function TuneScreen() {
     prefill?: string;
     /** Free rule (2026-09-04): regenerate the bike's baseline (replaces the running one). */
     regenerate?: string;
+    /** 3.0 named setups: the baseline this run builds belongs to this bike_setups row
+     *  (the "New setup" door on the bike page, Pro). Absent = the default setup. */
+    setupId?: string;
   }>();
   const { onboardingActive, state, setStep } = useOnboarding();
 
@@ -437,22 +430,17 @@ export default function TuneScreen() {
       : "See Pro"
     : !proStatusResolved || isPro
     ? isRegenerate
-      ? "Regenerate baseline"
+      ? "Update my baseline"
       : "Generate tune"
     : hasFreeTrialTune
     ? isRegenerate || hasGarageBike
       ? isRegenerate
-        ? "Regenerate baseline"
+        ? "Update my baseline"
         : "Generate tune"
-      : "Use 1 free tune credit"
+      : "Generate tune"
     : "See Pro";
 
   const ctaDisabled = generating;
-
-  // ——— Loaded preset + meta ———
-  const [loadedPreset, setLoadedPreset] = useState<ZeroTuneResult | null>(null);
-  const [loadedPresetMeta, setLoadedPresetMeta] = useState<PresetMeta>(null);
-  const lastPresetRef = useRef<string | undefined>(undefined);
 
   // ✅ track whether we already applied the onboarding bikeId so we don’t bounce
   const onboardingAppliedRef = useRef(false);
@@ -479,6 +467,14 @@ export default function TuneScreen() {
           setGoals(p.goals);
         }
         if (typeof p.issues === "string" && p.issues.length > 0) setIssues(p.issues);
+        // Terrain from the door that opened this flow (a named setup's terrain,
+        // the running version's terrain): a known tag selects it, anything
+        // else lands in the free-text terrain field.
+        if (typeof p.terrain === "string" && p.terrain.trim()) {
+          const t = p.terrain.trim().toLowerCase();
+          if (TERRAIN_TAG_SET.has(t)) setTerrainTags([t]);
+          else setTerrainOther(p.terrain.trim());
+        }
       } catch {
         // ignore bad payload
       }
@@ -737,37 +733,6 @@ export default function TuneScreen() {
   }, [loadBikes]);
   // --------------------------------------------------------------
 
-  // React to incoming preset while the tab stays mounted
-  useFocusEffect(
-    useCallback(() => {
-      const raw = preset as string | undefined;
-      if (!raw || raw === lastPresetRef.current) return;
-
-      lastPresetRef.current = raw;
-      try {
-        const parsed = JSON.parse(decodeURIComponent(raw));
-
-        if (parsed && typeof parsed === "object" && parsed.tune) {
-          setLoadedPreset(parsed.tune as ZeroTuneResult);
-          setLoadedPresetMeta({
-            id: parsed.id,
-            name: parsed.name,
-            track_name: parsed.track_name ?? null,
-            terrain: parsed.terrain ?? null,
-            bike_hint: parsed.bike_hint ?? null,
-          });
-        } else {
-          setLoadedPreset(parsed as ZeroTuneResult);
-          setLoadedPresetMeta(null);
-        }
-
-        router.replace("/(tabs)/tune");
-      } catch {
-        // ignore bad payloads
-      }
-    }, [preset, router])
-  );
-
   const ensureRiskAccepted = (): Promise<boolean> => {
     if (hasRiskConsent) return Promise.resolve(true);
     setRiskOpen(true);
@@ -1024,6 +989,8 @@ export default function TuneScreen() {
           guest: !user?.id,
           // Free rule: a regenerated baseline parents onto the running version.
           regenerate: isRegenerate,
+          // 3.0 named setups: which bike_setups row the version belongs to.
+          setupId: typeof setupId === "string" && setupId.length > 0 ? setupId : undefined,
         })
       );
 
@@ -1083,53 +1050,6 @@ export default function TuneScreen() {
     }
   };
 
-  // ——— Apply loaded preset (no AI, no trial impact) ———
-  const applyPresetNow = async () => {
-    if (!loadedPreset) return;
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user?.id) throw new Error("Please sign in");
-
-      const s: ZeroTuneResult = loadedPreset;
-
-      await logEvent(PRESET_APPLIED, { track, terrain: terrainLabel, selectedBikeId });
-      Haptics.selectionAsync();
-
-      router.push({
-        pathname: "/tune-results",
-        params: {
-          r: encodeURIComponent(JSON.stringify(s)),
-          meta: encodeURIComponent(
-            JSON.stringify({
-              preset: {
-                id: loadedPresetMeta?.id,
-                name: loadedPresetMeta?.name,
-              },
-              bike_hint:
-                loadedPresetMeta?.bike_hint ??
-                {
-                  year: year ? Number(year) : null,
-                  make: make || null,
-                  model: model || null,
-                },
-              context: {
-                track: loadedPresetMeta?.track_name ?? (track || null),
-                terrain: loadedPresetMeta?.terrain ?? (terrainLabel ? [terrainLabel] : []),
-                wants_air_fork: wantsAirFork,
-                rider_weight_lbs: weight ? Number(weight) : undefined,
-                goals,
-                issues: issues.trim() || undefined,
-              },
-              onboarding: isOnboarding ? true : false,
-            })
-          ),
-        },
-      });
-    } catch (e: any) {
-      toast.show(e?.message ?? "Failed to apply preset", { kind: "error" });
-    }
-  };
 
   /* ------------------------------- UI helpers ------------------------------ */
   const Pill = ({
@@ -1356,29 +1276,11 @@ export default function TuneScreen() {
               </Pressable>
             )}
 
-            {!isOnboarding && (
-              <Pressable
-                onPress={() => {
-                  router.push("/my-presets");
-                  Haptics.selectionAsync();
-                }}
-                hitSlop={8}
-                style={S.manageLink}
-              >
-                <Ionicons name="bookmarks" size={14} color={C.MUTED} />
-                <Text style={S.manageLinkText}>My Presets</Text>
-                <Ionicons name="chevron-forward" size={14} color={C.MUTED} />
-              </Pressable>
-            )}
           </View>
 
           {/* One-time wayfinding for the Bike Home restructure */}
           {!isOnboarding && <GarageCoachmark />}
 
-          {/* Ride check-in: outcome ("did the last refinement help?") or
-              first-ride prompt. Home hosts the primary instance; the session
-              flag inside the card guarantees only one shows per session. */}
-          {!isOnboarding && <OutcomeCheckinCard surface="tune" />}
 
           {/* Garage Selector */}
           <View style={S.selectorCard}>
@@ -1813,21 +1715,6 @@ export default function TuneScreen() {
           )}
         </View>
 
-        {/* Preset loaded banner */}
-        {!isOnboarding && loadedPreset ? (
-          <View style={[S.card, { marginTop: 12, borderColor: C.ACCENT }]}>
-            <Text style={{ color: C.TEXT, fontWeight: "800" }}>
-              Preset loaded{loadedPresetMeta?.name ? `: ${loadedPresetMeta.name}` : ""}
-            </Text>
-            <Text style={{ color: C.MUTED, marginTop: 4 }}>
-              Apply the preset now, or tweak the form and run AI for a custom tune.
-            </Text>
-            <View style={{ height: 10 }} />
-            <Pressable onPress={applyPresetNow} style={S.btn}>
-              <Text style={S.btnText}>Use Preset Now</Text>
-            </Pressable>
-          </View>
-        ) : null}
       </ScrollView>
 
       {/* Sticky footer (hidden while sheets are open so nothing clashes) */}

@@ -59,7 +59,7 @@ export default function SetupSheetScreen() {
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const { bikeId, setupId } = useLocalSearchParams<{ bikeId?: string; setupId?: string }>();
-  const { shareView, share } = useShareSetup();
+  const { shareView, share, available: canShare } = useShareSetup();
   const [data, setData] = useState<BikePageData | null>(null);
   const [expanded, setExpanded] = useState<AdjusterKey | null>(null);
   const [fix, setFix] = useState<RowDef | null>(null);
@@ -205,9 +205,11 @@ export default function SetupSheetScreen() {
             <Pressable onPress={() => router.push({ pathname: "/setup-story", params: { bikeId: bike.id, setupId: setup.id ?? "default" } } as never)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Compare versions">
               <Ionicons name="swap-horizontal-outline" size={18} color={V3.steel} />
             </Pressable>
-            <Pressable onPress={onShare} hitSlop={10} accessibilityRole="button" accessibilityLabel="Share setup">
-              <Ionicons name="share-outline" size={18} color={V3.steel} />
-            </Pressable>
+            {canShare ? (
+              <Pressable onPress={onShare} hitSlop={10} accessibilityRole="button" accessibilityLabel="Share setup">
+                <Ionicons name="share-outline" size={18} color={V3.steel} />
+              </Pressable>
+            ) : null}
           </View>
         </Row>
         <H1 style={{ marginBottom: 8 }}>
@@ -325,7 +327,26 @@ export default function SetupSheetScreen() {
         </Card>
 
         {isRunning ? (
-          <Button label="Refine after ride" onPress={onRefine} icon={<Ionicons name="sparkles-outline" size={18} color={V3.carbon} />} disabled={!v} />
+          <>
+            <Button label="Refine after ride" onPress={onRefine} icon={<Ionicons name="sparkles-outline" size={18} color={V3.carbon} />} disabled={!v} />
+            {/* Free door into the relocated Tune flow: regenerate this bike's
+                baseline (replaces the running one, no history). */}
+            <Button
+              label="Update my baseline"
+              ghost
+              onPress={() =>
+                router.push({
+                  pathname: "/(tabs)/tune",
+                  params: {
+                    bikeId: bike.id,
+                    regenerate: "1",
+                    ...(v?.terrain ? { prefill: encodeURIComponent(JSON.stringify({ terrain: v.terrain })) } : {}),
+                  },
+                } as never)
+              }
+              style={{ marginTop: 10 }}
+            />
+          </>
         ) : (
           <>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>

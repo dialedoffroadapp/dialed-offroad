@@ -8,6 +8,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { hasSetOnBike, markSetOnBike } from "../../lib/firstSteps";
 import { useToast } from "../Toast";
 import { Bar, Big, Body, Button, Card, Divider, Eyebrow, H1, Label, PhotoTile, Row, Small, Step, Sub } from "../v3/primitives";
 import { interFont, useV3Fonts, V3 } from "../v3/theme";
@@ -19,7 +20,13 @@ import { meterHeroLine } from "../../lib/dialedMeter";
 import { dayOneEyebrow, daysBetween, homeEyebrow, homeHeadline, seasonYear, setupEyebrow, valuesSummary } from "../../lib/homeCopy";
 import { useHomeV3 } from "../../lib/homeV3";
 import { dateToIso, saveNextRideDate } from "../../lib/nextRide";
-import { readOpenSession } from "../../lib/rideDay";
+import { readOpenSession, readHistory } from "../../lib/rideDay";
+import { isEntitled, maybeStartLaunchTrial, resolveEntitlement, subscribeEntitlement, trialNearEnd, type Entitlement, FREE_ENTITLEMENT } from "../../lib/entitlement";
+import { emitLifecycleEvent } from "../../lib/lifecycle";
+import { meterStalled, stallLine } from "../../lib/meterStall";
+import { pricingHref } from "../../lib/proGate";
+import { HistoryWaitingCard, MeterStallCard, TrialEndingCard, TrialLine } from "./TrialCards";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { saveSeasonGoal, clearSeasonGoal } from "../../lib/seasonGoals";
 import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
@@ -29,6 +36,7 @@ import { logEvent } from "../../lib/usage";
 // the way back into a ride in progress.
 const START_RIDING_ROUTE = "/ride/start";
 const SETUP_SHEET_ROUTE = "/setup-sheet";
+const TUNE_ROUTE = "/(tabs)/tune";
 const STORY_ROUTE = "/setup-story";
 
 export function HomeV3() {
@@ -36,12 +44,45 @@ export function HomeV3() {
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
+  const [setOnBike, setSetOnBike] = useState(false);
   const { data, loading, refresh, patch } = useHomeV3();
   const [goalOpen, setGoalOpen] = useState(false);
   const [rideOpen, setRideOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [ent, setEnt] = useState<Entitlement>(FREE_ENTITLEMENT);
+  const [rideMeters, setRideMeters] = useState<(number | null | undefined)[]>([]);
   const now = new Date();
+
+  // Entitlement (server-resolved, cached): trial line / near-end / downgrade
+  // surfaces, plus the 3.0-launch trial for existing free accounts (River:
+  // "Pro is on for your next 3 rides"). Lifecycle first_session once.
+  useEffect(() => subscribeEntitlement(setEnt), []);
+  useEffect(() => {
+    if (!data?.userId) return;
+    let alive = true;
+    (async () => {
+      const launched = await maybeStartLaunchTrial(data.userId!);
+      if (launched?.state === "trial_active" && alive) toast.show(`Pro is on for your next ${launched.trialRideDayLimit} rides.`, { kind: "success" });
+      const e = await resolveEntitlement();
+      if (alive) setEnt(e);
+      const history = await readHistory();
+      if (alive) setRideMeters(history.map((h) => h.meterPct));
+      try {
+        const k = `dialed_first_session_v1:${data.userId}`;
+        if (!(await AsyncStorage.getItem(k))) {
+          await AsyncStorage.setItem(k, "1");
+          void emitLifecycleEvent("first_session", { bike: data.bike?.model ?? null });
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.userId]);
 
   // home_module_viewed: once per module per focus (analytics-dark until the
   // v3 CHECK migration lands; signed-in only, so no queue hazard).
@@ -58,6 +99,13 @@ export function HomeV3() {
     }, [router])
   );
   useEffect(() => {
+    let alive = true;
+    void hasSetOnBike(data?.bike?.id).then((v) => alive && setSetOnBike(v));
+    return () => {
+      alive = false;
+    };
+  }, [data?.bike?.id, data]);
+  useEffect(() => {
     if (!data?.userId) return;
     const modules: [string, string][] = [
       ["glance", data.dayOne ? "day_one" : "established"],
@@ -68,6 +116,7 @@ export function HomeV3() {
       ["setup_story", data.story.length ? (data.isPro ? "full" : "locked") : "empty"],
     ];
     if (data.lastRide) modules.push(["last_ride", "data"]);
+    modules.push(["entitlement", ent.state]);
     if (data.suggestion) modules.push(["suggestion", data.suggestion.symptom]);
     if (data.dayOne) modules.push(["first_steps", data.versions.length ? "step_2" : "step_1"]);
     for (const [module, state] of modules) {
@@ -111,17 +160,30 @@ export function HomeV3() {
   }
   if (!data) return <View style={styles.root} />;
 
-  const { bike, dayOne, running, lastRide, suggestion, goal, seasonStats, nextRideDate, story, isPro } = data;
+  const { bike, dayOne, running, lastRide, suggestion, goal, seasonStats, nextRideDate, story } = data;
+  const isPro = data.isPro || isEntitled(ent);
+  const lockedKeys = ["refined", "consistency"] as const;
+  const stalled = meterStalled({ rideDayMeters: rideMeters, categories: data.meterCategories, lockedKeys: [...lockedKeys], state: isPro ? "pro" : ent.state });
+  const openPricing = (trigger: "history" | "adjust") => router.push(pricingHref(trigger) as never);
   const year = seasonYear(now);
   const goalDone = goal?.type === "engine_hours" ? seasonStats.hours ?? 0 : seasonStats.rideDays;
-  const primaryLabel = !bike ? "Add a bike" : !running ? "Build a tune" : dayOne ? "Set it on the bike" : "Start riding";
+  // Day one: step 2 ("set the clickers") is done once the rider has opened
+  // the running setup's sheet from here; the primary then moves on to the
+  // first ride while the glance card stays ghosted until feedback exists.
+  const needsSetOnBike = dayOne && !setOnBike;
+  const primaryLabel = !bike ? "Add a bike" : !running ? "Build a tune" : needsSetOnBike ? "Set it on the bike" : "Start riding";
   const onPrimary = () => {
     if (!bike) return router.push("/(tabs)/garage" as never);
-    if (!running) return router.push(START_RIDING_ROUTE as never);
-    if (dayOne) return router.push({ pathname: SETUP_SHEET_ROUTE, params: { bikeId: bike.id } } as never);
+    // No running version yet: the Tune flow (relocated into Garage, 3.0) builds the baseline.
+    if (!running) return router.push({ pathname: TUNE_ROUTE, params: { bikeId: bike.id } } as never);
+    if (needsSetOnBike) {
+      // The running setup's clicker sheet in Garage; on return, First Steps step 2 reads done.
+      void markSetOnBike(bike.id).then(() => setSetOnBike(true));
+      return router.push({ pathname: SETUP_SHEET_ROUTE, params: { bikeId: bike.id, setupId: "default" } } as never);
+    }
     return router.push(START_RIDING_ROUTE as never);
   };
-  const stepIndex = !running ? 1 : dayOne ? 2 : 3;
+  const stepIndex = !running ? 1 : needsSetOnBike ? 2 : 3;
   const eyebrow = !bike
     ? homeEyebrow(now)
     : dayOne
@@ -130,14 +192,15 @@ export function HomeV3() {
   const headline = !bike ? "Let's get a bike in the garage" : homeHeadline(bike.model, dayOne);
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 132 + insets.bottom }]}
+        contentContainerStyle={[styles.content, { paddingTop: 16, paddingBottom: 132 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={V3.steel} />}
       >
         <Eyebrow>{eyebrow}</Eyebrow>
         <H1>{headline}</H1>
+        <TrialLine e={ent} />
 
         {dayOne && bike ? (
           <Card>
@@ -193,6 +256,14 @@ export function HomeV3() {
         ) : null}
 
         <Divider />
+
+        {trialNearEnd(ent) ? <TrialEndingCard e={ent} onKeep={() => openPricing("adjust")} /> : null}
+        {ent.state === "free" && ent.downgradedAt && data.versions.length > 1 ? (
+          <HistoryWaitingCard versions={data.versions.length} onOpen={() => openPricing("history")} />
+        ) : null}
+        {stalled ? (
+          <MeterStallCard line={stallLine(data.meterPct, data.meterCategories, [...lockedKeys])} onOpen={() => openPricing("adjust")} />
+        ) : null}
 
         {suggestion ? <SuggestionCard s={suggestion} /> : null}
 

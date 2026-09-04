@@ -209,12 +209,18 @@ export async function createBaselineVersion(params: {
    *  version so the lineage reads "regenerated" and the delta trigger diffs
    *  it; rows stay immutable, the free UI shows current values only. */
   parentVersionId?: string | null;
+  /** 3.0 named setups (migration 20260904100000): the bike_setups row this
+   *  baseline belongs to. null/absent = the bike's default setup, and the key
+   *  is omitted from the insert entirely so pre-migration projects still
+   *  accept the row. Non-uuid (local_*) ids are dropped the same way. */
+  setupId?: string | null;
 }): Promise<SetupVersionRow> {
   const userId = await requireUserId();
 
   // Legacy/guest bike ids ("1783553470201_…") are not uuids — treat as
   // bikeless rather than letting Postgres reject the row.
   const bikeId = asUuidOrNull(params.bikeId);
+  const setupId = asUuidOrNull(params.setupId ?? null);
 
   const { data, error } = await supabase
     .from("setup_versions")
@@ -223,6 +229,7 @@ export async function createBaselineVersion(params: {
       bike_id: bikeId,
       source: "baseline",
       parent_version_id: params.parentVersionId ?? null,
+      ...(setupId ? { setup_id: setupId } : {}),
       terrain: params.terrain ?? null,
       context: params.context ?? null,
       ...tuneColumns(params.tune),

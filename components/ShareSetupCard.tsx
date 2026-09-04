@@ -4,7 +4,6 @@
 // (expo-sharing, falling back to the RN Share API). No servers involved —
 // this image IS marketing, so it's styled tighter than the app screens.
 
-import * as Sharing from "expo-sharing";
 import React, { useCallback, useRef, useState } from "react";
 import { Share, StyleSheet, Text, View } from "react-native";
 import ViewShot, { captureRef } from "react-native-view-shot";
@@ -28,11 +27,34 @@ type ShareSource = "history" | "results";
 
 const CARD_W = 360;
 
+// expo-sharing is a NATIVE module. Loaded lazily, at call time, inside a try:
+// a module-scope import crashed app/ride/end.tsx on a dev client built without
+// it (2026-09-04), which no adapter guard downstream can prevent. Absent means
+// "hide the Share button", not "broken"; the RN Share API stays the fallback
+// when the module exists but reports unavailable.
+type SharingModule = {
+  isAvailableAsync: () => Promise<boolean>;
+  shareAsync: (uri: string, opts?: { mimeType?: string; dialogTitle?: string }) => Promise<void>;
+};
+function getSharing(): SharingModule | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("expo-sharing");
+    return mod && typeof mod.isAvailableAsync === "function" ? (mod as SharingModule) : null;
+  } catch {
+    return null;
+  }
+}
+/** True when the native sharing module is in this binary. */
+export function isSharingAvailable(): boolean {
+  return getSharing() !== null;
+}
+
 const fmt = (v: number | null, digits = 0): string =>
   typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "—";
 
 /**
- * useShareSetup — returns { shareView, share }. Mount `shareView` once in the
+ * useShareSetup — returns { shareView, share, available }. Mount `shareView` once in the
  * host screen (it stays offscreen and invisible); call `share(data, source)`
  * from any button. The card renders with the requested data, is captured on
  * the next frame, then shared.
@@ -55,7 +77,8 @@ export function useShareSetup() {
         result: "tmpfile",
       });
 
-      if (await Sharing.isAvailableAsync()) {
+      const Sharing = getSharing();
+      if (Sharing && (await Sharing.isAvailableAsync())) {
         await Sharing.shareAsync(uri, {
           mimeType: "image/png",
           dialogTitle: "Share setup",
@@ -83,7 +106,7 @@ export function useShareSetup() {
     </View>
   );
 
-  return { shareView, share };
+  return { shareView, share, available: isSharingAvailable() };
 }
 
 /* ------------------------------- the card ------------------------------- */

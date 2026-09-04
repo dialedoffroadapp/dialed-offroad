@@ -1,17 +1,19 @@
 // components/garage/GarageV3.tsx
-// The v3 Garage tab (design/mockups/03): the bike list exists only with 2+
-// bikes; one bike lands straight on its page (rendered inline); none shows
-// the dashed Add a bike. Adding is Pro-gated on the ADD action once a bike
-// exists (grandfathered multi-bike free accounts keep everything).
+// The v3 Garage tab (design/mockups/03). Revised 2026-09-04: Garage ALWAYS
+// opens to the bike list, single-bike riders included (one card plus "Add a
+// bike"), and taps into the bike page. Adding is Pro-gated on the ADD action
+// once a bike exists (grandfathered multi-bike free accounts keep everything).
+// 3.0 relocates the Tune flow into Garage: "Add a bike" creates the bike and
+// lands in the Tune flow to build its baseline; "New tune" in the header is
+// the direct door.
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../Toast";
 import { Big, Card, Eyebrow, H1, Small } from "../v3/primitives";
 import { headingFont, useV3Fonts, V3 } from "../v3/theme";
-import { BikePage } from "./BikePage";
 import { AddBikeSheet } from "./GarageSheets";
 import { createBike, normalizeBikeStrings, resolveModelId } from "../../lib/bikes";
 import { loadBikeList, loadUserAndPro, type BikeListItem } from "../../lib/garageV3";
@@ -19,6 +21,8 @@ import { supabase } from "../../lib/supabase";
 import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 import { Text } from "react-native";
+
+const TUNE_ROUTE = "/(tabs)/tune";
 
 export function GarageV3() {
   useV3Fonts();
@@ -58,8 +62,10 @@ export function GarageV3() {
       const model_id = await resolveModelId(make, model, p.year);
       if (model_id) void supabase.from("bikes").update({ model_id }).eq("id", bike.id);
       void logEvent("bike_created", { bike_id: bike.id, make, model, year: p.year, source: "garage_v3" });
-      toast.show("Bike added", { kind: "success" });
+      toast.show("Bike added. Let's build its baseline.", { kind: "success" });
       await load();
+      // Door into the relocated Tune flow, bike pre-filled (one baseline per bike, free).
+      router.push({ pathname: TUNE_ROUTE, params: { bikeId: bike.id } } as never);
     } catch (e: any) {
       toast.show(e?.message ?? "Couldn't add the bike.", { kind: "error" });
     }
@@ -73,13 +79,25 @@ export function GarageV3() {
     );
   }
 
-  if (state.bikes.length === 1) return <BikePage bikeId={state.bikes[0].id} inTab />;
-
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 16, paddingBottom: 40 + insets.bottom }]} showsVerticalScrollIndicator={false}>
         <Eyebrow>Garage</Eyebrow>
-        <H1>Your bikes</H1>
+        <View style={styles.headerRow}>
+          <H1 style={{ marginBottom: 0 }}>Your bikes</H1>
+          {state.bikes.length > 0 ? (
+            <Pressable
+              onPress={() => router.push({ pathname: TUNE_ROUTE, params: { bikeId: state.bikes[0].id } } as never)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="New tune"
+              style={styles.headerAction}
+            >
+              <Ionicons name="flash" size={14} color={V3.blue} />
+              <Small style={{ color: V3.blue, fontSize: 13 }}>New tune</Small>
+            </Pressable>
+          ) : null}
+        </View>
         {state.bikes.map((b) => (
           <Card key={b.id} stripe={b.make} style={{ paddingVertical: 18 }} onPress={() => router.push({ pathname: "/garage-bike", params: { bikeId: b.id } } as never)} accessibilityLabel={`${b.year ?? ""} ${b.make ?? ""} ${b.model ?? ""}`}>
             <View style={styles.row}>
@@ -99,7 +117,7 @@ export function GarageV3() {
           {state.bikes.length >= 1 && !state.isPro ? <Ionicons name="lock-closed" size={12} color={V3.steel} /> : null}
         </Card>
         {state.bikes.length === 0 ? (
-          <Small style={{ textAlign: "center", marginTop: 16, color: V3.muted, fontSize: 11 }}>Your first bike lands straight on its own page.</Small>
+          <Small style={{ textAlign: "center", marginTop: 16, color: V3.muted, fontSize: 11 }}>Add your bike, then build its baseline tune.</Small>
         ) : null}
       </ScrollView>
       <AddBikeSheet key={`add-${addOpen}`} open={addOpen} onClose={() => setAddOpen(false)} onAdd={onAdd} />
@@ -112,5 +130,7 @@ const styles = StyleSheet.create({
   center: { alignItems: "center", justifyContent: "center" },
   content: { paddingHorizontal: V3.screenPadX },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  headerRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 14 },
+  headerAction: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: "rgba(29,155,240,0.35)" },
   model: { fontSize: 26, lineHeight: 26, color: V3.white },
 });

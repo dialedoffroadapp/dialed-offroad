@@ -20,11 +20,12 @@ import { createNamedSetup, runningSetup } from "../../lib/bikeSetups";
 import { meterCaption } from "../../lib/dialedMeter";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../../lib/garageV3";
 import { shortDate } from "../../lib/homeCopy";
-import { showProGate } from "../../lib/proGate";
+import { gateIfLocked, showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 
 export const SETUP_SHEET_ROUTE = "/setup-sheet";
 export const STORY_ROUTE = "/setup-story";
+export const TUNE_ROUTE = "/(tabs)/tune";
 
 export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean }) {
   useV3Fonts();
@@ -145,7 +146,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
 
         <View style={styles.tiles}>
           <Tile label="Engine hrs" value={hoursValue} sub={extras.hours !== null ? `oil at ${trim(nextOilAt(extras))}` : "tap to set"} onPress={() => setHoursOpen(true)} muted={extras.hours === null} />
-          <Tile label="Tires" value={tiresValue} sub={extras.tireFrontPsi !== null ? "psi front / rear" : "tap to set"} onPress={() => setTiresOpen(true)} muted={extras.tireFrontPsi === null} />
+          <Tile label="Tires" value={tiresValue} sub={extras.tireFrontPsi !== null ? "psi front / rear" : "tap to set"} onPress={() => void gateIfLocked({ trigger: "tire_pressure", bikeId: bike.id, hasBaseline: versions.length > 0 }).then((ok) => ok && setTiresOpen(true))} muted={extras.tireFrontPsi === null} />
         </View>
 
         <Label style={{ marginBottom: 8 }}>Setups</Label>
@@ -234,8 +235,19 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
         onCreate={async (p) => {
           setNewOpen(false);
           const res = await createNamedSetup({ bikeId: bike.id, name: p.name, terrain: p.terrain, from: running?.running ?? null });
-          toast.show(res.serverOk ? `${p.name} created` : `${p.name} saved on this phone. Syncs after the next update.`, { kind: res.serverOk ? "success" : "info" });
+          toast.show(res.serverOk ? `${p.name} created. Build its tune.` : `${p.name} saved on this phone. Syncs after the next update.`, { kind: res.serverOk ? "success" : "info" });
           void load();
+          // Door into the relocated Tune flow: bike + setup + terrain pre-filled.
+          // A local_* setup id (offline) is dropped by the version writer, so the
+          // baseline lands on the default setup until sync; acceptable.
+          router.push({
+            pathname: TUNE_ROUTE,
+            params: {
+              bikeId: bike.id,
+              setupId: res.setup.id,
+              ...(p.terrain ? { prefill: encodeURIComponent(JSON.stringify({ terrain: p.terrain })) } : {}),
+            },
+          } as never);
         }}
       />
       {photoBusy ? (

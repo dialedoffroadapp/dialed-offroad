@@ -118,14 +118,21 @@ export default function TabsLayout() {
       <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="garage" options={{ title: "Garage" }} />
 
+      {/* 3.0: the Tune flow is relocated into Garage (Add a bike, New setup,
+          Update my baseline, New tune). The route stays; only the tab slot and
+          its FAB leave the bar, so the bar is Home, Garage, Profile. */}
       <Tabs.Screen
         name="tune"
-        options={{
-          tabBarLabel: () => null,
-          tabBarButton: (props) => (
-            <TuneButton {...props} colors={colors} disabled={hideTabs} />
-          ),
-        }}
+        options={
+          HOME_GARAGE_V3_ENABLED
+            ? { href: null }
+            : {
+                tabBarLabel: () => null,
+                tabBarButton: (props) => (
+                  <TuneButton {...props} colors={colors} disabled={hideTabs} />
+                ),
+              }
+        }
       />
 
       {/* 3.0: the ride day replaces the Sessions tab (four tabs). The route
