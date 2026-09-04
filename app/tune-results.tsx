@@ -968,6 +968,9 @@ export default function TuneResultScreen() {
           const version = await createBaselineVersion({
             bikeId,
             tune: result,
+            // Regenerated baseline (free rule): replaces the running one on
+            // the lineage; rows stay immutable, free UI shows current only.
+            parentVersionId: metaObj?.regenerate && latest ? (latest as any).id : null,
             terrain: Array.isArray(metaObj?.context?.terrain)
               ? metaObj.context.terrain[0] ?? null
               : metaObj?.context?.terrain ?? null,
@@ -1054,6 +1057,7 @@ export default function TuneResultScreen() {
         const version = await createBaselineVersion({
           bikeId,
           tune: result,
+          parentVersionId: metaObj?.regenerate && latest ? (latest as any).id : null,
           terrain: Array.isArray(metaObj?.context?.terrain)
             ? metaObj.context.terrain[0] ?? null
             : metaObj?.context?.terrain ?? null,

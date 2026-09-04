@@ -4,7 +4,7 @@
 // versions, and the entry to Setup History. Reached by tapping a bike in the
 // Garage; the old per-bike overflow actions (delete) live in the header menu.
 
-import { paywallHref } from "../lib/paywall";
+import { showProGate } from "../lib/proGate";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -169,8 +169,9 @@ export default function BikeHomeScreen() {
         bike_id: bikeId,
         version_count: history.length,
         source: "bike_home",
+        paywall_trigger_action: "setup_history",
       });
-      router.push(paywallHref("setup_history", "back") as any);
+      showProGate({ trigger: "setup_history", bikeId: String(bikeId), hasBaseline: history.length > 0 });
     }
   };
 

@@ -9,6 +9,7 @@ import { Platform, StyleSheet, View } from "react-native";
 
 import Onboarding from "../components/Onboarding";
 import { ToastProvider } from "../components/Toast";
+import { ProGateHost } from "../components/v3/ProGateSheet";
 import TrialPromptModal, {
   TRIAL_MODAL_DISMISS_KEY,
   TRIAL_MODAL_MAX_DISMISSALS,
@@ -401,6 +402,9 @@ function RootInner() {
 
       {/* Trial prompt for existing signed-in non-pro users
            — never show during password-reset flow */}
+      {/* Pro gate (lib/proGate.ts): the locked-row sheet before the paywall. */}
+      <ProGateHost />
+
       <TrialPromptModal
         visible={showTrialModal && !isRecoveryRoute}
         bikeTitle={trialBikeTitle}

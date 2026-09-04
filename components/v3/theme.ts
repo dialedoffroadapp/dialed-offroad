@@ -10,6 +10,7 @@ import {
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
+  Inter_800ExtraBold,
 } from "@expo-google-fonts/inter";
 import * as Font from "expo-font";
 import { useFonts } from "expo-font";
@@ -58,6 +59,7 @@ export const V3_FONT = {
   interMedium: "Inter_500Medium",
   interSemi: "Inter_600SemiBold",
   interBold: "Inter_700Bold",
+  interExtraBold: "Inter_800ExtraBold",
 } as const;
 
 export const V3_FONT_MAP = {
@@ -66,6 +68,7 @@ export const V3_FONT_MAP = {
   [V3_FONT.interMedium]: Inter_500Medium,
   [V3_FONT.interSemi]: Inter_600SemiBold,
   [V3_FONT.interBold]: Inter_700Bold,
+  [V3_FONT.interExtraBold]: Inter_800ExtraBold,
 };
 
 const FONT_WAIT_MS = 1500;
@@ -98,9 +101,11 @@ export function headingFont(): TextStyle {
 }
 
 /** Inter at a given weight. Numbers are ALWAYS Inter 700, regular width. */
-export function interFont(weight: 400 | 500 | 600 | 700 = 400): TextStyle {
+export function interFont(weight: 400 | 500 | 600 | 700 | 800 = 400): TextStyle {
   const family =
-    weight === 700
+    weight === 800
+      ? V3_FONT.interExtraBold
+      : weight === 700
       ? V3_FONT.interBold
       : weight === 600
         ? V3_FONT.interSemi

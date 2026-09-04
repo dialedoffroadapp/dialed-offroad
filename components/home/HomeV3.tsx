@@ -19,13 +19,15 @@ import { meterHeroLine } from "../../lib/dialedMeter";
 import { dayOneEyebrow, daysBetween, homeEyebrow, homeHeadline, seasonYear, setupEyebrow, valuesSummary } from "../../lib/homeCopy";
 import { useHomeV3 } from "../../lib/homeV3";
 import { dateToIso, saveNextRideDate } from "../../lib/nextRide";
+import { readOpenSession } from "../../lib/rideDay";
 import { saveSeasonGoal, clearSeasonGoal } from "../../lib/seasonGoals";
-import { paywallHref } from "../../lib/paywall";
+import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 
-// Until the ride-mode workstream lands, Start riding routes to the shipped
-// tune flow (PROMPT: "routes to the existing tune flow for now").
-const START_RIDING_ROUTE = "/(tabs)/tune";
+// Start riding → the ride-day flow (feat/ride-day-flow). An open session
+// lands straight in ride mode (the start screen redirects), so Home stays
+// the way back into a ride in progress.
+const START_RIDING_ROUTE = "/ride/start";
 const SETUP_SHEET_ROUTE = "/setup-sheet";
 const STORY_ROUTE = "/setup-story";
 
@@ -47,8 +49,13 @@ export function HomeV3() {
   useFocusEffect(
     useCallback(() => {
       loggedRef.current = new Set();
+      // Ride mode is a persistent takeover: an open session (survives app
+      // kill and reboot) lands straight back in it.
+      void readOpenSession().then((open) => {
+        if (open) router.replace("/ride/mode" as never);
+      });
       return undefined;
-    }, [])
+    }, [router])
   );
   useEffect(() => {
     if (!data?.userId) return;
@@ -90,8 +97,8 @@ export function HomeV3() {
     void logEvent("story_opened", { bike_id: data.bike.id, versions: data.versions.length, source: "home" });
     if (data.isPro) router.push({ pathname: STORY_ROUTE, params: { bikeId: data.bike.id } } as never);
     else {
-      void logEvent("history_gate_hit", { bike_id: data.bike.id, version_count: data.versions.length, source: "home_story" });
-      router.push(paywallHref("setup_history", "back") as never);
+      void logEvent("history_gate_hit", { bike_id: data.bike.id, version_count: data.versions.length, source: "home_story", paywall_trigger_action: "setup_history" });
+      showProGate({ trigger: "setup_history", bikeId: data.bike.id, hasBaseline: data.versions.length > 0 });
     }
   };
 

@@ -16,6 +16,8 @@
 // - Pass meta.guest to results so we can blur + "Unlock for free" later
 
 import { paywallHref } from "../../lib/paywall";
+import { claimBaselineCredit, refundBaselineCredit, type ClaimResult } from "../../lib/freeTune";
+import { showProGate } from "../../lib/proGate";
 import Ionicons from "@expo/vector-icons/Ionicons";
 // import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -271,6 +273,7 @@ export default function TuneScreen() {
     year: yearParam,
     nickname: nicknameParam,
     prefill,
+    regenerate,
   } = useLocalSearchParams<{
     preset?: string;
     t?: string;
@@ -281,6 +284,8 @@ export default function TuneScreen() {
     year?: string;
     nickname?: string;
     prefill?: string;
+    /** Free rule (2026-09-04): regenerate the bike's baseline (replaces the running one). */
+    regenerate?: string;
   }>();
   const { onboardingActive, state, setStep } = useOnboarding();
 
@@ -418,17 +423,29 @@ export default function TuneScreen() {
   const [proStatusResolved, setProStatusResolved] = useState(false);
 
   // --- CTA logic for main button ---
-  const hasFreeTrialTune = !isPro && trialUsed < TRIAL_LIMIT;
+  // Free rule (2026-09-04): one baseline per garage bike, regenerable, so a
+  // selected garage bike can ALWAYS generate for free; only a bikeless
+  // "custom bike" still spends the legacy single credit. The server decides
+  // (claim_free_tune(p_bike_id)); this only drives the label.
+  const isRegenerate = regenerate === "1";
+  const hasGarageBike = !!selectedBikeId && isUuid(selectedBikeId);
+  const hasFreeTrialTune = !isPro && (hasGarageBike || trialUsed < TRIAL_LIMIT);
   const trialExhausted = proStatusResolved && !isPro && !hasFreeTrialTune;
   const primaryCtaLabel = isOnboarding
     ? isPro || hasFreeTrialTune || !proStatusResolved
       ? "Generate my first tune"
-      : "Go Pro for unlimited tunes"
+      : "See Pro"
     : !proStatusResolved || isPro
-    ? "Generate tune"
+    ? isRegenerate
+      ? "Regenerate baseline"
+      : "Generate tune"
     : hasFreeTrialTune
-    ? "Use 1 free tune credit"
-    : "Go Pro for unlimited tunes";
+    ? isRegenerate || hasGarageBike
+      ? isRegenerate
+        ? "Regenerate baseline"
+        : "Generate tune"
+      : "Use 1 free tune credit"
+    : "See Pro";
 
   const ctaDisabled = generating;
 
@@ -787,9 +804,9 @@ export default function TuneScreen() {
       return;
     }
 
-    // Set when claim_free_tune actually consumed the trial credit (reason
-    // "trial", not "pro") so a failed/timed-out generation can refund it.
-    let claimedTrialCredit = false;
+    // The claim result: consumed credits (trial / first_baseline) are
+    // refunded on a failed generation; regenerate and pro consume nothing.
+    let claimResult: ClaimResult | null = null;
 
     try {
       const { data: auth } = await supabase.auth.getUser();
@@ -804,43 +821,34 @@ export default function TuneScreen() {
         return;
       }
 
-      // 🔐 Only run claim_free_tune when we actually have a signed-in user
+      // 🔐 Only claim when we actually have a signed-in user. Per-bike rule:
+      // a garage bike's baseline is free (first time counted, regenerates
+      // not), so this only ever gates a bikeless custom-bike tune.
       if (!isGuest && !isPro) {
-        const { data: claim, error: claimErr } = await supabase.rpc("claim_free_tune").single();
+        const claim = await claimBaselineCredit(selectedBikeId ?? null);
 
-        if (claimErr) {
-          console.warn("Tune: claim_free_tune failed", claimErr);
+        if (claim.reason === "error") {
+          console.warn("Tune: claim_free_tune failed");
           toast.show("Couldn’t check your free tune. Try again.", { kind: "error" });
           return;
         }
 
-        if (!claim?.ok && claim?.reason === "no_trial") {
-          // No trial left – do NOT call AI
-          toast.show("Your free AI tune is used. Go Pro for unlimited tunes.", {
-            kind: "info",
-          });
-          router.push(paywallHref("second_tune", "back") as any);
+        if (!claim.ok && claim.reason === "no_trial") {
+          // Legacy single credit spent on a custom bike: the Pro gate names
+          // the action and offers "Update my baseline instead".
+          showProGate({ trigger: "second_tune", bikeId: selectedBikeId ?? null });
           return;
         }
 
-        if (!claim?.ok) {
-          // Catch-all: any other non-ok reason (rate_limited, error, unknown shape)
-          console.warn("Tune: claim_free_tune denied", claim);
+        if (!claim.ok) {
+          console.warn("Tune: claim_free_tune denied", claim.reason);
           toast.show("Couldn't claim your tune right now. Try again.", { kind: "error" });
           return;
         }
 
-        // claim.reason is 'trial' or 'pro'
-        claimedTrialCredit = (claim as any)?.reason === "trial";
-        const trialCountFromServer = (claim as any)?.trial_tunes_used;
-
-        if (typeof trialCountFromServer === "number") {
-          setTrialUsed(trialCountFromServer);
-        }
-
-        if (claim?.reason === "pro") {
-          setIsPro(true); // server says they’re Pro now
-        }
+        claimResult = claim;
+        setTrialUsed(claim.trialTunesUsed);
+        if (claim.isPro) setIsPro(true); // server says they’re Pro now
       }
 
       if (track.trim() && isProfane(track)) {
@@ -1014,6 +1022,8 @@ export default function TuneScreen() {
           },
           onboarding: isOnboarding ? true : false,
           guest: !user?.id,
+          // Free rule: a regenerated baseline parents onto the running version.
+          regenerate: isRegenerate,
         })
       );
 
@@ -1063,25 +1073,9 @@ export default function TuneScreen() {
     } catch (e: any) {
       // The credit was claimed before the engine ran (deliberate — claiming
       // after generation would allow race abuse). Nothing was delivered, so
-      // give the credit back. Fire-and-forget: refund failure must not mask
-      // the generation error the rider needs to see.
-      if (claimedTrialCredit) {
-        void (async () => {
-          try {
-            const { data, error: refundErr } = await supabase
-              .rpc("refund_free_tune")
-              .single();
-            if (refundErr) {
-              console.error("refund_free_tune failed", refundErr);
-              return;
-            }
-            const used = (data as any)?.trial_tunes_used;
-            if (typeof used === "number") setTrialUsed(used);
-          } catch (refundErr) {
-            console.error("refund_free_tune failed", refundErr);
-          }
-        })();
-      }
+      // give a CONSUMED credit back (no-op for regenerate / pro). Fire-and-
+      // forget: refund failure must not mask the generation error.
+      void refundBaselineCredit(claimResult);
       toast.show(e?.message ?? "AI tune failed", { kind: "error" });
     } finally {
       generatingRef.current = false;
@@ -1859,7 +1853,7 @@ export default function TuneScreen() {
                 // If trial is exhausted and they’re not Pro, this button is a pure paywall CTA
                 if (trialExhausted) {
                   Haptics.selectionAsync();
-                  router.push(paywallHref("second_tune", "back") as any);
+                  showProGate({ trigger: "second_tune", bikeId: selectedBikeId ?? null });
                   return;
                 }
                 onGenerate();

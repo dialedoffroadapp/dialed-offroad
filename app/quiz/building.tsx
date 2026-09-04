@@ -13,7 +13,7 @@ import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withTiming } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { useOnboarding } from "../../lib/onboarding";
-import { paywallHref } from "../../lib/paywall";
+import { showProGate } from "../../lib/proGate";
 import { useQuiz } from "../../lib/quizContext";
 import { generateQuizTune, QuizGenerateError, type QuizGenerateResult } from "../../lib/quizGenerate";
 import {
@@ -146,16 +146,16 @@ export default function QuizBuildingScreen() {
         <Animated.View entering={FadeIn.duration(160)} style={styles.errorCard}>
           <Ionicons name="alert-circle-outline" size={22} color={Q.TEXT} />
           <Text style={[styles.errorTitle, displayFont("bold")]}>
-            {error.code === "no_trial" ? "Free tune already used" : "Couldn't build it"}
+            {error.code === "no_trial" ? "That one's Pro" : "Couldn't build it"}
           </Text>
           <Text style={styles.errorText}>{error.message}</Text>
           {error.code === "no_trial" ? (
             <Pressable
-              onPress={() => router.replace(paywallHref("second_tune", "back") as never)}
+              onPress={() => showProGate({ trigger: "second_tune", bikeId: answers.bikeLocalId ?? null })}
               style={styles.cta}
               accessibilityRole="button"
             >
-              <Text style={[styles.ctaText, displayFont("bold")]}>Go Pro</Text>
+              <Text style={[styles.ctaText, displayFont("bold")]}>See options</Text>
             </Pressable>
           ) : (
             <Pressable

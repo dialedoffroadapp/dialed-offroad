@@ -1,5 +1,5 @@
 // app/(tabs)/garage.tsx
-import { paywallHref } from "../../lib/paywall";
+import { showProGate } from "../../lib/proGate";
 import { GarageV3 } from "../../components/garage/GarageV3";
 import { HOME_GARAGE_V3_ENABLED } from "../../lib/featureFlags";
 import { Ionicons } from "@expo/vector-icons";
@@ -699,12 +699,8 @@ function LegacyGarageScreen() {
   const onAddBike = async () => {
     // Free-plan gate
     if (!isPro && bikes.length >= FREE_BIKE_LIMIT) {
-      toast.show(
-        `Free plan: up to ${FREE_BIKE_LIMIT} bikes in your Garage. Unlock Pro for unlimited bikes.`,
-        { kind: "info" }
-      );
       Haptics.selectionAsync();
-      router.push(paywallHref("second_bike", "back") as any);
+      showProGate({ trigger: "second_bike" });
       return;
     }
 

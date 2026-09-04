@@ -150,6 +150,8 @@ export async function createManualVersion(params: {
   terrain?: string | null;
   note?: string;
   parentId?: string | null;
+  /** Extra columns (e.g. ride_day_id once migration 20260904120000 lands). */
+  extra?: Record<string, unknown>;
 }): Promise<SetupVersionRow> {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id;
@@ -164,6 +166,7 @@ export async function createManualVersion(params: {
   if (params.from?.recommended_settings) base.recommended_settings = params.from.recommended_settings;
   if (params.from?.applied_settings) base.applied_settings = params.from.applied_settings;
   if (params.setupId) base.setup_id = params.setupId;
+  Object.assign(base, params.extra ?? {});
   const { data, error } = await supabase.from("setup_versions").insert(base).select("*").single();
   if (error) throw error;
   void logEvent("version_created", { bike_id: params.bikeId, source: "manual", setup_id: params.setupId ?? null });
