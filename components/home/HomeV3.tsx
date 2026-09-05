@@ -22,6 +22,7 @@ import { dayOneEyebrow, daysBetween, homeEyebrow, homeHeadline, seasonYear, setu
 import { useHomeV3 } from "../../lib/homeV3";
 import { dateToIso, saveNextRideDate } from "../../lib/nextRide";
 import { readEndedUnarchived, readOpenSession, readHistory } from "../../lib/rideDay";
+import { abandonQuickRefine } from "../../lib/rideEnd";
 import { isEntitled, maybeStartLaunchTrial, resolveEntitlement, subscribeEntitlement, trialNearEnd, type Entitlement, FREE_ENTITLEMENT } from "../../lib/entitlement";
 import { emitLifecycleEvent } from "../../lib/lifecycle";
 import { meterStalled, stallLine } from "../../lib/meterStall";
@@ -100,7 +101,9 @@ export function HomeV3() {
       // Ride mode is a persistent takeover: an open session (survives app
       // kill and reboot) lands straight back in it.
       void readOpenSession().then(async (open) => {
-        if (open) return router.replace("/ride/mode" as never);
+        // A quick refine left open is finished or dropped here, never a takeover.
+        if (open?.quick) await abandonQuickRefine(open);
+        else if (open) return router.replace("/ride/mode" as never);
         // Ended but never settled/archived (killed on End ride, Android back,
         // the forgotten-session prompt): finish it before anything else.
         if (await readEndedUnarchived()) router.replace("/ride/end" as never);

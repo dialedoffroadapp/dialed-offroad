@@ -23,7 +23,7 @@ import type { SettingsSnapshot, SetupVersionRow } from "./setupVersions";
 import { supabase } from "./supabase";
 import { logEvent } from "./usage";
 import { isUuid, newUuid } from "./uuid";
-import { ratingFor, severityFor } from "./rideSymptoms";
+import { ratingFor, severityFor, type SymptomLevel } from "./rideSymptoms";
 import { createManualVersion } from "./bikeSetups";
 import { primarySurface } from "./rideConditions";
 
@@ -38,7 +38,7 @@ export const RIDE_IDLE_PROMPT_MS = 12 * 60 * 60 * 1000;
 
 export type Sentiment = "better" | "same" | "worse";
 
-export type MotoSymptom = { id: string; qualifier: string | null; label: string };
+export type MotoSymptom = { id: string; qualifier: string | null; label: string; level?: SymptomLevel | null };
 
 export type MotoLog = {
   seq: number; // moto number, 1-based
@@ -115,6 +115,12 @@ export type RideSession = {
   /** The settle failed on device (offline) and a settle_version job is queued. */
   settlePending?: boolean;
   meterPct?: number | null;
+  /** A quick refine (setup sheet "Refine after ride", or the retired debrief's
+   *  redirect): Log → Adjust on the running setup with no track, clock,
+   *  conditions or ride_days row. Its motos still write ride_feedback rows and
+   *  its changes settle into ONE version when the rider taps Done. Never a
+   *  ride-mode takeover. */
+  quick?: boolean;
 };
 
 export function newLocalId(prefix = "ride"): string {
@@ -265,7 +271,9 @@ export async function settleSessionVersion(s: RideSession): Promise<SetupVersion
       sag_mm: eff.shock_sag,
     },
     terrain: primarySurface(s.conditions) ?? from?.terrain ?? null,
-    note: `Ride day settled${s.trackName ? ` at ${s.trackName}` : ""}: ${s.motos.length} ${s.motos.length === 1 ? "moto" : "motos"}, ${changed} ${changed === 1 ? "change" : "changes"}`,
+    note: s.quick
+      ? `Refined after a ride: ${changed} ${changed === 1 ? "change" : "changes"}`
+      : `Ride day settled${s.trackName ? ` at ${s.trackName}` : ""}: ${s.motos.length} ${s.motos.length === 1 ? "moto" : "motos"}, ${changed} ${changed === 1 ? "change" : "changes"}`,
     ...(s.serverId ? { extra: { ride_day_id: s.serverId } } : {}),
   } as any);
 }
@@ -355,6 +363,44 @@ export async function startSession(d: RideDraft, userId: string | null): Promise
   return s;
 }
 
+/** A quick refine on a setup (no ride day): the open-session slot holds it so
+ *  Log and Adjust work unchanged; nothing ride-day-shaped is queued. */
+export async function startQuickRefineSession(p: {
+  bike: RideBike;
+  setupId: string | null;
+  setupName: string | null;
+  startingVersion: SetupVersionRow;
+  hasAirFork: boolean;
+  userId: string | null;
+}): Promise<RideSession> {
+  const now = new Date().toISOString();
+  const s: RideSession = {
+    localId: newLocalId("refine"),
+    serverId: null,
+    userId: p.userId,
+    bike: p.bike,
+    setupId: p.setupId,
+    setupName: p.setupName ?? "Baseline",
+    startingVersionId: p.startingVersion.id,
+    startingVersionNumber: p.startingVersion.version_number,
+    hasAirFork: p.hasAirFork,
+    trackId: null,
+    trackName: null,
+    conditions: { ...EMPTY_CONDITIONS },
+    startedAt: now,
+    endedAt: null,
+    base: snapshotFromVersion(p.startingVersion),
+    pending: [],
+    motos: [],
+    suggestionShown: false,
+    suggestionApplied: false,
+    lastActiveAt: now,
+    quick: true,
+  };
+  await writeSession(s);
+  return s;
+}
+
 /** Append a set of deltas (conditions tweak, retune, or a confirmed adjust). */
 export async function applyDeltas(
   s: RideSession,
@@ -419,7 +465,8 @@ export async function logMoto(
     feedbackId: newUuid(),
   };
   const next = await writeSession({ ...s, motos: [...s.motos, moto] });
-  await enqueue({ kind: "moto_insert", localId: s.localId, motoLocalId: moto.localId });
+  // A quick refine has no ride_days row, so no track_sessions row either.
+  if (!s.quick) await enqueue({ kind: "moto_insert", localId: s.localId, motoLocalId: moto.localId });
   await enqueue({ kind: "moto_feedback", localId: s.localId, motoLocalId: moto.localId });
   void flushOutbox();
   return next;
@@ -437,7 +484,25 @@ export type OutboxJob =
   | { kind: "moto_feedback"; localId: string; motoLocalId: string }
   /** The day's ONE manual version, when the device was offline at End ride. */
   | { kind: "settle_version"; localId: string }
+  /** Stamp resulting_version_id on the day's ride_feedback rows once settled
+   *  (the column-scoped update RLS allows exactly this). */
+  | { kind: "feedback_link"; localId: string }
   | { kind: "ride_day_end"; localId: string };
+
+/** Link every moto's ride_feedback row to the version the session settled
+ *  into. Throws on the first failed row so the caller can queue a retry. */
+export async function linkFeedbackToVersion(s: RideSession): Promise<number> {
+  const vid = s.settledVersionId;
+  if (!vid || !isUuid(vid)) return 0;
+  let n = 0;
+  for (const m of s.motos) {
+    if (!m.feedbackId) continue;
+    const { error } = await supabase.from("ride_feedback").update({ resulting_version_id: vid }).eq("id", m.feedbackId);
+    if (error) throw error;
+    n += 1;
+  }
+  return n;
+}
 
 export async function readOutbox(): Promise<OutboxJob[]> {
   return (await readJson<OutboxJob[]>(RIDE_OUTBOX_KEY)) ?? [];
@@ -479,9 +544,12 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
     const findSession = (localId: string) =>
       open?.localId === localId ? open : history.find((h) => h.localId === localId) ?? null;
     const remaining: OutboxJob[] = [];
-    for (const job of jobs) {
+    for (let k = 0; k < jobs.length; k += 1) {
+      const job = jobs[k];
       const s = findSession(job.localId);
       if (!s) continue; // orphan: drop
+      // Quick refines never own ride_days / track_sessions rows.
+      if (s.quick && (job.kind === "ride_day_upsert" || job.kind === "ride_day_end" || job.kind === "moto_insert")) continue;
       try {
         if (job.kind === "ride_day_upsert" || job.kind === "ride_day_end") {
           const row: Record<string, unknown> = {
@@ -545,8 +613,12 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
           s.settledVersionId = vid;
           s.settlePending = false;
           const stamp = (cur: RideSession): RideSession => ({ ...cur, settledVersionId: vid, settlePending: false });
+          // Link the feedback rows that exist (pre-change motos have no id).
+          if (vid && isUuid(vid) && s.motos.some((m) => m.feedbackId)) jobs = [...jobs, { kind: "feedback_link", localId: s.localId }];
           if (open && open.localId === s.localId) await patchOpenSession(s.localId, stamp);
           else await patchHistorySession(s.localId, stamp);
+        } else if (job.kind === "feedback_link") {
+          await linkFeedbackToVersion(s);
         } else if (job.kind === "moto_feedback") {
           const moto = s.motos.find((m) => m.localId === job.motoLocalId);
           // No feedback id (pre-change moto) or no real version to key on: nothing to write, drop the job.
@@ -557,7 +629,7 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
               user_id: userId,
               setup_version_id: s.startingVersionId,
               overall_rating: ratingFor(moto.sentiment),
-              symptoms: moto.symptoms.map((x) => ({ id: x.id, severity: severityFor(moto.sentiment), ...(x.qualifier ? { where: x.qualifier } : {}) })),
+              symptoms: moto.symptoms.map((x) => ({ id: x.id, severity: severityFor(moto.sentiment, x.level), ...(x.qualifier ? { where: x.qualifier } : {}) })),
               free_text: moto.note,
               created_at: moto.loggedAt,
             },

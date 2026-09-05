@@ -2,7 +2,7 @@
 import { HOME_GARAGE_V3_ENABLED } from "../lib/featureFlags";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -364,7 +364,18 @@ function PulsePressable({
 /* Screen                                                             */
 /* ------------------------------------------------------------------ */
 
+/** 3.0 (device pass round 3, item 5): the debrief is retired under the v3
+ *  flag. Every caller (check-in cards, bike home, results, active setup card)
+ *  lands on the ride-day Log in quick mode for the same bike and version. */
 export default function TuneFeedbackScreen() {
+  const { bikeId, versionId } = useLocalSearchParams<RouteParams>();
+  if (HOME_GARAGE_V3_ENABLED) {
+    return <Redirect href={{ pathname: "/ride/log", params: { quick: "1", bikeId: bikeId ?? "", versionId: versionId ?? "" } } as never} />;
+  }
+  return <LegacyTuneFeedbackScreen />;
+}
+
+function LegacyTuneFeedbackScreen() {
   const { meta, previous, context, versionId, checkinSource } =
     useLocalSearchParams<RouteParams>();
   const router = useRouter();

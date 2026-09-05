@@ -32,8 +32,16 @@ export function symptomById(id: string): SymptomChip | undefined {
   return ALL_SYMPTOMS.find((s) => s.id === id);
 }
 
-/** Engine severity (1-10) from the moto's sentiment. */
-export function severityFor(sentiment: "better" | "same" | "worse"): number {
+/** Chip tap level (ported from the legacy debrief's 1-5 picker): one tap =
+ *  mild, a second tap = bad, a third clears the chip. */
+export type SymptomLevel = "mild" | "bad";
+
+/** Engine severity (1-10): the chip's tap level when the rider set one
+ *  (mild = 4, bad = 8: the debrief's 2 and 4 on its 1-5 scale, doubled
+ *  once), else derived from the moto's sentiment. */
+export function severityFor(sentiment: "better" | "same" | "worse", level?: SymptomLevel | null): number {
+  if (level === "bad") return 8;
+  if (level === "mild") return 4;
   return sentiment === "worse" ? 8 : sentiment === "same" ? 6 : 4;
 }
 

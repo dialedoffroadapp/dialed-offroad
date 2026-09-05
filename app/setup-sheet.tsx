@@ -24,7 +24,6 @@ import { saveBikeExtras } from "../lib/bikeExtras";
 import { createManualVersion, runningSetup, switchRunningSetup, type SetupWithVersions } from "../lib/bikeSetups";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../lib/garageV3";
 import { shortDate } from "../lib/homeCopy";
-import { buildRefineParams } from "../lib/refineFlow";
 import { primarySymptom } from "../lib/setupStory";
 import { SYMPTOM_PHRASES } from "../lib/ai";
 import type { SetupVersionRow, VersionWithFeedback } from "../lib/setupVersions";
@@ -170,9 +169,12 @@ export default function SetupSheetScreen() {
     await load();
   };
 
+  // 3.0: refinement is the ride-day Log → Adjust on a quick session (the
+  // legacy debrief is retired under the flag); the result is the next version
+  // on this setup.
   const onRefine = () => {
     if (!v) return;
-    router.push({ pathname: "/tune-feedback", params: buildRefineParams(v, bikeTitle) } as any);
+    router.push({ pathname: "/ride/log", params: { quick: "1", bikeId: bike.id, setupId: setup.id ?? "default", versionId: v.id } } as never);
   };
 
   const onShare = () => {

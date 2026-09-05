@@ -4,6 +4,8 @@
 // that saves and records the new ABSOLUTE value. "Different amount" opens a
 // stepper for that adjuster only. "Skip" moves on. Change sets come from the
 // engine (lib/rideAdjust.ts); ?manual=1 (or no signal) is the stepper list.
+// On a quick refine (session.quick) Done settles ONE version on the refined
+// setup and returns to its sheet instead of ride mode.
 import { formatSetting } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
@@ -20,7 +22,9 @@ import { CIRCUIT_STEPS, type CircuitKey } from "../../lib/currentSetup";
 import { CIRCUIT_LABELS, directionLine, fetchAdjustResult, type AdjustChange } from "../../lib/rideAdjust";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { readOpenSession, rideEffective, setAbsolute, type RideSession } from "../../lib/rideDay";
-import { symptomById } from "../../lib/rideSymptoms";
+import { finishQuickRefine } from "../../lib/rideEnd";
+import { useToast } from "../../components/Toast";
+import { symptomById, type SymptomLevel } from "../../lib/rideSymptoms";
 import { logEvent } from "../../lib/usage";
 
 type Phase = "loading" | "changes" | "manual" | "error";
@@ -30,7 +34,9 @@ const fmt = (v: number, k: CircuitKey) => formatSetting(v, k);
 export default function RideAdjustScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { symptom, qualifier, moto, sentiment, manual } = useLocalSearchParams<{ symptom?: string; qualifier?: string; moto?: string; sentiment?: string; manual?: string }>();
+  const { symptom, qualifier, moto, sentiment, manual, level } = useLocalSearchParams<{ symptom?: string; qualifier?: string; moto?: string; sentiment?: string; manual?: string; level?: string }>();
+  const toast = useToast();
+  const [finishing, setFinishing] = useState(false);
   const [s, setS] = useState<RideSession | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [changes, setChanges] = useState<AdjustChange[]>([]);
@@ -59,7 +65,7 @@ export default function RideAdjustScreen() {
         const lastNote = open.motos[open.motos.length - 1]?.note ?? "";
         const text = asked > 0 ? freeText : lastNote;
         if (asked === 0 && lastNote && !freeText) setFreeText(lastNote);
-        const res = await fetchAdjustResult(open, symptom as any, qualifier || null, (sentiment as any) || "worse", rideEffective(open), text);
+        const res = await fetchAdjustResult(open, symptom as any, qualifier || null, (sentiment as any) || "worse", rideEffective(open), text, (level === "mild" || level === "bad" ? level : null) as SymptomLevel | null);
         const list = res.changes;
         if (!alive) return;
         setReasoning(res.reasoning);
@@ -92,7 +98,16 @@ export default function RideAdjustScreen() {
     );
   }
 
-  const finish = () => router.replace("/ride/mode" as never);
+  const finish = () => {
+    if (!s.quick) return router.replace("/ride/mode" as never);
+    if (finishing) return;
+    setFinishing(true);
+    void finishQuickRefine(s).then((r) => {
+      if (r.queued) toast.show("Saved on phone. Syncs when you have bars.", { kind: "info" });
+      else if (r.version) toast.show(`Saved as v${r.version.version_number}`, { kind: "success" });
+      router.replace({ pathname: "/setup-sheet", params: { bikeId: s.bike.id, setupId: s.setupId ?? "default" } } as never);
+    });
+  };
   const chip = symptom ? symptomById(symptom) : null;
   const forLine = chip ? `For ${chip.label.toLowerCase()}${qualifier ? ` on ${qualifier.toLowerCase()}` : ""}` : "By hand";
 
@@ -119,7 +134,7 @@ export default function RideAdjustScreen() {
             <Eyebrow style={{ marginBottom: 0 }}>Adjust</Eyebrow>
           </View>
           <RideH1 out>By hand</RideH1>
-          {error ? <Small style={{ fontSize: 14, marginBottom: 14 }}>{error}</Small> : <Small style={{ fontSize: 14, marginBottom: 14 }}>Tap what you turned. Saved as you go; settled into one version at End ride.</Small>}
+          {error ? <Small style={{ fontSize: 14, marginBottom: 14 }}>{error}</Small> : <Small style={{ fontSize: 14, marginBottom: 14 }}>{s.quick ? "Tap what you turned. Saved as one new version when you tap Done." : "Tap what you turned. Saved as you go; settled into one version at End ride."}</Small>}
           {keys.map((k) => (
             <Pressable key={k} onPress={() => setCustom({ circuit: k, value: eff[k] as number })} accessibilityRole="button" style={styles.manualRow}>
               <Text style={[styles.manualK, interFont(400)]}>{CIRCUIT_LABELS[k]}</Text>
@@ -127,7 +142,7 @@ export default function RideAdjustScreen() {
             </Pressable>
           ))}
           <View style={{ flex: 1 }} />
-          <Cta label="Back to riding" onPress={finish} />
+          <Cta label={s.quick ? "Done" : "Back to riding"} onPress={finish} />
         </ScrollView>
         {custom ? (
           <BottomSheet open onClose={() => setCustom(null)} title={CIRCUIT_LABELS[custom.circuit]}>

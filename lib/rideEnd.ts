@@ -8,7 +8,7 @@ import { primarySurface } from "./rideConditions";
 import { readBikeExtras, saveBikeExtras } from "./bikeExtras";
 import { createManualVersion, createNamedSetup, readNamedSetups } from "./bikeSetups";
 import { computeMeter, type MeterInputs } from "./dialedMeter";
-import { archiveSession, elapsedMs, enqueue, flushOutbox, loadStartingVersion, readHistory, rideEffective, settlePatch, settleSessionVersion, writeSession, type RideSession } from "./rideDay";
+import { archiveSession, clearOpenSession, elapsedMs, enqueue, flushOutbox, linkFeedbackToVersion, loadStartingVersion, readHistory, rideEffective, settlePatch, settleSessionVersion, writeSession, type RideSession } from "./rideDay";
 import { endRideActivity } from "./rideLiveActivity";
 import type { SetupVersionRow } from "./setupVersions";
 import { resolveEntitlement, trialNearEnd } from "./entitlement";
@@ -63,10 +63,57 @@ export async function settleRideDay(s: RideSession, rideHours: number): Promise<
     // local cache still updated inside saveBikeExtras
   }
   const session = await writeSession({ ...s, endedAt, hoursAdded: rideHours, settledVersionId, settlePending: queued });
+  if (serverOk) await linkOrQueue(session);
   await enqueue({ kind: "ride_day_end", localId: s.localId });
   void flushOutbox(session);
   void endRideActivity();
   return { session, result: { version, changedCircuits: changed, hoursAdded: rideHours, serverOk, queued } };
+}
+
+/** Stamp the day's feedback rows with the settled version, or queue it. */
+async function linkOrQueue(s: RideSession): Promise<void> {
+  try {
+    await linkFeedbackToVersion(s);
+  } catch (e) {
+    console.warn("[ride] feedback link failed, queued for the outbox", e);
+    await enqueue({ kind: "feedback_link", localId: s.localId });
+  }
+}
+
+export type QuickRefineResult = { version: SetupVersionRow | null; changedCircuits: number; queued: boolean };
+
+/** Done on a quick refine: the confirmed changes become ONE version on the
+ *  refined setup (queued when offline), the moto's feedback row is linked to
+ *  it, and the session leaves the open slot for history so queued jobs still
+ *  find it. */
+export async function finishQuickRefine(s: RideSession): Promise<QuickRefineResult> {
+  const endedAt = s.endedAt ?? new Date().toISOString();
+  const changed = Object.keys(settlePatch(s)).length;
+  let version: SetupVersionRow | null = null;
+  let queued = false;
+  let settledVersionId: string | null = s.settledVersionId ?? null;
+  if (changed > 0 && isUuid(s.bike.id) && !settledVersionId) {
+    try {
+      version = await settleSessionVersion(s);
+      settledVersionId = version?.id ?? null;
+    } catch (e) {
+      console.warn("[refine] settle failed, queued for the outbox", e);
+      await enqueue({ kind: "settle_version", localId: s.localId });
+      queued = true;
+    }
+  }
+  const session: RideSession = { ...s, endedAt, settledVersionId, settlePending: queued };
+  if (version) await linkOrQueue(session);
+  await archiveSession(session);
+  void flushOutbox(null);
+  return { version, changedCircuits: changed, queued };
+}
+
+/** A quick refine left open (rider backed out with a gesture, app killed):
+ *  finish it if a moto was logged, else drop it. Never a ride-mode takeover. */
+export async function abandonQuickRefine(s: RideSession): Promise<void> {
+  if (s.motos.length > 0 || s.pending.length > 0) await finishQuickRefine(s);
+  else await clearOpenSession();
 }
 
 /** Meter before/after the day (rides + outcomes move it; the settled manual

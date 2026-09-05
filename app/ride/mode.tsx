@@ -46,7 +46,7 @@ export default function RideModeScreen() {
 
   const load = useCallback(async () => {
     const open = await readOpenSession();
-    if (!open) return router.replace("/(tabs)" as never);
+    if (!open || open.quick) return router.replace("/(tabs)" as never);
     const idle = Date.now() - Date.parse(open.lastActiveAt);
     if (idle > RIDE_IDLE_PROMPT_MS) setStillOpen(true);
     setS(open);
