@@ -264,3 +264,25 @@ export async function switchRunningSetup(bikeId: string, setupId: string | null)
   void logEvent("run_setup_switched", { bike_id: bikeId, setup_id: setupId, server_ok: ok });
   return ok;
 }
+
+/** Rename a NAMED setup (the default setup's name is derived, never stored).
+ *  Server first (bike_setups own-rows update), cache mirror always. */
+export async function renameSetup(bikeId: string, setupId: string, name: string): Promise<boolean> {
+  const next = name.trim().slice(0, 30);
+  if (!next) return false;
+  let serverOk = false;
+  try {
+    const { error } = await supabase.from("bike_setups").update({ name: next }).eq("id", setupId);
+    serverOk = !error;
+  } catch {
+    serverOk = false;
+  }
+  try {
+    const raw = await AsyncStorage.getItem(cacheKey(bikeId));
+    const list = raw ? (JSON.parse(raw) as BikeSetup[]) : [];
+    await AsyncStorage.setItem(cacheKey(bikeId), JSON.stringify(list.map((s) => (s.id === setupId ? { ...s, name: next } : s))));
+  } catch {
+    // ignore
+  }
+  return serverOk;
+}

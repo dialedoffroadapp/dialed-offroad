@@ -31,3 +31,36 @@ export async function markSetOnBike(bikeId: string | null | undefined): Promise<
     // local-first: a failed write only delays the checkmark
   }
 }
+
+/** "Set it on the bike" walkthrough: skipped riders go straight to the plain
+ *  sheet next time but step 2 stays open (only completing marks it). */
+const SKIP_KEY = "home_set_on_bike_walkthrough_skipped_v1";
+
+export async function hasSkippedWalkthrough(bikeId: string | null | undefined): Promise<boolean> {
+  if (!bikeId) return false;
+  try {
+    const raw = await AsyncStorage.getItem(SKIP_KEY);
+    const arr = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(arr) && arr.includes(bikeId);
+  } catch {
+    return false;
+  }
+}
+
+export async function markWalkthroughSkipped(bikeId: string | null | undefined): Promise<void> {
+  if (!bikeId) return;
+  try {
+    const raw = await AsyncStorage.getItem(SKIP_KEY);
+    const arr = raw ? (JSON.parse(raw) as unknown) : [];
+    const set = new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
+    set.add(bikeId);
+    await AsyncStorage.setItem(SKIP_KEY, JSON.stringify([...set]));
+  } catch {
+    // local-first
+  }
+}
+
+/** Returning riders (completed OR skipped) skip the walkthrough. */
+export async function walkthroughSeen(bikeId: string | null | undefined): Promise<boolean> {
+  return (await hasSetOnBike(bikeId)) || (await hasSkippedWalkthrough(bikeId));
+}

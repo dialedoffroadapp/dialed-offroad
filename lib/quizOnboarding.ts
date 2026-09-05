@@ -364,6 +364,8 @@ export function modelListSubline(d: QuizDiscipline | null | undefined): string {
 
 /* ------------------------------ Answers store ---------------------------- */
 
+export type QuizFlow = "add_bike" | "new_setup";
+
 export type QuizAnswers = {
   version: 1;
   discipline?: QuizDiscipline;
@@ -373,6 +375,14 @@ export type QuizAnswers = {
   /** Guest-store local id (or bikes uuid when signed in) of the bike the
    *  quiz created, so re-answering Q2 replaces it instead of adding another. */
   bikeLocalId?: string;
+  /** Garage flows reuse the quiz screens post-onboarding (2026-09-04):
+   *  "add_bike" = picker → drumroll → reveal for a new bike's baseline;
+   *  "new_setup" = terrain tiles → drumroll → reveal for a named setup on
+   *  an existing bike. Absent = the first-run onboarding quiz. */
+  flow?: QuizFlow;
+  flowBikeId?: string;
+  flowFromVersionId?: string;
+  flowFromLabel?: string;
   /** True when make/model came from the catalog (vs free text). */
   catalogMatch?: boolean;
   skill?: QuizSkillId;
@@ -425,6 +435,10 @@ export function parseQuizAnswers(raw: string | null): QuizAnswers {
       model: optStr(p.model),
       year: optNum(p.year),
       bikeLocalId: optStr(p.bikeLocalId),
+      flow: p.flow === "add_bike" || p.flow === "new_setup" ? p.flow : undefined,
+      flowBikeId: optStr(p.flowBikeId),
+      flowFromVersionId: optStr(p.flowFromVersionId),
+      flowFromLabel: optStr(p.flowFromLabel),
       catalogMatch: typeof p.catalogMatch === "boolean" ? p.catalogMatch : undefined,
       skill: isSkill(p.skill) ? p.skill : undefined,
       terrainMain: optStr(p.terrainMain),
@@ -462,6 +476,92 @@ export async function clearQuizAnswers(): Promise<void> {
   } catch {
     // best-effort
   }
+}
+
+/** End of a run (reveal CTA): keep the RIDER facts (discipline, skill,
+ *  weight, risk acceptance) so Garage flows can build a baseline without
+ *  re-asking; clear the bike, terrain, free text and any flow. */
+export async function resetQuizForNextRun(): Promise<void> {
+  try {
+    const a = await readQuizAnswers();
+    const now = new Date().toISOString();
+    await writeQuizAnswers({
+      version: 1,
+      discipline: a.discipline,
+      skill: a.skill,
+      weightLbs: a.weightLbs,
+      weightUnit: a.weightUnit,
+      riskAcceptedAt: a.riskAcceptedAt,
+      startedAt: now,
+      updatedAt: now,
+    });
+  } catch {
+    // best-effort
+  }
+}
+
+/** Enter a Garage flow. Writes storage directly (the QuizProvider hydrates
+ *  from it on mount), then the caller pushes the flow's first screen. */
+export async function startGarageQuizFlow(
+  flow: QuizFlow,
+  p: { bikeId?: string; make?: string; model?: string; year?: number; fromVersionId?: string | null; fromLabel?: string | null }
+): Promise<string> {
+  const a = await readQuizAnswers();
+  const now = new Date().toISOString();
+  await writeQuizAnswers({
+    ...a,
+    flow,
+    flowBikeId: p.bikeId,
+    flowFromVersionId: p.fromVersionId ?? undefined,
+    flowFromLabel: p.fromLabel ?? undefined,
+    make: p.make,
+    model: p.model,
+    year: p.year,
+    bikeLocalId: p.bikeId,
+    catalogMatch: undefined,
+    freeText: undefined,
+    terrainMain: flow === "new_setup" ? undefined : a.terrainMain,
+    terrainSecondary: flow === "new_setup" ? [] : a.terrainSecondary,
+    lastStep: undefined,
+    startedAt: now,
+    updatedAt: now,
+  });
+  return flow === "add_bike" ? "/quiz/bike" : "/quiz/terrain";
+}
+
+/** "Dunes" for the new-setup name ("Dunes setup"), from the main terrain tile. */
+export function defaultSetupTerrainLabel(a: QuizAnswers): string | null {
+  if (!a.terrainMain) return null;
+  return terrainLabel(a.discipline ?? "mx", a.terrainMain);
+}
+
+export type QuizRouteStep = "bike" | "skill" | "terrain" | "weight" | "building" | "reveal";
+
+/** Where a screen goes next. Onboarding is the fixed sequence. Garage flows
+ *  ask only what is missing (rider facts persist across runs), never the
+ *  account gate (the rider is signed in), and land on the bike page. */
+export function nextQuizRoute(from: QuizRouteStep, a: QuizAnswers): string {
+  if (!a.flow) {
+    switch (from) {
+      case "bike": return "/quiz/skill";
+      case "skill": return "/quiz/terrain";
+      case "terrain": return "/quiz/weight";
+      case "weight": return "/quiz/building";
+      case "building": return "/quiz/gate";
+      case "reveal": return "/(tabs)";
+    }
+  }
+  const order: QuizRouteStep[] = a.flow === "add_bike" ? ["bike", "skill", "terrain", "weight"] : ["terrain", "skill", "weight"];
+  const needed = (step: QuizRouteStep) =>
+    step === "skill" ? !a.skill : step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
+  if (from === "building") return "/quiz/reveal";
+  if (from === "reveal") {
+    const id = a.flowBikeId ?? a.bikeLocalId;
+    return id ? `/garage-bike?bikeId=${encodeURIComponent(id)}` : "/(tabs)/garage";
+  }
+  const idx = order.indexOf(from);
+  for (const step of order.slice(idx + 1)) if (needed(step)) return `/quiz/${step}`;
+  return "/quiz/building";
 }
 
 /* --------------------------- Engine input builder ------------------------ */

@@ -15,8 +15,7 @@ import {
   logQuizEvent,
   SKILL_OPTIONS,
   skillEcho,
-  type QuizSkillId,
-} from "../../lib/quizOnboarding";
+  type QuizSkillId, nextQuizRoute } from "../../lib/quizOnboarding";
 
 export default function QuizSkillScreen() {
   const router = useRouter();
@@ -33,7 +32,7 @@ export default function QuizSkillScreen() {
         engine_skill: engineSkillForQuizSkill(id),
       });
     },
-    onAdvance: () => router.push("/quiz/terrain" as never),
+    onAdvance: () => router.push(nextQuizRoute("skill", answers) as never),
   });
 
   const title = answers.model ? (

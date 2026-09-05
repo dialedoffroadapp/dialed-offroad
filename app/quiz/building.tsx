@@ -23,8 +23,7 @@ import {
   drumrollChecklist,
   formatTuneValue,
   terrainLabel,
-  tuneRowValue,
-} from "../../lib/quizOnboarding";
+  tuneRowValue, nextQuizRoute } from "../../lib/quizOnboarding";
 
 const CYCLE_MS = 55;
 const SETTLE_MS = 450;
@@ -119,10 +118,10 @@ export default function QuizBuildingScreen() {
       } catch (e) {
         console.warn("[quiz] setStep(results_locked) failed", e);
       }
-      router.replace("/quiz/gate" as never);
+      router.replace(nextQuizRoute("building", answers) as never);
     }, SETTLE_MS);
     return () => clearTimeout(t);
-  }, [result, stage, onboardingActive, setStep, router]);
+  }, [result, stage, onboardingActive, setStep, router, answers]);
 
   const progress = useSharedValue(0);
   useEffect(() => {

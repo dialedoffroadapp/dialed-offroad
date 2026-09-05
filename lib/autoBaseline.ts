@@ -109,7 +109,17 @@ async function resolveBikeId(
  * Skips when: no signed-in user, no pending tune, no resolvable uuid bike,
  * or a setup_versions row already exists for that bike (re-entry guard).
  */
-export async function autoCreateBaselineFromPendingTune(): Promise<AutoBaselineResult | null> {
+export type AutoBaselineOptions = {
+  /** 3.0 named setups: attach the version to this bike_setups row. */
+  setupId?: string | null;
+  /** "Starts from" lineage (a new setup branched off the running version). */
+  parentVersionId?: string | null;
+  /** Skip the one-v1-per-bike re-entry guard (a NEW setup on a bike that
+   *  already has versions). Callers own their own idempotency then. */
+  allowExisting?: boolean;
+};
+
+export async function autoCreateBaselineFromPendingTune(opts: AutoBaselineOptions = {}): Promise<AutoBaselineResult | null> {
   try {
     const { data: auth } = await supabase.auth.getUser();
     const userId = auth?.user?.id;
@@ -168,7 +178,7 @@ export async function autoCreateBaselineFromPendingTune(): Promise<AutoBaselineR
       });
       return null;
     }
-    if (existing?.id) return null;
+    if (existing?.id && !opts.allowExisting) return null;
 
     const terrain: string | null = Array.isArray(meta?.context?.terrain)
       ? meta.context.terrain[0] ?? null
@@ -182,6 +192,8 @@ export async function autoCreateBaselineFromPendingTune(): Promise<AutoBaselineR
       bikeId,
       tune,
       terrain,
+      setupId: opts.setupId ?? null,
+      parentVersionId: opts.parentVersionId ?? null,
       context: meta?.context ?? null,
       recommendedContext: {
         model_id: spec?.model_id ?? null,

@@ -5,8 +5,7 @@
 // this image IS marketing, so it's styled tighter than the app screens.
 
 import React, { useCallback, useRef, useState } from "react";
-import { Share, StyleSheet, Text, View } from "react-native";
-import ViewShot, { captureRef } from "react-native-view-shot";
+import { NativeModules, Share, StyleSheet, Text, TurboModuleRegistry, View } from "react-native";
 import { logEvent } from "../lib/usage";
 
 export type ShareSetupData = {
@@ -27,16 +26,48 @@ type ShareSource = "history" | "results";
 
 const CARD_W = 360;
 
-// expo-sharing is a NATIVE module. Loaded lazily, at call time, inside a try:
-// a module-scope import crashed app/ride/end.tsx on a dev client built without
-// it (2026-09-04), which no adapter guard downstream can prevent. Absent means
-// "hide the Share button", not "broken"; the RN Share API stays the fallback
-// when the module exists but reports unavailable.
+// BOTH native modules load lazily, at call time, inside a try. A module-scope
+// import of either one made this module fail to evaluate on a dev client
+// built without it, and every importer (setup sheet, history, Tune Two
+// results, End ride) then read `useShareSetup` off an undefined module
+// (2026-09-04). Absent means "hide the Share button", not "broken"; the RN
+// Share API stays the fallback when expo-sharing exists but reports
+// unavailable.
 type SharingModule = {
   isAvailableAsync: () => Promise<boolean>;
   shareAsync: (uri: string, opts?: { mimeType?: string; dialogTitle?: string }) => Promise<void>;
 };
+type ViewShotModule = {
+  default: React.ComponentType<any>;
+  captureRef: (ref: any, opts?: Record<string, unknown>) => Promise<string>;
+};
+/** Is the NATIVE half registered in this binary? Checked BEFORE requiring the
+ *  JS package, because react-native-view-shot's JS calls
+ *  TurboModuleRegistry.getEnforcing at module scope and that throw surfaced
+ *  as a crash on the dev client despite the try (2026-09-04). Expo modules
+ *  register on the global expo object, legacy modules on NativeModules. */
+function nativePresent(name: string): boolean {
+  try {
+    if (TurboModuleRegistry.get(name)) return true;
+  } catch {
+    // fall through
+  }
+  try {
+    if ((NativeModules as any)?.[name]) return true;
+  } catch {
+    // fall through
+  }
+  try {
+    const expo = (globalThis as any).expo;
+    if (expo?.modules?.[name]) return true;
+  } catch {
+    // fall through
+  }
+  return false;
+}
+
 function getSharing(): SharingModule | null {
+  if (!nativePresent("ExpoSharing")) return null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require("expo-sharing");
@@ -45,9 +76,20 @@ function getSharing(): SharingModule | null {
     return null;
   }
 }
-/** True when the native sharing module is in this binary. */
+function getViewShot(): ViewShotModule | null {
+  if (!nativePresent("RNViewShot")) return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("react-native-view-shot");
+    const Comp = mod?.default ?? mod;
+    return mod && typeof mod.captureRef === "function" && Comp ? { default: Comp, captureRef: mod.captureRef } : null;
+  } catch {
+    return null;
+  }
+}
+/** True when both native pieces (capture + share sheet) are in this binary. */
 export function isSharingAvailable(): boolean {
-  return getSharing() !== null;
+  return getSharing() !== null && getViewShot() !== null;
 }
 
 const fmt = (v: number | null, digits = 0): string =>
@@ -60,7 +102,7 @@ const fmt = (v: number | null, digits = 0): string =>
  * the next frame, then shared.
  */
 export function useShareSetup() {
-  const shotRef = useRef<ViewShot>(null);
+  const shotRef = useRef<any>(null);
   const [data, setData] = useState<ShareSetupData | null>(null);
   const busyRef = useRef(false);
 
@@ -71,7 +113,9 @@ export function useShareSetup() {
       setData(next);
       // Two frames so the offscreen card mounts and lays out before capture.
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const uri = await captureRef(shotRef, {
+      const vs = getViewShot();
+      if (!vs) return;
+      const uri = await vs.captureRef(shotRef, {
         format: "png",
         quality: 1,
         result: "tmpfile",
@@ -96,12 +140,14 @@ export function useShareSetup() {
     }
   }, []);
 
+  const vs = getViewShot();
+  const ViewShotComp = vs?.default ?? null;
   const shareView = (
     <View style={styles.offscreen} pointerEvents="none">
-      {data ? (
-        <ViewShot ref={shotRef} options={{ format: "png", quality: 1 }}>
+      {data && ViewShotComp ? (
+        <ViewShotComp ref={shotRef} options={{ format: "png", quality: 1 }}>
           <ShareCard data={data} />
-        </ViewShot>
+        </ViewShotComp>
       ) : null}
     </View>
   );

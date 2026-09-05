@@ -33,6 +33,7 @@ import {
   groupModelsForDiscipline,
   logQuizEvent,
   modelListSubline,
+  nextQuizRoute,
   QUIZ_MORE_BRANDS,
   QUIZ_OLDER_YEARS,
   QUIZ_PRIMARY_BRANDS,
@@ -177,7 +178,7 @@ export default function QuizBikeScreen() {
         answer: { make: mk, model: mo, year: y, catalog_match: catalogMatch },
       });
     },
-    onAdvance: () => router.push("/quiz/skill" as never),
+    onAdvance: () => router.push(nextQuizRoute("bike", answers) as never),
   });
 
   /* ------------------------------- derived -------------------------------- */

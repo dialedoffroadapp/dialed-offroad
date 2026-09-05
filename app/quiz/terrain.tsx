@@ -25,7 +25,7 @@ import { QuizShell } from "../../components/quiz/QuizShell";
 import { QuizTerrainTile, type TerrainTileState } from "../../components/quiz/QuizTerrainTile";
 import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { useQuiz, useQuizStepView } from "../../lib/quizContext";
-import { logQuizEvent, TERRAIN_OPTIONS, terrainLabel, type QuizDiscipline } from "../../lib/quizOnboarding";
+import { logQuizEvent, TERRAIN_OPTIONS, terrainLabel, type QuizDiscipline, nextQuizRoute } from "../../lib/quizOnboarding";
 
 const ICONS: Record<string, (color: string) => React.ReactNode> = {
   hardpack: (c) => <IconRoad size={30} color={c} strokeWidth={1.6} />,
@@ -92,7 +92,7 @@ export default function QuizTerrainScreen() {
       step: "terrain",
       answer: { main, secondary, discipline },
     });
-    router.push("/quiz/weight" as never);
+    router.push(nextQuizRoute("terrain", { ...answers, terrainMain: main ?? undefined, terrainSecondary: secondary }) as never);
     setTimeout(() => setAdvancing(false), 600);
   };
 
@@ -100,7 +100,7 @@ export default function QuizTerrainScreen() {
     <QuizShell
       step="terrain"
       title={discipline === "offroad" ? "Where do the trails take you?" : "What's your track usually like?"}
-      subtitle="Pick all that apply. First tap is what we tune for."
+      subtitle={answers.flow === "new_setup" ? `Starts from ${answers.flowFromLabel ?? "your running setup"}. Its own history from here. First tap is what we tune for.` : "Pick all that apply. First tap is what we tune for."}
       ghostNext={!!main}
       echo={main ? `${terrainLabel(discipline, main)} first` : null}
       showBack

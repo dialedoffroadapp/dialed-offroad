@@ -344,6 +344,7 @@ export function SetupRow({
   badge,
   onPress,
   locked,
+  onLongPress,
 }: {
   title: string;
   sub: string;
@@ -351,10 +352,12 @@ export function SetupRow({
   badge?: string;
   onPress?: () => void;
   locked?: boolean;
+  onLongPress?: () => void;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="button"
       style={({ pressed }) => [styles.setup, running && styles.setupRunning, locked && { opacity: 0.6 }, pressed && { opacity: 0.85 }]}
     >

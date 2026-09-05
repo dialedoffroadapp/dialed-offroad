@@ -13,7 +13,7 @@ import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { WeightDial, type WeightUnit } from "../../components/quiz/WeightDial";
 import { RiskGate } from "../../components/RiskGate";
 import { useQuiz, useQuizStepView } from "../../lib/quizContext";
-import { logQuizEvent, WEIGHT_DEFAULT_LBS } from "../../lib/quizOnboarding";
+import { logQuizEvent, WEIGHT_DEFAULT_LBS, nextQuizRoute } from "../../lib/quizOnboarding";
 import { supabase } from "../../lib/supabase";
 import { prewarmTuneLocation } from "../../lib/tuneLocation";
 
@@ -61,7 +61,7 @@ export default function QuizWeightScreen() {
       answer: { weight_lbs: weightLbs, unit, free_text: text.length > 0 },
     });
     if (text.length > 0) void logQuizEvent("quiz_freetext_filled", { len: text.length });
-    router.push("/quiz/building" as never);
+    router.push(nextQuizRoute("weight", answers) as never);
     setTimeout(() => setBuilding(false), 800);
   };
 

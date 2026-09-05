@@ -167,6 +167,36 @@ export function NewSetupSheet({
   );
 }
 
+export function RenameSetupSheet({
+  open,
+  onClose,
+  initialName,
+  onRename,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialName: string;
+  onRename: (name: string) => void;
+}) {
+  const [name, setName] = useState(initialName);
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Rename setup">
+      <Label style={{ marginBottom: 8 }}>Name</Label>
+      <TextInput
+        value={name}
+        onChangeText={setName}
+        placeholder="Dunes setup"
+        placeholderTextColor={V3.muted}
+        style={[styles.input, interFont(500)]}
+        maxLength={30}
+        autoCorrect={false}
+        autoFocus
+      />
+      <Button label="Save name" disabled={name.trim().length === 0} style={{ marginTop: 18 }} onPress={() => onRename(name.trim())} />
+    </BottomSheet>
+  );
+}
+
 export function AddBikeSheet({
   open,
   onClose,

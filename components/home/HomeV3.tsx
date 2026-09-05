@@ -8,7 +8,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { hasSetOnBike, markSetOnBike } from "../../lib/firstSteps";
+import { hasSetOnBike, walkthroughSeen } from "../../lib/firstSteps";
 import { useToast } from "../Toast";
 import { Bar, Big, Body, Button, Card, Divider, Eyebrow, H1, Label, PhotoTile, Row, Small, Step, Sub } from "../v3/primitives";
 import { interFont, useV3Fonts, V3 } from "../v3/theme";
@@ -37,6 +37,7 @@ import { logEvent } from "../../lib/usage";
 const START_RIDING_ROUTE = "/ride/start";
 const SETUP_SHEET_ROUTE = "/setup-sheet";
 const TUNE_ROUTE = "/(tabs)/tune";
+const WALKTHROUGH_ROUTE = "/set-on-bike";
 const STORY_ROUTE = "/setup-story";
 
 export function HomeV3() {
@@ -177,9 +178,13 @@ export function HomeV3() {
     // No running version yet: the Tune flow (relocated into Garage, 3.0) builds the baseline.
     if (!running) return router.push({ pathname: TUNE_ROUTE, params: { bikeId: bike.id } } as never);
     if (needsSetOnBike) {
-      // The running setup's clicker sheet in Garage; on return, First Steps step 2 reads done.
-      void markSetOnBike(bike.id).then(() => setSetOnBike(true));
-      return router.push({ pathname: SETUP_SHEET_ROUTE, params: { bikeId: bike.id, setupId: "default" } } as never);
+      // First time: the per-adjuster walkthrough (completing marks First Steps
+      // step 2; skipping opens the plain sheet). Returning riders go straight
+      // to the running setup's clicker sheet.
+      void walkthroughSeen(bike.id).then((seen) =>
+        router.push({ pathname: seen ? SETUP_SHEET_ROUTE : WALKTHROUGH_ROUTE, params: { bikeId: bike.id, setupId: "default" } } as never)
+      );
+      return;
     }
     return router.push(START_RIDING_ROUTE as never);
   };
