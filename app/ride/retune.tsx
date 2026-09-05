@@ -60,6 +60,7 @@ export default function RideRetuneScreen() {
       conditions: s.conditions,
       effective: eff,
       setupName: s.setupName,
+      setupId: s.setupId ?? null,
       freeText,
       tile: tile === "new_track" ? null : tile,
       priorTweaks: s.pending.filter((p) => p.kind === "conditions").map((p) => ({ circuit: p.circuit, delta: p.delta })),

@@ -96,6 +96,9 @@ export type ZeroTuneResult = {
   // Client-computed (lib/modelSpecs) but carried on the result so it persists
   // with the tune and survives normalizeResult (see below).
   spring_check?: SpringCheck;
+  /** Who decided the numbers (contract v3): "llm" or a fallback for baselines. */
+  engine_source?: EngineSource;
+  tire_psi_delta?: number;
 };
 
 /* ------------------------------------------------------------------ */
@@ -103,7 +106,10 @@ export type ZeroTuneResult = {
 /* ------------------------------------------------------------------ */
 
 // These IDs must match the backend union in supabase/functions/ai-tune/index.ts
-export type Tune2SymptomId =
+/** The 11 ids the v1/v2 engine shipped with: still accepted, still routed to
+ *  their original engine rows (byte-frozen). Historical ride_feedback rows
+ *  carry them; lib/rideSymptoms LEGACY_TO_V3 says how each reads today. */
+export type Tune2LegacySymptomId =
   | "harsh_braking_bumps"
   | "deflects_in_chop"
   | "rear_kicks_accel"
@@ -116,10 +122,45 @@ export type Tune2SymptomId =
   | "headshake"
   | "general_harsh";
 
+/** The 14-id taxonomy (plan 4.3; contract v3, 2026-09-05). */
+export type Tune2V3SymptomId =
+  | "harsh_small_bumps"
+  | "bottoming"
+  | "rear_kicks"
+  | "front_pushes"
+  | "packs_in_chop"
+  | "wallows_dives"
+  | "headshake"
+  | "rear_swaps"
+  | "deflects"
+  | "rear_squats"
+  | "too_stiff"
+  | "too_soft"
+  | "arm_pump"
+  | "chatters";
+
+export type Tune2SymptomId = Tune2LegacySymptomId | Tune2V3SymptomId;
+
+/** Location / qualifier tags the engine understands (contract v3): the four
+ *  v2 tags plus the plan's mandatory qualifiers. Anything else is dropped
+ *  server-side, so send TAGS, never labels. */
+export type Tune2WhereTag =
+  | "braking"
+  | "corners"
+  | "whoops"
+  | "landings"
+  | "small_chop"
+  | "under_braking"
+  | "big_hits"
+  | "jump_face"
+  | "braking_bumps"
+  | "logs_ledges"
+  | "rocks";
+
 export type Tune2Symptom = {
   id: Tune2SymptomId;
   severity: number; // ALWAYS 1–10; callers convert from their UI scale first
-  where?: string;   // optional location tag ("Braking", "Corners", ...)
+  where?: string;   // a Tune2WhereTag (legacy callers sent capitalized labels; the edge lowercases)
 };
 
 // Plain-language phrases for symptom ids, phrased to follow "Last time you
@@ -137,6 +178,20 @@ export const SYMPTOM_PHRASES: Record<Tune2SymptomId, string> = {
   harsh_square_edge: "it was harsh on square edges",
   headshake: "you had headshake",
   general_harsh: "it was generally harsh",
+  // v3 taxonomy
+  harsh_small_bumps: "it was harsh on the small bumps",
+  bottoming: "it was bottoming",
+  rear_kicks: "the rear was kicking",
+  front_pushes: "the front was pushing",
+  packs_in_chop: "it was packing in the chop",
+  wallows_dives: "it was wallowing and diving",
+  rear_swaps: "the rear was swapping",
+  deflects: "it was deflecting",
+  rear_squats: "the rear was squatting",
+  too_stiff: "it was too stiff",
+  too_soft: "it was too soft",
+  arm_pump: "you got arm pump",
+  chatters: "the front was chattering",
 };
 
 export type Tune2Feedback = {
@@ -148,6 +203,44 @@ export type Tune2Feedback = {
   protected?: { area: string }[];
   // Raw rider note — parsed server-side into structured feedback (engine v2).
   free_text?: string;
+  /** Which surface produced the call (contract v3). A "conditions" ask has
+   *  no symptoms of its own and never runs the engine's adaptive step. */
+  source?: "debrief" | "ride_log" | "conditions";
+};
+
+/** The ride day's conditions on the wire (contract v3, decision 6). The
+ *  engine runs the same rule base the client keeps offline
+ *  (lib/conditionsRulesCore.ts). */
+export type Tune2Conditions = {
+  surfaces?: string[];
+  state?: "fresh" | "choppy" | "rutted" | null;
+  temp_band?: "cold" | "mild" | "hot" | null;
+  watered?: boolean | null;
+  retune?: { tile: "watered" | "roughed" | "heating"; prior_tweaks?: { circuit: string; delta: number }[] } | null;
+};
+
+/** Who decided a tune's numbers (contract v3). */
+export type EngineSource = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic";
+
+/** A refinement's previous tune, SPARSE where the running setup never
+ *  recorded a circuit (contract v3, honest previous values): null is sent as
+ *  null and the engine leaves it null. */
+export type Tune2Previous = {
+  fork: { comp_clicks: number | null; reb_clicks: number | null; air_pressure_bar?: number | null };
+  shock: { lsc_clicks: number | null; hsc_turns: number | null; reb_clicks: number | null; sag_mm: number | null };
+  detected?: ZeroTuneResult["detected"];
+  notes?: string[];
+};
+
+/** Tune Two's answer: the previous tune's shape, sparse where it was sparse. */
+export type Tune2Result = {
+  fork: Tune2Previous["fork"];
+  shock: Tune2Previous["shock"];
+  detected?: ZeroTuneResult["detected"];
+  notes: string[];
+  spring_check?: SpringCheck;
+  engine_source?: EngineSource;
+  tire_psi_delta?: number;
 };
 
 // Engine v2 adaptive step: what the last refinement did and how it went.
@@ -270,16 +363,22 @@ export async function generateTune(
  *  - context: optional bike/ride context to echo to backend
  */
 export async function generateTuneTwo(params: {
-  previous: ZeroTuneResult;
+  previous: Tune2Previous | ZeroTuneResult;
   feedback: Tune2Feedback;
   context?: Tune2Context;
-  // When provided, the most recent outcome-rated refinement for this bike is
-  // sent so the engine can adapt its step size (engine v2). Fail-open.
+  // When provided, the most recent outcome-rated refinement for this bike's
+  // setup lineage is sent so the engine can adapt its step size (engine v2).
+  // Fail-open. Scoped to setupId (contract v3, decision 5): null = the
+  // default lineage.
   bikeId?: string | null;
-}): Promise<ZeroTuneResult> {
-  const { previous, feedback, context, bikeId } = params;
+  setupId?: string | null;
+  /** The ride day's conditions (contract v3, decision 6). */
+  conditions?: Tune2Conditions | null;
+}): Promise<Tune2Result> {
+  const { previous, feedback, context, bikeId, setupId, conditions } = params;
 
-  const lastOutcome = bikeId ? await fetchLastOutcome(bikeId) : undefined;
+  // A conditions ask never runs the adaptive step (the edge also refuses).
+  const lastOutcome = bikeId && feedback.source !== "conditions" ? await fetchLastOutcome(bikeId, setupId ?? null) : undefined;
 
   // Clamp feedback into the 1–10 scale. Callers (tune-feedback) have already
   // converted their 1–5 UI inputs to 1–10 — do NOT rescale here.
@@ -305,6 +404,7 @@ export async function generateTuneTwo(params: {
       typeof feedback.free_text === "string" && feedback.free_text.trim().length
         ? feedback.free_text.trim().slice(0, 800)
         : undefined,
+    source: feedback.source,
   };
 
   // Same coarse location capture as generateTune (v2.4.0): bounded, optional,
@@ -349,13 +449,43 @@ export async function generateTuneTwo(params: {
       previous,
       feedback: normalizedFeedback,
       last_outcome: lastOutcome,
+      // Contract v3: the setup lineage (captured) and the conditions stage.
+      setup_id: isUuid(setupId) ? setupId : undefined,
+      conditions: conditions ?? undefined,
     },
   };
 
   const { data, error } = await supabase.functions.invoke("ai-tune", { body: payload });
   if (error) throw new Error(await edgeErrorMessage(error, "AI Tune Two failed"));
 
-  return normalizeResult(data as Partial<ZeroTuneResult>);
+  return normalizeTune2Result(data as Partial<Tune2Result>);
+}
+
+/** A complete tune from a refinement whose previous tune was complete: any
+ *  circuit the engine left null (it never does when the input was complete)
+ *  falls back to the previous value. For callers that must persist a full
+ *  ZeroTuneResult (the legacy debrief's refinement version). */
+export function completeTune(result: Tune2Result, previous: ZeroTuneResult): ZeroTuneResult {
+  const n = (v: number | null | undefined, fallback: number) => (typeof v === "number" ? v : fallback);
+  const air = typeof result.fork.air_pressure_bar === "number" ? result.fork.air_pressure_bar : previous.fork.air_pressure_bar;
+  return {
+    fork: {
+      comp_clicks: n(result.fork.comp_clicks, previous.fork.comp_clicks),
+      reb_clicks: n(result.fork.reb_clicks, previous.fork.reb_clicks),
+      ...(typeof air === "number" ? { air_pressure_bar: air } : {}),
+    },
+    shock: {
+      lsc_clicks: n(result.shock.lsc_clicks, previous.shock.lsc_clicks),
+      hsc_turns: n(result.shock.hsc_turns, previous.shock.hsc_turns),
+      reb_clicks: n(result.shock.reb_clicks, previous.shock.reb_clicks),
+      sag_mm: n(result.shock.sag_mm, previous.shock.sag_mm),
+    },
+    detected: result.detected ?? previous.detected,
+    notes: result.notes,
+    spring_check: result.spring_check ?? previous.spring_check,
+    engine_source: result.engine_source,
+    tire_psi_delta: result.tire_psi_delta,
+  };
 }
 
 /**
@@ -366,15 +496,15 @@ export async function generateTuneTwo(params: {
  * proceeds without the adaptive step.
  */
 async function fetchLastOutcome(
-  bikeId: string
+  bikeId: string,
+  setupId: string | null
 ): Promise<Tune2LastOutcome | undefined> {
   if (!isUuid(bikeId)) return undefined; // legacy/guest bike ids: no history
   try {
-    const { data: versions, error: vErr } = await supabase
-      .from("setup_versions")
-      .select("id")
-      .eq("bike_id", bikeId)
-      .limit(200);
+    // Decision 5: only this setup's lineage. A Sand setup's outcome must not
+    // reverse the default setup's next move.
+    const base = supabase.from("setup_versions").select("id").eq("bike_id", bikeId);
+    const { data: versions, error: vErr } = await (isUuid(setupId) ? base.eq("setup_id", setupId) : base.is("setup_id", null)).limit(200);
     if (vErr || !versions?.length) return undefined;
 
     const ids = versions.map((v: any) => v.id);
@@ -448,6 +578,9 @@ function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
     // Air fork defaults the backend can scale by weight if applicable:
     aer_pressure_bar_default: 10.6, // ≈154 psi baseline for ~185 lb
     aer_pressure_bar_per_10lb: 0.2, // ~+/-0.2 bar per 10 lb delta
+    // Fork air window (contract v3): the edge clamps to it; so does normalizeResult.
+    air_min_bar: AIR_MIN_BAR,
+    air_max_bar: AIR_MAX_BAR,
     // Spec-verified fork type — authoritative over toggle/heuristic on the
     // edge; omitted entirely when the bike is unmatched.
     ...(typeof hasAirFork === "boolean" ? { has_air_fork: hasAirFork } : {}),
@@ -472,11 +605,13 @@ function asFloat(n: any, fallback: number, precision = 2): number {
   return Number.isFinite(v) ? Number(v.toFixed(precision)) : fallback;
 }
 
+/** Fork air window, the same one the edge clamps to (contract v3). */
+export const AIR_MIN_BAR = 7;
+export const AIR_MAX_BAR = 14;
+
 function safeBar(n: any): number | undefined {
-  if (!Number.isFinite(Number(n))) return undefined;
-  const v = Number(n);
-  if (v <= 0 || v > 15) return undefined; // sanity bounds
-  return Number(v.toFixed(2));
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return undefined;
+  return Number(clamp(Number(n), AIR_MIN_BAR, AIR_MAX_BAR).toFixed(2));
 }
 
 /**
@@ -552,5 +687,49 @@ function normalizeResult(
     // Preserve a client-attached spring_check through the rebuild (unknown fields
     // are otherwise dropped here).
     spring_check: result?.spring_check,
+    engine_source: result?.engine_source,
+    tire_psi_delta: typeof result?.tire_psi_delta === "number" ? result.tire_psi_delta : undefined,
+  };
+}
+
+/**
+ * normalizeTune2Result: the refinement shape. A null circuit stays null
+ * (the engine could not move what the setup never recorded); numbers get
+ * the same clamps as a baseline. Never invents a value.
+ */
+function normalizeTune2Result(result: Partial<Tune2Result>): Tune2Result {
+  const num = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const clicks = (v: unknown) => {
+    const n = num(v);
+    return n === null ? null : clamp(Math.round(n), 0, 30);
+  };
+  const hsc = num(result?.shock?.hsc_turns);
+  const sag = num(result?.shock?.sag_mm);
+  const air = safeBar(result?.fork?.air_pressure_bar);
+  const notesArray = Array.isArray(result?.notes) ? result!.notes.filter((n) => typeof n === "string").slice(0, 12) : [];
+  return {
+    fork: {
+      comp_clicks: clicks(result?.fork?.comp_clicks),
+      reb_clicks: clicks(result?.fork?.reb_clicks),
+      ...(typeof air === "number" ? { air_pressure_bar: air } : {}),
+    },
+    shock: {
+      lsc_clicks: clicks(result?.shock?.lsc_clicks),
+      hsc_turns: hsc === null ? null : Number(clamp(hsc, 0, 3).toFixed(2)),
+      reb_clicks: clicks(result?.shock?.reb_clicks),
+      sag_mm: sag === null ? null : Math.round(sag),
+    },
+    detected: {
+      has_air_fork: typeof air === "number" || !!result?.detected?.has_air_fork,
+      fork_family: result?.detected?.fork_family || undefined,
+    },
+    notes: notesArray,
+    spring_check: result?.spring_check,
+    engine_source: result?.engine_source,
+    tire_psi_delta: typeof result?.tire_psi_delta === "number" ? result.tire_psi_delta : undefined,
   };
 }

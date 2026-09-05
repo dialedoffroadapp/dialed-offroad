@@ -17,10 +17,18 @@ import {
 import {
   buildTuneTwo,
   callParseFeedback,
+  conditionsRuleDeltas,
+  LEGACY_TO_V3,
   makeHandler,
   mergeFeedback,
+  quarterTurns,
   safeShape,
+  safeShapeSparse,
+  sanitizeConditions,
   sanitizeParsedFeedback,
+  sanitizePrevious,
+  V3_SYMPTOM_IDS,
+  WHERE_TAGS,
   type HandlerDeps,
 } from "../index.ts";
 import { buildTuneTwoV1, safeShapeV1 } from "./engine_v1_snapshot.ts";
@@ -159,19 +167,39 @@ Deno.test("1. regression: plain inputs are byte-identical to committed v1 engine
     });
   }
 
+  // Contract v3 (2026-09-05) changed exactly two things about these outputs:
+  // HSC moves in quarter turns (v1 moved 0.15 / 0.30 and rounded to one
+  // decimal), and the refine shape carries engine_source. Everything else,
+  // every other circuit and every note, must stay byte-identical, so the
+  // comparison masks HSC and the two HSC note fragments, then checks HSC on
+  // its own: untouched stays exactly where it was; moved lands on a quarter
+  // turn within one quarter of where v1 put it.
+  const mask = (r: any) =>
+    JSON.stringify({
+      ...r,
+      engine_source: undefined,
+      shock: { ...r.shock, hsc_turns: "HSC" },
+      notes: (r.notes ?? []).map((n: string) => n.replace("-0.15 HSC turns", "-0.25 HSC turns").replace("-0.30 HSC turns", "-0.50 HSC turns")),
+    });
   let checked = 0;
+  let hscMoved = 0;
   for (const fx of fixtures) {
     const input = tune2Input(fx);
     const v1 = safeShapeV1(buildTuneTwoV1(input), GUARDRAILS);
-    const v2 = safeShape(buildTuneTwo(input), GUARDRAILS);
-    assertEquals(
-      JSON.stringify(v2),
-      JSON.stringify(v1),
-      `fixture diverged: ${JSON.stringify(fx.feedback)}`
-    );
+    const v3 = safeShapeSparse(buildTuneTwo(input), GUARDRAILS);
+    assertEquals(mask(v3), mask(v1), `fixture diverged: ${JSON.stringify(fx.feedback)}`);
+    const prevHsc = fx.previous.shock.hsc_turns;
+    if (v1.shock.hsc_turns === prevHsc) {
+      assertEquals(v3.shock.hsc_turns, prevHsc, `untouched HSC moved: ${JSON.stringify(fx.feedback)}`);
+    } else {
+      hscMoved++;
+      const h = v3.shock.hsc_turns as number;
+      assertEquals(h, quarterTurns(h), `HSC not on a quarter turn: ${h}`);
+      assert(Math.abs(h - v1.shock.hsc_turns) <= 0.25 + 1e-9, `HSC drifted from v1: v3 ${h} vs v1 ${v1.shock.hsc_turns}`);
+    }
     checked++;
   }
-  console.log(`  regression fixtures checked: ${checked}`);
+  console.log(`  regression fixtures checked: ${checked} (HSC moved in ${hscMoved})`);
 });
 
 /* ---------------- Test 2: conflict resolution, not zero ---------------- */
@@ -661,4 +689,149 @@ Deno.test("14. per-bike rule: regenerate cap → 429 unrecorded; no_trial → 40
   // The rule is independent of the hourly limit: the limit still fires first.
   const limited = makeHandler(deps({ countRecentCalls: () => Promise.resolve(20), claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }) }));
   assertEquals((await limited(fakeReq(body))).status, 429);
+});
+
+/* ================= Contract v3 (2026-09-05): decisions 4, 5, 6 ================= */
+
+Deno.test("15. HSC: refinements move in quarter turns and snap only what they move; baselines always emit quarter turns", () => {
+  const mild = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id: "bottoms_landings", severity: 6 }] } })), GUARDRAILS);
+  assertEquals(mild.shock.hsc_turns, 1.25); // 1.4 - 0.25 = 1.15 → quarter turn 1.25
+  const bad = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id: "bottoms_landings", severity: 9 }] } })), GUARDRAILS);
+  assertEquals(bad.shock.hsc_turns, 1.0); // 1.4 - 0.50 = 0.9 → 1.0
+  assert(bad.notes.some((n) => n.includes("-0.50 HSC turns")));
+  const untouched = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id: "headshake", severity: 5 }] } })), GUARDRAILS);
+  assertEquals(untouched.shock.hsc_turns, 1.4); // never snapped when not moved
+  // Baseline shape: quarter turns always.
+  assertEquals(safeShape({ fork: { comp_clicks: 12, reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: 1.38, reb_clicks: 14, sag_mm: 105 }, notes: [] }, GUARDRAILS).shock.hsc_turns, 1.5);
+  assertEquals(safeShape({ fork: { comp_clicks: 12, reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: 1.3, reb_clicks: 14, sag_mm: 105 }, notes: [] }, GUARDRAILS).shock.hsc_turns, 1.25);
+});
+
+Deno.test("16. air is clamped to the window and a non-number is not a value", () => {
+  const low = safeShape({ fork: { comp_clicks: 12, reb_clicks: 12, air_pressure_bar: 1.5 }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, detected: { has_air_fork: true }, notes: [] }, GUARDRAILS);
+  assertEquals(low.fork.air_pressure_bar, 7);
+  const high = safeShape({ fork: { comp_clicks: 12, reb_clicks: 12, air_pressure_bar: 15.2 }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, notes: [] }, { ...GUARDRAILS, air_min_bar: 8, air_max_bar: 12 } as any);
+  assertEquals(high.fork.air_pressure_bar, 12);
+  const junk = safeShape({ fork: { comp_clicks: "12 clicks", reb_clicks: 12, air_pressure_bar: "ten" }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, notes: [] } as any, GUARDRAILS);
+  assertEquals(junk.fork.comp_clicks, 12); // baseline default, never NaN/null
+  assertEquals(junk.fork.air_pressure_bar, undefined);
+  const sparseJunk = safeShapeSparse({ fork: { comp_clicks: "12 clicks", reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, notes: [] } as any, GUARDRAILS);
+  assertEquals(sparseJunk.fork.comp_clicks, null); // a refinement never invents
+  // A refinement that pushes air past the window lands on the window.
+  const prev = { ...PREV_AIR, fork: { ...PREV_AIR.fork, air_pressure_bar: 13.9 } };
+  const out = safeShapeSparse(buildTuneTwo(tune2Input({ previous: prev, feedback: { overall_rating: 2, symptoms: [{ id: "bottoms_landings", severity: 10 }] } })), GUARDRAILS);
+  assertEquals(out.fork.air_pressure_bar, 14);
+});
+
+Deno.test("17. conditions stage: rules run server-side, through conflict resolution, with tire psi and honest echo", () => {
+  const coil = (conditions: any, symptoms: any[] = [], previous: any = PREV_COIL) =>
+    safeShapeSparse(buildTuneTwo(tune2Input({ previous, feedback: { overall_rating: 5, symptoms, source: "conditions" }, conditions })), GUARDRAILS);
+
+  // Choppy hardpack + hot on a coil bike: +1 fork comp, -1 shock LSC.
+  const a = coil({ surfaces: ["hardpack"], state: "choppy", temp_band: "hot", watered: false });
+  assertEquals(a.fork.comp_clicks, PREV_COIL.fork.comp_clicks + 1);
+  assertEquals(a.shock.lsc_clicks, PREV_COIL.shock.lsc_clicks - 1);
+  assert(a.notes.some((n) => n.startsWith("Conditions: choppy hardpack → +1 fork compression.")), JSON.stringify(a.notes));
+  assert(a.notes.some((n) => n.startsWith("Conditions: heat → -1 shock low-speed compression.")));
+  assertEquals(a.tire_psi_delta, 0);
+
+  // Hot on an air fork: -0.2 bar instead of the LSC click; watered: tires -0.5 psi.
+  const b = coil({ surfaces: ["hardpack"], state: "fresh", temp_band: "hot", watered: true }, [], PREV_AIR);
+  assertEquals(b.fork.air_pressure_bar, Number((PREV_AIR.fork.air_pressure_bar - 0.2).toFixed(2)));
+  assertEquals(b.shock.lsc_clicks, PREV_AIR.shock.lsc_clicks);
+  assertEquals(b.tire_psi_delta, -0.5);
+  assert(b.notes.some((n) => n.startsWith("Tires: -0.50 psi")));
+
+  // Retune tile: roughed up → -1 fork comp; watered reverses a morning softening.
+  const c = coil({ retune: { tile: "roughed" } });
+  assertEquals(c.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 1);
+  const d = coil({ retune: { tile: "watered", prior_tweaks: [{ circuit: "fork_comp", delta: 2 }] } });
+  assertEquals(d.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 2);
+  assertEquals(d.tire_psi_delta, -0.5);
+
+  // Conditions and a symptom fighting over fork comp: the symptom (severity 6)
+  // outranks conditions (5); sand's -1 shrinks harsh's +2 to +1, with a note.
+  const e = coil({ surfaces: ["sand"], state: "fresh", temp_band: "mild", watered: false }, [{ id: "harsh_small_bumps", severity: 6 }]);
+  assertEquals(e.fork.comp_clicks, PREV_COIL.fork.comp_clicks + 1);
+  assert(e.notes.some((n) => n.includes("today's conditions") && n.includes("opposite ways")), JSON.stringify(e.notes));
+
+  // Nothing to change: an honest echo, not the "no issues selected" line.
+  const f = coil({ surfaces: ["hardpack"], state: "fresh", temp_band: "mild", watered: false });
+  assertEquals(f.fork.comp_clicks, PREV_COIL.fork.comp_clicks);
+  assert(f.notes[0].startsWith("Nothing in today's conditions"));
+
+  // sanitizeConditions: garbage is dropped, an empty object is absent.
+  assertEquals(sanitizeConditions({ surfaces: ["lava", "sand"], state: "soupy", temp_band: "hot", watered: "yes" }), { surfaces: ["sand"], state: null, temp_band: "hot", watered: null, retune: null });
+  assertEquals(sanitizeConditions({}), undefined);
+  assertEquals(sanitizeConditions(null), undefined);
+});
+
+Deno.test("18. taxonomy: every v3 id moves something; qualifier tags route; legacy map covers all eleven", () => {
+  for (const id of V3_SYMPTOM_IDS) {
+    const out = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id, severity: 6 }] } })), GUARDRAILS);
+    const moved = ["comp_clicks", "reb_clicks", "air_pressure_bar"].some((k) => (out.fork as any)[k] !== (PREV_AIR.fork as any)[k]) ||
+      ["lsc_clicks", "hsc_turns", "reb_clicks"].some((k) => (out.shock as any)[k] !== (PREV_AIR.shock as any)[k]);
+    assert(moved, `${id} moved nothing`);
+    assert(out.notes.some((n) => n.includes("→")), `${id} has no adjustment note`);
+  }
+  // Mandatory qualifiers change the move.
+  const jump = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id: "rear_kicks", severity: 6, where: "jump_face" }] } })), GUARDRAILS);
+  assertEquals(jump.shock.hsc_turns, 1.25); // 1.4 - 0.25 → quarter turn
+  const bigHits = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id: "harsh_small_bumps", severity: 6, where: "big_hits" }] } })), GUARDRAILS);
+  assertEquals(bigHits.fork.comp_clicks, PREV_AIR.fork.comp_clicks); // routed to bottoming: no fork softening
+  assert((bigHits.shock.lsc_clicks as number) < PREV_AIR.shock.lsc_clicks);
+  const rocks = safeShapeSparse(buildTuneTwo(tune2Input({ feedback: { overall_rating: 6, symptoms: [{ id: "packs_in_chop", severity: 6, where: "rocks" }] } })), GUARDRAILS);
+  assertEquals(rocks.fork.comp_clicks, PREV_AIR.fork.comp_clicks + 1);
+  // The parse sanitizer accepts the new tags in any casing and drops unknown ones.
+  const parsed = sanitizeParsedFeedback({ symptoms: [{ id: "harsh_small_bumps", severity: 6, where: "Small chop" }, { id: "rear_kicks", severity: 5, where: "on the gas" }] });
+  assertEquals(parsed.symptoms[0].where, "small_chop");
+  assertEquals(parsed.symptoms[1].where, undefined);
+  assertEquals(WHERE_TAGS.length, 11);
+  // Legacy ids all map, and the three without a clean equivalent map to themselves.
+  assertEquals(Object.keys(LEGACY_TO_V3).length, 11);
+  assertEquals(LEGACY_TO_V3.dead_feel.id, "dead_feel");
+  assertEquals(LEGACY_TO_V3.harsh_braking_bumps, { id: "harsh_small_bumps", where: "under_braking" });
+});
+
+Deno.test("19. honest previous values: a null circuit stays null, is never moved, and is named in a note", () => {
+  const sparse = { fork: { comp_clicks: 14, reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: null, reb_clicks: 14, sag_mm: 103 }, detected: { has_air_fork: false }, notes: [] };
+  const out = safeShapeSparse(buildTuneTwo(tune2Input({ previous: sparse, feedback: { overall_rating: 5, symptoms: [{ id: "bottoms_landings", severity: 6 }] } })), GUARDRAILS);
+  assertEquals(out.shock.hsc_turns, null);
+  assert((out.shock.lsc_clicks as number) < 12); // the known circuit still moves
+  assert(out.notes.some((n) => n.startsWith("Shock high-speed compression has no saved value")), JSON.stringify(out.notes));
+  assertEquals(out.fork.air_pressure_bar, undefined);
+  // The wire: strings and NaN are not values.
+  assertEquals(sanitizePrevious({ fork: { comp_clicks: "12 clicks", reb_clicks: 12 }, shock: { lsc_clicks: NaN, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 } }).fork.comp_clicks, null);
+  assertEquals(sanitizePrevious({ fork: { comp_clicks: 12, reb_clicks: 12 }, shock: { lsc_clicks: 10, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 } }).shock.lsc_clicks, 10);
+});
+
+Deno.test("20. handler: engine_source, setup_id captured, a conditions ask never runs the adaptive step", async () => {
+  let recorded: any = null;
+  const h = makeHandler(deps({ recordCall: (r) => { recorded = r; return Promise.resolve(); } }));
+  const SETUP = "55555555-2222-4333-8444-555555555555";
+  const resp = await h(fakeReq({
+    mode: "tune2_v1",
+    input: {
+      rider: { skill: "intermediate", style: "short_motos", goals: [] },
+      has_zeroed_clickers: true,
+      guardrails: GUARDRAILS,
+      previous: PREV_COIL,
+      setup_id: SETUP,
+      conditions: { surfaces: ["hardpack"], state: "choppy", temp_band: "mild", watered: false },
+      feedback: { overall_rating: 5, symptoms: [], source: "conditions" },
+      // Would reverse fork comp if the adaptive step ran on a conditions ask.
+      last_outcome: { outcome: "worse", symptoms: ["harsh_braking_bumps"], deltas: { fork_comp: 4 } },
+    },
+  }));
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertEquals(body.engine_source, "deterministic");
+  assertEquals(body.fork.comp_clicks, PREV_COIL.fork.comp_clicks + 1); // the conditions click, not a reversal
+  assert(!body.notes.some((n: string) => n.includes("reversing that this round")));
+  assertEquals(recorded.input.setup_id, SETUP);
+
+  // Baseline without a key is the formula, and says so.
+  const anon = makeHandler(deps({ getUserId: () => Promise.resolve(null) }));
+  const base = await (await anon(fakeReq({ mode: "zero_baseline_v1", input: BASELINE }, ""))).json();
+  assertEquals(base.engine_source, "formula");
+  assertEquals(base.shock.hsc_turns, quarterTurns(base.shock.hsc_turns));
 });

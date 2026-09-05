@@ -24,7 +24,7 @@ import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { readOpenSession, rideEffective, setAbsolute, type RideSession } from "../../lib/rideDay";
 import { finishQuickRefine } from "../../lib/rideEnd";
 import { useToast } from "../../components/Toast";
-import { symptomById, type SymptomLevel } from "../../lib/rideSymptoms";
+import { qualifierLabel, symptomById, type SymptomLevel } from "../../lib/rideSymptoms";
 import { logEvent } from "../../lib/usage";
 
 type Phase = "loading" | "changes" | "manual" | "error";
@@ -109,7 +109,7 @@ export default function RideAdjustScreen() {
     });
   };
   const chip = symptom ? symptomById(symptom) : null;
-  const forLine = chip ? `For ${chip.label.toLowerCase()}${qualifier ? ` on ${qualifier.toLowerCase()}` : ""}` : "By hand";
+  const forLine = chip ? `For ${chip.label.toLowerCase()}${qualifier ? ` on ${(qualifierLabel(qualifier) ?? qualifier).toLowerCase()}` : ""}` : "By hand";
 
   const confirm = async (c: AdjustChange, value: number, isCustom: boolean) => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

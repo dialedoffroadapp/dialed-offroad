@@ -250,9 +250,19 @@ candidate in a 2h window).
 
 ## Stable contracts — do not let these drift
 
-- **Symptom taxonomy:** `Tune2SymptomId` (`lib/ai.ts:91`) ↔ engine `SymptomId`
-  (`ai-tune/index.ts`) ↔ `SYMPTOM_PHRASES` ↔ the picker's `ISSUE_CHIPS`. Change
-  all of them or none.
+- **Symptom taxonomy (contract v3, 2026-09-05, `feat/engine-contract-v3`):**
+  `Tune2SymptomId` = 11 legacy ids + the plan's 14 v3 ids (headshake shared,
+  24 total) ↔ engine `SymptomId` ↔ `SYMPTOM_PHRASES` ↔ `lib/rideSymptoms.ts`
+  chips (8 first-screen + 6 more) ↔ `lib/setupStory.ts` labels ↔
+  `lib/rideRules.ts`. Legacy ids keep their ORIGINAL engine rows (the v1
+  regression stays byte-identical); `LEGACY_TO_V3` (engine + client copies)
+  says how each reads today; three (dead_feel, unstable_whoops,
+  harsh_square_edge) have no v3 equivalent and stay first-class. `where` is
+  a TAG from the 11-tag `Tune2WhereTag` set (4 legacy + 7 qualifiers); the
+  edge drops anything else, so never send labels. Seven authored v3 rows
+  (wallows_dives, rear_swaps, rear_squats, too_soft, arm_pump, chatters,
+  plus the three qualifier routes on rear_kicks) are marked SIGN-OFF in the
+  engine and await River's per-row confirmation. Change all of them or none.
 - **Circuit fields, one vocabulary everywhere:** `ZeroTuneResult`
   (`fork.comp_clicks/reb_clicks/air_pressure_bar`,
   `shock.lsc_clicks/hsc_turns/reb_clicks/sag_mm`) ↔ `setup_versions` columns ↔
@@ -281,10 +291,34 @@ candidate in a 2h window).
   to the circuit's decimals (`CIRCUIT_STEPS`).
 - **Engine output is frozen by a byte-identical v1 regression test.** Clamps:
   ±4 clicks/step, ±0.5 hsc turns, ±0.3 air bar; severities 1–10. Don't change
-  engine math or note wording without updating the tests.
+  engine math or note wording without updating the tests. **Contract v3
+  exceptions, both deliberate:** HSC moves in QUARTER turns (unit 0.25, was
+  0.15; a refinement snaps HSC to a quarter turn only when it moves it, a
+  baseline always emits quarter turns) and the refine response carries
+  `engine_source`; the regression harness masks exactly those two things and
+  checks moved HSC lands on a quarter turn within one of v1's move.
+- **Contract v3 wire additions (2026-09-05):** tune2 `input.conditions`
+  (`Tune2Conditions`: surfaces / state / temp_band / watered / retune tile +
+  prior tweaks) runs the ride-day rule base SERVER-side as a contributions
+  stage (`conditionsRuleDeltas`, symptomId "conditions", severity 5, through
+  conflict and protect; notes "Conditions: <label> → ...", output
+  `tire_psi_delta`); `lib/conditionsRulesCore.ts` (NO imports) is the client
+  copy and the Deno parity test holds the two equal over 576 cases, so
+  change a rule in both or neither. `feedback.source` ("debrief" |
+  "ride_log" | "conditions"; a conditions ask never runs the adaptive step),
+  `input.setup_id` (captured; the client scopes `last_outcome` to that
+  lineage, decision 5), HONEST previous values (`previous` circuits may be
+  null; the engine leaves them null, names them in a note, and `safeShapeSparse`
+  never invents 12 / 12 / 1.5 / 14 / 105; `snapshotToTune` sends nulls),
+  fork air clamped to `air_min_bar..air_max_bar` (7 to 14) on both sides, a
+  NaN guard (a non-number is not a value), and `engine_source` on every
+  response ("llm" / "fallback_parse" / "fallback_error" / "formula" /
+  "deterministic"). `generateTuneTwo` returns the sparse `Tune2Result`;
+  callers that must persist a full tune go through `completeTune`.
 - **`lib/tuneNotes.ts` must track the engine's literal note strings**
   (`ai-tune` `buildTuneTwo`). Reword one side and classification silently
-  degrades to "routine."
+  degrades to "routine." Contract v3 added the `conditions` bucket
+  ("Conditions: " / "Tires: " prefixes).
 - **Severity scale:** UI is 1–5, engine is 1–10, converted **exactly once** in
   `tune-feedback.tsx`. `ai.ts` clamps only — never re-scale (double-scaling was
   a shipped bug).

@@ -162,13 +162,15 @@ describe("adjust: change set from the engine, never hardcoded", () => {
     expect(changes[0].reason).toBe("Rear kicks on square edges");
     expect(directionLine(changes[0])).toBe("2 clicks IN · clockwise");
     expect(directionLine({ ...changes[0], delta: 2 })).toBe("2 clicks OUT · counterclockwise");
-    expect(diffChanges(effective, prev)).toEqual([]);
+    expect(diffChanges(effective, { ...prev, notes: [] })).toEqual([]);
   });
 
-  test("log vocabulary: 4 primary chips, qualifiers only on the ambiguous ones, ids are engine ids", () => {
-    expect(PRIMARY_SYMPTOMS).toHaveLength(4);
-    expect(PRIMARY_SYMPTOMS.filter((c) => c.qualifiers?.length).map((c) => c.id)).toEqual(["rear_kicks_accel", "harsh_braking_bumps"]);
-    expect(ALL_SYMPTOMS.find((c) => c.id === "packs_whoops")?.qualifiers).toEqual(["Whoops", "Rocks"]);
+  test("log vocabulary (contract v3): 8 first-screen chips + 6 more, mandatory qualifiers on the three ambiguous ones, tags not labels", () => {
+    expect(PRIMARY_SYMPTOMS).toHaveLength(8);
+    expect(ALL_SYMPTOMS).toHaveLength(14);
+    expect(PRIMARY_SYMPTOMS.filter((c) => c.qualifiers?.length).map((c) => c.id)).toEqual(["harsh_small_bumps", "rear_kicks", "packs_in_chop"]);
+    expect(ALL_SYMPTOMS.find((c) => c.id === "packs_in_chop")?.qualifiers?.map((q) => q.tag)).toEqual(["whoops", "rocks"]);
+    expect(ALL_SYMPTOMS.find((c) => c.id === "harsh_small_bumps")?.qualifiers?.map((q) => q.label)).toEqual(["Small chop", "Under braking", "Big hits"]);
     expect(new Set(ALL_SYMPTOMS.map((c) => c.id)).size).toBe(ALL_SYMPTOMS.length);
     expect(severityFor("worse")).toBeGreaterThan(severityFor("better"));
   });

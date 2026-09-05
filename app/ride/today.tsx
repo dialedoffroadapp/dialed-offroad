@@ -77,6 +77,7 @@ export default function RideTodayScreen() {
       conditions: draft.conditions,
       effective: base,
       setupName: draft.setupName ?? "setup",
+      setupId: draft.setupId ?? null,
       freeText,
     }).then((r) => {
       if (!alive) return;

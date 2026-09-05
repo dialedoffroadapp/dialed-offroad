@@ -136,7 +136,7 @@ describe("setup story + last ride", () => {
     const s = suggestionFor("front_knifes", "flat corners");
     expect(s.text).toBe("The front tucked in the corners in flat corners and you rode it out.");
     expect(s.sub).toBe("Next time, don't. Start with −1 fork comp.");
-    expect(Object.keys(RIDE_RULES)).toHaveLength(11);
+    expect(Object.keys(RIDE_RULES)).toHaveLength(24); // 11 legacy + 14 v3, headshake shared (contract v3)
     expect(primarySymptom(fb3)).toBe("rear_kicks_accel");
     expect(biggestDelta({ fork_comp: 1, shock_reb: -3 })?.text).toBe("−3 shock rebound");
   });

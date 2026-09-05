@@ -28,6 +28,20 @@ export const RIDE_RULES: Record<Tune2SymptomId, RideRule> = {
   harsh_square_edge: { circuit: "fork_comp", delta: 2, why: "Square edges hit harsh" },
   headshake: { circuit: "fork_reb", delta: -1, why: "It shook its head" },
   general_harsh: { circuit: "fork_comp", delta: 2, why: "It rode harsh" },
+  // v3 taxonomy (contract v3, 2026-09-05): first-order moves mirror the engine rows.
+  harsh_small_bumps: { circuit: "fork_comp", delta: 2, why: "Small bumps hit harsh" },
+  bottoming: { circuit: "shock_lsc", delta: -1, why: "It bottomed" },
+  rear_kicks: { circuit: "shock_reb", delta: -2, why: "The rear kicked" },
+  front_pushes: { circuit: "fork_comp", delta: -1, why: "The front pushed" },
+  packs_in_chop: { circuit: "shock_reb", delta: 2, why: "It packed down in the chop" },
+  wallows_dives: { circuit: "fork_comp", delta: -1, why: "It wallowed and dove" },
+  rear_swaps: { circuit: "shock_lsc", delta: 2, why: "The rear swapped" },
+  deflects: { circuit: "fork_reb", delta: -1, why: "The front deflected" },
+  rear_squats: { circuit: "shock_lsc", delta: -1, why: "The rear squatted on the gas" },
+  too_stiff: { circuit: "fork_comp", delta: 2, why: "It rode too stiff" },
+  too_soft: { circuit: "fork_comp", delta: -1, why: "It rode too soft" },
+  arm_pump: { circuit: "fork_comp", delta: 2, why: "You got arm pump" },
+  chatters: { circuit: "fork_reb", delta: -2, why: "The front chattered" },
 };
 
 export type RideSuggestion = {

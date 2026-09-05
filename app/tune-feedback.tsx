@@ -32,6 +32,7 @@ import {
     Tune2Feedback,
     Tune2SymptomId,
     ZeroTuneResult,
+    completeTune,
 } from "../lib/ai";
 import { enqueueFeedbackRetry } from "../lib/feedbackRetry";
 import {
@@ -221,7 +222,7 @@ const OVERALL_REACTIONS: Record<number, string> = {
   5: "Nearly perfect. I'll barely touch it.",
 };
 
-const ISSUE_ACKS: Record<Tune2SymptomId, { mild: string; bad: string }> = {
+const ISSUE_ACKS: Partial<Record<Tune2SymptomId, { mild: string; bad: string }>> = {
   harsh_braking_bumps: {
     mild: "Harsh, noted. We'll soften it up.",
     bad: "Really beating you up. On it.",
@@ -290,7 +291,7 @@ const PROTECT_ACKS: Record<string, { on: string; off: string }> = {
 
 /* ---------------- Chip + section icons (Ionicons, state-colored) ------- */
 
-const ISSUE_ICONS: Record<Tune2SymptomId, keyof typeof Ionicons.glyphMap> = {
+const ISSUE_ICONS: Partial<Record<Tune2SymptomId, keyof typeof Ionicons.glyphMap>> = {
   harsh_braking_bumps: "flash",
   rear_kicks_accel: "arrow-up-circle",
   front_knifes: "arrow-down-circle",
@@ -759,12 +760,17 @@ function LegacyTuneFeedbackScreen() {
 
       let result: ZeroTuneResult;
       try {
-        result = await generateTuneTwo({
-          previous: previousTune,
-          feedback,
-          context: ctxObj ?? undefined,
-          bikeId, // enables the engine's adaptive step from the last rated outcome
-        });
+        // The debrief always critiques a complete saved tune, so the sparse
+        // refine shape (contract v3) completes back to a full tune here.
+        result = completeTune(
+          await generateTuneTwo({
+            previous: previousTune,
+            feedback: { ...feedback, source: "debrief" },
+            context: ctxObj ?? undefined,
+            bikeId, // enables the engine's adaptive step from the last rated outcome
+          }),
+          previousTune
+        );
       } catch (engineErr) {
         // Engine failed after the debrief write also failed: keep the debrief
         // anyway (it's the part the rider typed), then let the outer catch
@@ -998,7 +1004,7 @@ function LegacyTuneFeedbackScreen() {
                         ]}
                       >
                         <Ionicons
-                          name={ISSUE_ICONS[chip.id]}
+                          name={ISSUE_ICONS[chip.id] ?? "alert-circle-outline"}
                           size={14}
                           color={chipColor}
                           style={{ marginRight: 6 }}

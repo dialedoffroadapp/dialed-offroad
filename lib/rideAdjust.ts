@@ -7,9 +7,9 @@
 // own notes with lib/tuneNotes matchers. Nothing here maps symptoms to
 // adjusters. The two-changes-per-moto cap is a PRESENTATION cap (flagged):
 // the engine's frozen contract is untouched.
-import { generateTuneTwo, type Tune2Context, type Tune2SymptomId, type ZeroTuneResult } from "./ai";
+import { generateTuneTwo, type Tune2Conditions, type Tune2Context, type Tune2Previous, type Tune2Result, type Tune2SymptomId } from "./ai";
 import { CIRCUIT_STEPS, type CircuitKey } from "./currentSetup";
-import { surfacesOf, tempBandToF } from "./rideConditions";
+import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
 import type { RideSession } from "./rideDay";
 import { ratingFor, severityFor, type SymptomLevel } from "./rideSymptoms";
 import type { SettingsSnapshot } from "./setupVersions";
@@ -47,30 +47,45 @@ const UNIT: Record<CircuitKey, AdjustChange["unit"]> = {
 
 export const DEFAULT_CHANGE_CAP = 2;
 
-export function snapshotToTune(v: SettingsSnapshot, hasAirFork: boolean): ZeroTuneResult {
-  const n = (x: number | null, f: number) => (typeof x === "number" ? x : f);
+/** The effective values as the engine's previous tune. HONEST (contract v3):
+ *  a circuit the setup never recorded goes out as null, never as an invented
+ *  12 / 12 / 1.5 / 14 / 105, and the engine leaves it null. */
+export function snapshotToTune(v: SettingsSnapshot, hasAirFork: boolean): Tune2Previous {
+  const n = (x: number | null | undefined) => (typeof x === "number" ? x : null);
   return {
-    fork: { comp_clicks: n(v.fork_comp, 12), reb_clicks: n(v.fork_reb, 12), ...(hasAirFork && typeof v.fork_air === "number" ? { air_pressure_bar: v.fork_air } : {}) },
-    shock: { lsc_clicks: n(v.shock_lsc, 12), hsc_turns: n(v.shock_hsc, 1.5), reb_clicks: n(v.shock_reb, 14), sag_mm: n(v.shock_sag, 105) },
+    fork: { comp_clicks: n(v.fork_comp), reb_clicks: n(v.fork_reb), ...(hasAirFork && typeof v.fork_air === "number" ? { air_pressure_bar: v.fork_air } : {}) },
+    shock: { lsc_clicks: n(v.shock_lsc), hsc_turns: n(v.shock_hsc), reb_clicks: n(v.shock_reb), sag_mm: n(v.shock_sag) },
     detected: { has_air_fork: hasAirFork },
     notes: [],
   };
 }
 
-function tuneToSnapshot(t: ZeroTuneResult): SettingsSnapshot {
+function tuneToSnapshot(t: Tune2Result): SettingsSnapshot {
+  const n = (x: number | null | undefined) => (typeof x === "number" ? x : null);
   return {
-    fork_comp: t.fork.comp_clicks,
-    fork_reb: t.fork.reb_clicks,
-    fork_air: typeof t.fork.air_pressure_bar === "number" ? t.fork.air_pressure_bar : null,
-    shock_lsc: t.shock.lsc_clicks,
-    shock_hsc: t.shock.hsc_turns,
-    shock_reb: t.shock.reb_clicks,
-    shock_sag: t.shock.sag_mm,
+    fork_comp: n(t.fork.comp_clicks),
+    fork_reb: n(t.fork.reb_clicks),
+    fork_air: n(t.fork.air_pressure_bar),
+    shock_lsc: n(t.shock.lsc_clicks),
+    shock_hsc: n(t.shock.hsc_turns),
+    shock_reb: n(t.shock.reb_clicks),
+    shock_sag: n(t.shock.sag_mm),
+  };
+}
+
+/** The ride day's conditions on the wire (contract v3). */
+export function wireConditions(c: RideConditions | null | undefined, retune?: Tune2Conditions["retune"]): Tune2Conditions {
+  return {
+    surfaces: surfacesOf(c),
+    state: c?.state ?? null,
+    temp_band: c?.temp ?? null,
+    watered: c?.watered ?? null,
+    retune: retune ?? null,
   };
 }
 
 /** Diff engine output vs the values in force → the presented change set. */
-export function diffChanges(previous: SettingsSnapshot, result: ZeroTuneResult, cap = DEFAULT_CHANGE_CAP): AdjustChange[] {
+export function diffChanges(previous: SettingsSnapshot, result: Tune2Result, cap = DEFAULT_CHANGE_CAP): AdjustChange[] {
   const next = tuneToSnapshot(result);
   const out: AdjustChange[] = [];
   for (const k of Object.keys(CIRCUIT_STEPS) as CircuitKey[]) {
@@ -136,13 +151,20 @@ export async function fetchAdjustResult(
     previous,
     feedback: {
       overall_rating: ratingFor(sentiment),
+      // `where` is the qualifier TAG (contract v3): the engine's vocabulary.
       symptoms: symptom ? [{ id: symptom, severity: severityFor(sentiment, level), ...(qualifier ? { where: qualifier } : {}) }] : [],
       terrain_tags: [...surfaces, s.conditions.state, s.conditions.watered ? "watered" : null].filter(Boolean) as string[],
+      source: "ride_log",
       ...(text ? { free_text: text } : {}),
     },
     context,
     bikeId: s.bike.id,
-  } as any);
+    // Decision 5: the adaptive step reads this setup's lineage only.
+    setupId: s.setupId ?? null,
+    // Decision 6: the conditions stage sees the day's conditions (a quick
+    // refine has none, so nothing is sent).
+    conditions: s.quick ? null : wireConditions(s.conditions),
+  });
   const reasoning = Array.isArray(result?.notes) ? (result.notes.find((n: unknown) => typeof n === "string" && n.trim()) as string | undefined) ?? null : null;
   return { changes: diffChanges(effective, result), reasoning, source: "engine" };
 }

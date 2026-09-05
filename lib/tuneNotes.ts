@@ -22,6 +22,8 @@ export type ClassifiedTuneNotes = {
   conflict: string[];
   /** Free-text parse additions ("From your written note, I also picked up…"). */
   parse: string[];
+  /** Conditions-stage notes ("Conditions: choppy hardpack → +1 fork compression." and "Tires: …"), contract v3. */
+  conditions: string[];
   /** Per-symptom adjustment notes and anything unrecognized. */
   routine: string[];
 };
@@ -38,6 +40,7 @@ export function classifyTuneNotes(
     protect: [],
     conflict: [],
     parse: [],
+    conditions: [],
     routine: [],
   };
 
@@ -72,6 +75,8 @@ export function classifyTuneNotes(
       out.conflict.push(n);
     } else if (n.startsWith("From your written note")) {
       out.parse.push(n);
+    } else if (n.startsWith("Conditions: ") || n.startsWith("Tires: ")) {
+      out.conditions.push(n);
     } else {
       out.routine.push(n);
     }

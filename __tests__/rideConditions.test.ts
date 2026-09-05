@@ -35,31 +35,44 @@ test("tire pressure: saved value wins; else a per-surface default rendered as ch
   expect(tirePressureForToday({ surfaces: [], state: null, temp: null, watered: null }, { front: null, rear: null }, 0).source).toBe("none");
 });
 
-test("engine-first: no free text → rules with engineSkipped; free text → engine; engine no-change → rules", async () => {
-  const conditions = { surfaces: ["hardpack" as const], state: "choppy" as const, temp: "hot" as const, watered: false };
-  const common = { bike, hasAirFork: false, trackName: "Local", conditions, effective: base, setupName: "MX" };
+test("engine-first (contract v3): the engine is asked with the conditions on the wire, free text or not; rules only when the call fails", async () => {
+  const conditions = { surfaces: ["hardpack" as const], state: "choppy" as const, temp: "hot" as const, watered: true };
+  const common = { bike, hasAirFork: false, trackName: "Local", conditions, effective: base, setupName: "MX", setupId: "55555555-2222-4333-8444-555555555555" };
+
+  (generateTuneTwo as jest.Mock).mockResolvedValueOnce({ fork: { comp_clicks: 13, reb_clicks: 10 }, shock: { lsc_clicks: 9, hsc_turns: 1.5, reb_clicks: 12, sag_mm: 105 }, notes: ["Tune Two for KTM on hardpack: small changes for today's conditions.", "Conditions: choppy hardpack → +1 fork compression. Choppy hardpack: a click softer keeps the fork moving over the chop."], tire_psi_delta: -0.5, engine_source: "deterministic" });
   const a = await suggestForConditions({ ...common, freeText: "" });
-  expect(a.source).toBe("rules");
-  expect(a.engineSkipped).toBe("no_free_text");
-  expect(generateTuneTwo).not.toHaveBeenCalled();
-
-  (generateTuneTwo as jest.Mock).mockResolvedValueOnce({ fork: { comp_clicks: 14, reb_clicks: 10 }, shock: { lsc_clicks: 10, hsc_turns: 1.5, reb_clicks: 12, sag_mm: 105 }, notes: ["Front is harsh on the chop: two clicks softer compression."] });
-  const b = await suggestForConditions({ ...common, freeText: "front feels harsh on the chop" });
-  expect(b.source).toBe("engine");
-  expect(b.deltas).toEqual([{ circuit: "fork_comp", delta: 2, reason: expect.any(String) }]);
-  expect(b.reasoning).toMatch(/harsh/);
+  expect(a.source).toBe("engine");
+  expect(a.engineSkipped).toBeUndefined();
+  expect(a.deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", 1], ["shock_lsc", -1]]);
+  expect(a.deltas[0].reason).toBe("Conditions: choppy hardpack");
+  expect(a.tirePsiDelta).toBe(-0.5);
+  expect(a.summary).toBe("Your MX, two changes for today's conditions.");
   const call = (generateTuneTwo as jest.Mock).mock.calls[0][0];
-  expect(call.feedback.free_text).toBe("front feels harsh on the chop");
-  expect(call.feedback.terrain_tags).toEqual(["hardpack", "choppy"]);
+  expect(call.feedback.source).toBe("conditions");
   expect(call.feedback.symptoms).toEqual([]);
+  expect(call.feedback.free_text).toBeUndefined();
+  expect(call.conditions).toEqual({ surfaces: ["hardpack"], state: "choppy", temp_band: "hot", watered: true, retune: null });
+  expect(call.setupId).toBe("55555555-2222-4333-8444-555555555555");
+  // Honest previous: nulls go out as nulls, never as 12 / 1.5 / 105.
+  expect(call.previous.fork.air_pressure_bar).toBeUndefined();
 
-  (generateTuneTwo as jest.Mock).mockResolvedValueOnce({ fork: { comp_clicks: 12, reb_clicks: 10 }, shock: { lsc_clicks: 10, hsc_turns: 1.5, reb_clicks: 12, sag_mm: 105 }, notes: ["No specific issues were selected, so this Tune Two keeps your last settings."] });
-  const c = await suggestForConditions({ ...common, freeText: "nice day" });
-  expect(c.source).toBe("rules");
-  expect(c.engineSkipped).toBe("engine_no_change");
+  // A retune tile rides in the same input, with the morning's tweaks.
+  (generateTuneTwo as jest.Mock).mockResolvedValueOnce({ fork: { comp_clicks: 11, reb_clicks: 10 }, shock: { lsc_clicks: 10, hsc_turns: 1.5, reb_clicks: 12, sag_mm: 105 }, notes: ["Conditions: just watered → -1 fork compression. Fresh water means grip."], tire_psi_delta: -0.5 });
+  const t = await suggestForConditions({ ...common, freeText: "", tile: "watered", priorTweaks: [{ circuit: "fork_comp", delta: 1 }] });
+  expect((generateTuneTwo as jest.Mock).mock.calls[1][0].conditions.retune).toEqual({ tile: "watered", prior_tweaks: [{ circuit: "fork_comp", delta: 1 }] });
+  expect(t.deltas).toEqual([{ circuit: "fork_comp", delta: -1, reason: "Conditions: just watered" }]);
 
+  // Nothing to change is still the engine's answer.
+  (generateTuneTwo as jest.Mock).mockResolvedValueOnce({ fork: { comp_clicks: 12, reb_clicks: 10 }, shock: { lsc_clicks: 10, hsc_turns: 1.5, reb_clicks: 12, sag_mm: 105 }, notes: ["Nothing in today's conditions asks for a clicker change, so your setup stands."], tire_psi_delta: 0 });
+  const c = await suggestForConditions({ ...common, conditions: { ...conditions, state: "fresh", temp: "mild", watered: false }, freeText: "nice day" });
+  expect(c.source).toBe("engine");
+  expect(c.deltas).toEqual([]);
+  expect(c.summary).toBe("Your MX, as it stands. Nothing today's dirt asks to change.");
+
+  // Offline: the local rule base, flagged.
   (generateTuneTwo as jest.Mock).mockRejectedValueOnce(new Error("offline"));
   const d = await suggestForConditions({ ...common, freeText: "harsh" });
   expect(d.source).toBe("rules");
   expect(d.engineSkipped).toBe("offline_or_error");
+  expect(d.deltas.map((x) => x.circuit)).toEqual(["fork_comp", "shock_lsc"]);
 });

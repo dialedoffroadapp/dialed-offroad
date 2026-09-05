@@ -26,6 +26,20 @@ export const SYMPTOM_LABELS: Record<Tune2SymptomId, string> = {
   harsh_square_edge: "Square-edge harshness",
   headshake: "Headshake",
   general_harsh: "Harshness",
+  // v3 taxonomy (contract v3, 2026-09-05)
+  harsh_small_bumps: "Small-bump harshness",
+  bottoming: "Bottoming",
+  rear_kicks: "Rear kicks",
+  front_pushes: "Front push",
+  packs_in_chop: "Packing",
+  wallows_dives: "Wallowing",
+  rear_swaps: "Rear swap",
+  deflects: "Deflection",
+  rear_squats: "Rear squat",
+  too_stiff: "Stiffness",
+  too_soft: "Softness",
+  arm_pump: "Arm pump",
+  chatters: "Chatter",
 };
 
 export const CIRCUIT_LABELS: Record<keyof SettingsDelta & string, string> = {

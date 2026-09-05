@@ -190,7 +190,7 @@ export default function RideLogScreen() {
             <Label style={{ color: V3.blue, marginBottom: 8 }}>{picked.qualifierPrompt}</Label>
             <Grid cols={2}>
               {picked.qualifiers!.map((q) => (
-                <ChoiceChip key={q} out label={q} on={qualifier === q} dim minHeight={48} onPress={() => setQualifier(q)} style={qualifier === q ? undefined : { borderColor: V3.line }} />
+                <ChoiceChip key={q.tag} out label={q.label} on={qualifier === q.tag} dim minHeight={48} onPress={() => setQualifier(q.tag)} style={qualifier === q.tag ? undefined : { borderColor: V3.line }} />
               ))}
             </Grid>
           </View>

@@ -68,15 +68,31 @@ type ZeroInput = {
       has_air_fork?: boolean; // spec-verified fork type — authoritative over toggle/heuristic when present
       aer_pressure_bar_default?: number;
       aer_pressure_bar_per_10lb?: number;
+      // Fork air clamp (contract v3, decision 1): 7 to 14 bar unless sent.
+      air_min_bar?: number;
+      air_max_bar?: number;
     };
 
     // ----------------- Tune Two specific fields (optional) -----------------
     // When mode === "tune2_v1", the client should also send:
-    previous?: ZeroResult; // previous full tune result
+    previous?: PreviousTune; // previous tune, sparse where the setup never recorded a circuit
     feedback?: Tune2Feedback;
     last_outcome?: Tune2LastOutcome; // adaptive step input (optional)
+    // Contract v3 (2026-09-05): the ride day's conditions and the setup
+    // lineage this refinement belongs to (stored verbatim; the client scopes
+    // last_outcome to it).
+    conditions?: Tune2Conditions;
+    setup_id?: string;
   };
 };
+
+type CircuitValue = number | null;
+
+/** Who decided the numbers (contract v3, 2026-09-05). Baseline: "llm" (the
+ *  model's JSON merged over the formula), "fallback_parse" (the model's text
+ *  was not JSON; formula values shipped), "fallback_error" (the call threw),
+ *  "formula" (no API key). Refinement: always "deterministic". */
+type EngineSource = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic";
 
 type ZeroResult = {
   fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number };
@@ -91,13 +107,41 @@ type ZeroResult = {
   // Client-computed spring-rate check (lib/modelSpecs). The server never sets it,
   // but safeShape passes it through if present so it's never silently dropped.
   spring_check?: unknown;
+  engine_source?: EngineSource;
+  /** Tire pressure change from the conditions stage (psi, both ends). */
+  tire_psi_delta?: number;
+};
+
+/** A refinement's previous tune may be SPARSE (contract v3, honest previous
+ *  values): a circuit the running setup never recorded is null, never
+ *  invented, and the engine leaves it null in its answer. */
+type PreviousTune = {
+  fork: { comp_clicks: CircuitValue; reb_clicks: CircuitValue; air_pressure_bar?: CircuitValue };
+  shock: { lsc_clicks: CircuitValue; hsc_turns: CircuitValue; reb_clicks: CircuitValue; sag_mm: CircuitValue };
+  detected?: ZeroResult["detected"];
+  notes?: string[];
+};
+
+/** Tune Two's answer: the previous tune's shape, sparse where it was sparse. */
+type Tune2Result = {
+  fork: PreviousTune["fork"];
+  shock: PreviousTune["shock"];
+  detected?: ZeroResult["detected"];
+  notes: string[];
+  spring_check?: unknown;
+  engine_source?: EngineSource;
+  tire_psi_delta?: number;
 };
 
 type Discipline = "mx" | "enduro" | "mixed";
 
 /* ---------------------- Tune Two (feedback) types ---------------------- */
 
-type SymptomId =
+/** The 11 ids the v1/v2 engine shipped with. Still accepted and still routed
+ *  to their original table rows, so the v1 regression stays byte-identical.
+ *  LEGACY_TO_V3 (below) says which v3 id each one reads as for display and
+ *  for the parse vocabulary. */
+type LegacySymptomId =
   | "harsh_braking_bumps"
   | "deflects_in_chop"
   | "rear_kicks_accel"
@@ -110,13 +154,46 @@ type SymptomId =
   | "headshake"
   | "general_harsh";
 
-type WhereTag = "braking" | "corners" | "whoops" | "landings";
+/** The 14-id taxonomy (plan 4.3, adopted 2026-09-05; headshake is shared). */
+type V3SymptomId =
+  | "harsh_small_bumps"
+  | "bottoming"
+  | "rear_kicks"
+  | "front_pushes"
+  | "packs_in_chop"
+  | "wallows_dives"
+  | "headshake"
+  | "rear_swaps"
+  | "deflects"
+  | "rear_squats"
+  | "too_stiff"
+  | "too_soft"
+  | "arm_pump"
+  | "chatters";
+
+type SymptomId = LegacySymptomId | V3SymptomId;
+
+/** Location / qualifier tags: the four v2 tags plus the plan's mandatory
+ *  qualifiers (harsh: small_chop / under_braking / big_hits; rear kicks:
+ *  jump_face / braking_bumps / logs_ledges; packs: whoops / rocks). */
+type WhereTag =
+  | "braking"
+  | "corners"
+  | "whoops"
+  | "landings"
+  | "small_chop"
+  | "under_braking"
+  | "big_hits"
+  | "jump_face"
+  | "braking_bumps"
+  | "logs_ledges"
+  | "rocks";
 type ProtectArea = "rear_traction" | "front_planted" | "landings" | "cornering";
 
 type Tune2Symptom = {
   id: SymptomId;
   severity: number; // 1–10
-  where?: WhereTag; // optional location context (v2)
+  where?: WhereTag; // optional location / qualifier context
   source?: "explicit" | "parsed"; // provenance (v2, set by merge stage)
 };
 
@@ -127,6 +204,25 @@ type Tune2Feedback = {
   symptoms: Tune2Symptom[];
   free_text?: string; // raw rider note (v2, parsed server-side)
   protected?: { area: string }[]; // "don't touch" areas (v2)
+  /** Which surface produced this call (contract v3). A conditions ask has
+   *  no symptoms of its own and never runs the adaptive step. */
+  source?: "debrief" | "ride_log" | "conditions";
+};
+
+/** The ride day's rider-tapped conditions (contract v3, decision 6). The
+ *  engine applies the same rule base the client runs offline
+ *  (lib/conditionsRules.ts, parity-tested) as a contributions stage that runs
+ *  before the symptom table and through the same conflict and protect logic. */
+type Tune2Conditions = {
+  surfaces?: string[];
+  state?: "fresh" | "choppy" | "rutted" | null;
+  temp_band?: "cold" | "mild" | "hot" | null;
+  watered?: boolean | null;
+  /** Mid-day retune tile; prior_tweaks lets "watered" reverse a morning softening. */
+  retune?: {
+    tile: "watered" | "roughed" | "heating";
+    prior_tweaks?: { circuit: string; delta: number }[];
+  } | null;
 };
 
 type Tune2LastOutcome = {
@@ -144,7 +240,7 @@ type Circuit =
   | "fork_air";
 type ClickCircuit = Exclude<Circuit, "fork_air">;
 
-type Contribution = { symptomId: SymptomId; delta: number; severity: number };
+type Contribution = { symptomId: SymptomId | "conditions"; delta: number; severity: number };
 
 type Tune2Input = {
   make?: string;
@@ -158,13 +254,16 @@ type Tune2Input = {
     style?: "short_motos" | "long_enduro";
     goals?: string[];
   };
-  previous: ZeroResult;
+  previous: PreviousTune;
   feedback: Tune2Feedback;
   guardrails?: ZeroInput["input"]["guardrails"];
   // v2 additions (populated by the handler after parse+merge):
   protectedAreas?: ProtectArea[];
   lastOutcome?: Tune2LastOutcome;
   parsedAddedIds?: SymptomId[];
+  // contract v3
+  conditions?: Tune2Conditions;
+  setupId?: string;
 };
 
 const CORS_HEADERS = {
@@ -462,68 +561,89 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline) {
 
 /* ------------------------- Guardrail shaping ------------------------- */
 
-export function safeShape(
-  partial: Partial<ZeroResult>,
-  g: ZeroInput["input"]["guardrails"] | undefined
-): ZeroResult {
+/** Quarter-turn quantization for HSC (decision 4, 2026-09-05): the hardware
+ *  steps HSC by quarter turns; the old one-decimal rounding produced 1.3 for
+ *  1.25 and disagreed with the app's stepper and display. */
+export function quarterTurns(n: number): number {
+  return Math.round(n * 4) / 4;
+}
+
+const AIR_MIN_BAR_DEFAULT = 7;
+const AIR_MAX_BAR_DEFAULT = 14;
+
+/** A finite number, else null (a string from the model, NaN, undefined all
+ *  read as "not a value"; contract v3 NaN guard). */
+function finiteOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+type ShapeOpts = { allowNull?: boolean };
+
+/** The one shaping pass for both modes. Baselines (allowNull false) fill a
+ *  missing circuit with the historical default, exactly as v1 did; a
+ *  refinement (allowNull true) keeps a null circuit null instead of
+ *  inventing it (honest previous values). */
+function shapeCircuits(
+  partial: { fork?: any; shock?: any },
+  g: ZeroInput["input"]["guardrails"] | undefined,
+  opts: ShapeOpts
+): { fork: PreviousTune["fork"]; shock: PreviousTune["shock"] } {
   const clicksMin = g?.clicks_min ?? 0;
   const clicksMax = g?.clicks_max ?? 30;
   const hscMin = g?.hsc_turns_min ?? 0;
   const hscMax = g?.hsc_turns_max ?? 3;
   const sagMin = g?.sag_min_mm ?? 95;
   const sagMax = g?.sag_max_mm ?? 112;
+  const airMin = g?.air_min_bar ?? AIR_MIN_BAR_DEFAULT;
+  const airMax = g?.air_max_bar ?? AIR_MAX_BAR_DEFAULT;
+  const allowNull = !!opts.allowNull;
 
-  const forkComp = clamp(
-    Math.round(Number(partial.fork?.comp_clicks ?? 12)),
-    clicksMin,
-    clicksMax
-  );
-  const forkReb = clamp(
-    Math.round(Number(partial.fork?.reb_clicks ?? 12)),
-    clicksMin,
-    clicksMax
-  );
-  const shockLSC = clamp(
-    Math.round(Number(partial.shock?.lsc_clicks ?? 12)),
-    clicksMin,
-    clicksMax
-  );
-  const shockReb = clamp(
-    Math.round(Number(partial.shock?.reb_clicks ?? 14)),
-    clicksMin,
-    clicksMax
-  );
-  const shockHSC = clamp(
-    Number(partial.shock?.hsc_turns ?? 1.5),
-    hscMin,
-    hscMax
-  );
-  const sag = clamp(
-    Math.round(Number(partial.shock?.sag_mm ?? g?.sag_target_mm ?? 105)),
-    sagMin,
-    sagMax
-  );
-
-  const out: ZeroResult = {
-    fork: { comp_clicks: forkComp, reb_clicks: forkReb },
-    shock: {
-      lsc_clicks: shockLSC,
-      hsc_turns: Number(shockHSC.toFixed(1)),
-      reb_clicks: shockReb,
-      sag_mm: sag,
-    },
-    detected: {
-      has_air_fork: !!partial.detected?.has_air_fork,
-      fork_family: partial.detected?.fork_family,
-    },
-    notes: Array.isArray(partial.notes) ? partial.notes.slice(0, 12) : [],
+  const clicks = (v: unknown, def: number): CircuitValue => {
+    const n = finiteOrNull(v);
+    if (n === null) return allowNull ? null : clamp(Math.round(def), clicksMin, clicksMax);
+    return clamp(Math.round(n), clicksMin, clicksMax);
+  };
+  // Baselines emit HSC in quarter turns. A refinement (allowNull) must not
+  // snap a value it did not move (1.4 stays 1.4); buildTuneTwo snaps the
+  // ones it moves.
+  const hsc = (v: unknown, def: number): CircuitValue => {
+    const n = finiteOrNull(v);
+    if (n === null) return allowNull ? null : quarterTurns(clamp(def, hscMin, hscMax));
+    const clamped = clamp(n, hscMin, hscMax);
+    return allowNull ? Number(clamped.toFixed(2)) : quarterTurns(clamped);
+  };
+  const sag = (v: unknown, def: number): CircuitValue => {
+    const n = finiteOrNull(v);
+    if (n === null) return allowNull ? null : clamp(Math.round(def), sagMin, sagMax);
+    return clamp(Math.round(n), sagMin, sagMax);
   };
 
-  if (typeof partial.fork?.air_pressure_bar === "number") {
-    out.fork.air_pressure_bar = Number(
-      partial.fork.air_pressure_bar.toFixed(2)
-    );
-  }
+  const out: { fork: PreviousTune["fork"]; shock: PreviousTune["shock"] } = {
+    fork: {
+      comp_clicks: clicks(partial.fork?.comp_clicks, 12),
+      reb_clicks: clicks(partial.fork?.reb_clicks, 12),
+    },
+    shock: {
+      lsc_clicks: clicks(partial.shock?.lsc_clicks, 12),
+      hsc_turns: hsc(partial.shock?.hsc_turns, 1.5),
+      reb_clicks: clicks(partial.shock?.reb_clicks, 14),
+      sag_mm: sag(partial.shock?.sag_mm, g?.sag_target_mm ?? 105),
+    },
+  };
+  // Fork air: present only as a finite number, clamped to the air window
+  // (the old shape passed 1.5 bar straight through). A null air on an
+  // air-fork previous stays absent: nothing to move.
+  const air = finiteOrNull(partial.fork?.air_pressure_bar);
+  if (air !== null) out.fork.air_pressure_bar = Number(clamp(air, airMin, airMax).toFixed(2));
+  return out;
+}
+
+function applyForkTypeRule(
+  out: { fork: { air_pressure_bar?: CircuitValue }; detected?: ZeroResult["detected"] },
+  g: ZeroInput["input"]["guardrails"] | undefined
+) {
   // Spec-verified fork type is authoritative: an AI-guessed air fork can never
   // survive on a confirmed-coil bike (and a confirmed air fork is flagged even
   // if the model forgot to).
@@ -533,9 +653,50 @@ export function safeShape(
   } else if (g?.has_air_fork === true && out.detected) {
     out.detected.has_air_fork = true;
   }
+}
+
+export function safeShape(
+  partial: Partial<ZeroResult> | Partial<Tune2Result>,
+  g: ZeroInput["input"]["guardrails"] | undefined
+): ZeroResult {
+  const shaped = shapeCircuits(partial, g, { allowNull: false });
+  const out: ZeroResult = {
+    fork: shaped.fork as ZeroResult["fork"],
+    shock: shaped.shock as ZeroResult["shock"],
+    detected: {
+      has_air_fork: !!partial.detected?.has_air_fork,
+      fork_family: partial.detected?.fork_family,
+    },
+    notes: Array.isArray(partial.notes) ? partial.notes.filter((n) => typeof n === "string").slice(0, 12) : [],
+  };
+  applyForkTypeRule(out, g);
   // Pass through a client-computed spring_check if one ever rides in (whitelist
   // reconstruction otherwise drops unknown fields).
   if (partial.spring_check !== undefined) out.spring_check = partial.spring_check;
+  if (partial.engine_source) out.engine_source = partial.engine_source;
+  if (typeof partial.tire_psi_delta === "number") out.tire_psi_delta = partial.tire_psi_delta;
+  return out;
+}
+
+/** The refinement shape: sparse where the previous tune was sparse. */
+export function safeShapeSparse(
+  partial: Partial<Tune2Result>,
+  g: ZeroInput["input"]["guardrails"] | undefined
+): Tune2Result {
+  const shaped = shapeCircuits(partial, g, { allowNull: true });
+  const out: Tune2Result = {
+    fork: shaped.fork,
+    shock: shaped.shock,
+    detected: {
+      has_air_fork: !!partial.detected?.has_air_fork,
+      fork_family: partial.detected?.fork_family,
+    },
+    notes: Array.isArray(partial.notes) ? partial.notes.filter((n) => typeof n === "string").slice(0, 12) : [],
+    engine_source: "deterministic",
+  };
+  applyForkTypeRule(out, g);
+  if (partial.spring_check !== undefined) out.spring_check = partial.spring_check;
+  if (typeof partial.tire_psi_delta === "number") out.tire_psi_delta = partial.tire_psi_delta;
   return out;
 }
 
@@ -871,7 +1032,8 @@ function buildFallback(z: ZeroInput["input"]): Partial<ZeroResult> {
 
 /* ---------------- Tune Two symptom labels for tailored notes ---------------- */
 
-const SYMPTOM_LABELS: Record<SymptomId, string> = {
+const SYMPTOM_LABELS: Record<SymptomId | "conditions", string> = {
+  // legacy ids (v1/v2), still accepted
   harsh_braking_bumps: "harsh on braking bumps",
   deflects_in_chop: "front deflects in chop",
   rear_kicks_accel: "rear kicks under acceleration",
@@ -883,11 +1045,26 @@ const SYMPTOM_LABELS: Record<SymptomId, string> = {
   harsh_square_edge: "harsh on square-edge",
   headshake: "high-speed headshake",
   general_harsh: "general harsh feel",
+  // v3 taxonomy (plan 4.3)
+  harsh_small_bumps: "harsh on small bumps",
+  bottoming: "bottoming",
+  rear_kicks: "rear kicks",
+  front_pushes: "front pushes",
+  packs_in_chop: "packing in chop",
+  wallows_dives: "wallowing / diving",
+  rear_swaps: "rear swaps",
+  deflects: "deflection",
+  rear_squats: "rear squats",
+  too_stiff: "too stiff",
+  too_soft: "too soft",
+  arm_pump: "arm pump",
+  chatters: "chatter",
+  conditions: "today's conditions",
 };
 
-/* ------------------- v2 vocabularies + validation helpers ------------------- */
+/* ------------------- v2/v3 vocabularies + validation helpers ------------------- */
 
-const KNOWN_SYMPTOM_IDS = new Set<SymptomId>([
+const LEGACY_SYMPTOM_IDS: readonly LegacySymptomId[] = [
   "harsh_braking_bumps",
   "deflects_in_chop",
   "rear_kicks_accel",
@@ -899,14 +1076,60 @@ const KNOWN_SYMPTOM_IDS = new Set<SymptomId>([
   "harsh_square_edge",
   "headshake",
   "general_harsh",
-]);
+];
 
-const KNOWN_WHERES = new Set<WhereTag>([
+export const V3_SYMPTOM_IDS: readonly V3SymptomId[] = [
+  "harsh_small_bumps",
+  "bottoming",
+  "rear_kicks",
+  "front_pushes",
+  "packs_in_chop",
+  "wallows_dives",
+  "headshake",
+  "rear_swaps",
+  "deflects",
+  "rear_squats",
+  "too_stiff",
+  "too_soft",
+  "arm_pump",
+  "chatters",
+];
+
+/** Legacy id → the v3 id it reads as (display, analytics, the parse
+ *  vocabulary). Three legacy ids have no clean v3 equivalent and stay
+ *  first-class: dead_feel, unstable_whoops, harsh_square_edge. The engine
+ *  never translates at input: legacy ids keep their original table rows, so
+ *  the v1 regression stays byte-identical. */
+export const LEGACY_TO_V3: Record<LegacySymptomId, { id: SymptomId; where?: WhereTag }> = {
+  harsh_braking_bumps: { id: "harsh_small_bumps", where: "under_braking" },
+  deflects_in_chop: { id: "deflects" },
+  rear_kicks_accel: { id: "rear_kicks" },
+  bottoms_landings: { id: "bottoming" },
+  front_knifes: { id: "front_pushes" },
+  dead_feel: { id: "dead_feel" },
+  unstable_whoops: { id: "unstable_whoops" },
+  packs_whoops: { id: "packs_in_chop", where: "whoops" },
+  harsh_square_edge: { id: "harsh_square_edge" },
+  headshake: { id: "headshake" },
+  general_harsh: { id: "too_stiff" },
+};
+
+const KNOWN_SYMPTOM_IDS = new Set<SymptomId>([...LEGACY_SYMPTOM_IDS, ...V3_SYMPTOM_IDS]);
+
+export const WHERE_TAGS: readonly WhereTag[] = [
   "braking",
   "corners",
   "whoops",
   "landings",
-]);
+  "small_chop",
+  "under_braking",
+  "big_hits",
+  "jump_face",
+  "braking_bumps",
+  "logs_ledges",
+  "rocks",
+];
+const KNOWN_WHERES = new Set<WhereTag>(WHERE_TAGS);
 
 const KNOWN_AREAS = new Set<ProtectArea>([
   "rear_traction",
@@ -930,18 +1153,20 @@ const PROTECT_MAP: Record<ProtectArea, ClickCircuit[]> = {
   cornering: ["fork_comp", "fork_reb"],
 };
 
+// One adjustment unit per circuit for the conflict / protect / adaptive
+// math. HSC is a quarter turn (decision 4, 2026-09-05; was 0.15).
 const CIRCUIT_META: Record<Circuit, { label: string; unit: number }> = {
   fork_comp: { label: "fork compression", unit: 1 },
   fork_reb: { label: "fork rebound", unit: 1 },
   shock_lsc: { label: "shock low-speed compression", unit: 1 },
   shock_reb: { label: "shock rebound", unit: 1 },
-  shock_hsc: { label: "shock high-speed compression", unit: 0.15 },
+  shock_hsc: { label: "shock high-speed compression", unit: 0.25 },
   fork_air: { label: "fork air pressure", unit: 0.05 },
 };
 
 function normalizeWhere(v: unknown): WhereTag | undefined {
   if (typeof v !== "string") return undefined;
-  const w = v.trim().toLowerCase();
+  const w = v.trim().toLowerCase().replace(/[\s-]+/g, "_");
   return KNOWN_WHERES.has(w as WhereTag) ? (w as WhereTag) : undefined;
 }
 
@@ -957,14 +1182,16 @@ function fmtDelta(n: number): string {
 }
 
 /* --------------------- v2 free-text parsing (Change 2) --------------------- */
+// Vocabulary = the v3 taxonomy (contract v3); legacy ids are still accepted
+// by sanitizeParsedFeedback if the model emits one.
 
 const PARSE_SYSTEM_PROMPT = [
   "You extract structured dirt-bike suspension feedback from a rider's free-text ride note.",
   'Return ONLY strict JSON with this exact shape: {"symptoms":[{"id":"...","severity":5,"where":"..."}],"protected":[{"area":"..."}]}',
   "Rules:",
-  `- "id" MUST be one of: ${[...KNOWN_SYMPTOM_IDS].join(", ")}.`,
+  `- "id" MUST be one of: ${V3_SYMPTOM_IDS.join(", ")}.`,
   '- "severity" is an integer 1-10 for how bad it sounds; use 5 when unclear.',
-  '- "where" is optional and MUST be one of: braking, corners, whoops, landings. Omit it when the note does not say where.',
+  `- "where" is optional and MUST be one of: ${WHERE_TAGS.join(", ")}. Omit it when the note does not say where.`,
   '- "protected" entries are ONLY for things the rider says are working well and should not change; "area" MUST be one of: rear_traction, front_planted, landings, cornering.',
   "- If a statement does not map cleanly onto these vocabularies, OMIT it. Never invent symptoms, severities, wheres, or areas.",
   "- Empty arrays are valid. Return no other keys and no prose.",
@@ -1115,6 +1342,51 @@ export function mergeFeedback(
   return { symptoms, protectedAreas, parsedAddedIds };
 }
 
+/** sanitizePrevious — the previous tune with every circuit either a finite
+ *  number or null (contract v3, honest previous values). Nothing is invented
+ *  here or downstream. */
+export function sanitizePrevious(raw: unknown): PreviousTune {
+  const r = (raw ?? {}) as any;
+  const air = finiteOrNull(r.fork?.air_pressure_bar);
+  return {
+    fork: {
+      comp_clicks: finiteOrNull(r.fork?.comp_clicks),
+      reb_clicks: finiteOrNull(r.fork?.reb_clicks),
+      ...(air !== null ? { air_pressure_bar: air } : {}),
+    },
+    shock: {
+      lsc_clicks: finiteOrNull(r.shock?.lsc_clicks),
+      hsc_turns: finiteOrNull(r.shock?.hsc_turns),
+      reb_clicks: finiteOrNull(r.shock?.reb_clicks),
+      sag_mm: finiteOrNull(r.shock?.sag_mm),
+    },
+    detected: r.detected && typeof r.detected === "object" ? { has_air_fork: !!r.detected.has_air_fork, fork_family: typeof r.detected.fork_family === "string" ? r.detected.fork_family : undefined } : undefined,
+  };
+}
+
+/** sanitizeConditions — whitelist the conditions input; undefined when absent
+ *  or empty, so a legacy caller never reaches the conditions stage. */
+export function sanitizeConditions(raw: unknown): Tune2Conditions | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as any;
+  const SURFACES = new Set(["hardpack", "loam", "sand", "mud"]);
+  const surfaces = Array.isArray(r.surfaces) ? r.surfaces.filter((x: unknown) => typeof x === "string" && SURFACES.has(x)) : [];
+  const state = ["fresh", "choppy", "rutted"].includes(r.state) ? r.state : null;
+  const temp_band = ["cold", "mild", "hot"].includes(r.temp_band) ? r.temp_band : null;
+  const watered = typeof r.watered === "boolean" ? r.watered : null;
+  let retune: Tune2Conditions["retune"] = null;
+  if (r.retune && typeof r.retune === "object" && ["watered", "roughed", "heating"].includes(r.retune.tile)) {
+    const prior = Array.isArray(r.retune.prior_tweaks)
+      ? r.retune.prior_tweaks
+          .filter((t: any) => t && typeof t.circuit === "string" && Number.isFinite(Number(t.delta)))
+          .map((t: any) => ({ circuit: t.circuit, delta: Number(t.delta) }))
+      : [];
+    retune = { tile: r.retune.tile, prior_tweaks: prior };
+  }
+  if (!surfaces.length && !state && !temp_band && watered === null && !retune) return undefined;
+  return { surfaces, state, temp_band, watered, retune };
+}
+
 /** sanitizeLastOutcome — whitelist/clamp the optional adaptive-step input. */
 export function sanitizeLastOutcome(raw: unknown): Tune2LastOutcome | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -1141,19 +1413,85 @@ export function sanitizeLastOutcome(raw: unknown): Tune2LastOutcome | undefined 
   return { outcome: r.outcome, symptoms, deltas };
 }
 
+/* --------------------------- Conditions stage (contract v3) --------------------------- */
+// The ride day's conditions rule base, ported rule for rule from
+// lib/conditionsRules.ts (todaysSetupRules + retuneRules) and parity-tested
+// against it. Clicks out from closed: + = softer/faster, - = firmer/slower.
+
+export type ConditionsDelta = { circuit: Circuit; delta: number; reason: string; label: string };
+
+export function conditionsRuleDeltas(
+  c: Tune2Conditions,
+  effective: Record<Circuit, CircuitValue>,
+  hasAirFork: boolean
+): { deltas: ConditionsDelta[]; tirePsiDelta: number } {
+  const has = (k: Circuit) => typeof effective[k] === "number";
+
+  if (c.retune?.tile) {
+    const deltas: ConditionsDelta[] = [];
+    let tirePsiDelta = 0;
+    const tile = c.retune.tile;
+    const prior = Array.isArray(c.retune.prior_tweaks) ? c.retune.prior_tweaks : [];
+    if (tile === "watered") {
+      const softened = prior.find((t) => t.circuit === "fork_comp" && typeof t.delta === "number" && t.delta > 0);
+      if (softened && has("fork_comp")) {
+        deltas.push({ circuit: "fork_comp", delta: -softened.delta, reason: "Fresh water means grip. Take back the morning's chop softening.", label: "just watered" });
+      }
+      tirePsiDelta = -0.5;
+    } else if (tile === "roughed") {
+      if (has("fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Braking and acceleration bumps forming: a click firmer fork comp holds it up. Rebound stays.", label: "roughed up" });
+    } else if (tile === "heating") {
+      if (hasAirFork && has("fork_air")) deltas.push({ circuit: "fork_air", delta: -0.1, reason: "Fork's warming up and pressure climbs with it. Bleed 0.1 bar.", label: "heating up" });
+      else if (has("fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Hot oil damps less. A click firmer makes up the difference.", label: "heating up" });
+    }
+    return { deltas, tirePsiDelta };
+  }
+
+  const surface = Array.isArray(c.surfaces) ? c.surfaces[0] ?? null : null;
+  const deltas: ConditionsDelta[] = [];
+  const push = (d: ConditionsDelta) => {
+    if (deltas.length < 2 && has(d.circuit) && !deltas.some((x) => x.circuit === d.circuit)) deltas.push(d);
+  };
+  if (surface === "hardpack" && c.state === "choppy") {
+    push({ circuit: "fork_comp", delta: 1, reason: "Choppy hardpack: a click softer keeps the fork moving over the chop.", label: "choppy hardpack" });
+  } else if (surface === "hardpack" && c.state === "rutted") {
+    push({ circuit: "fork_reb", delta: 1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts.", label: "rutted hardpack" });
+  } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
+    const label = surface === "sand" ? "sand" : "deep loam";
+    push({ circuit: "fork_comp", delta: -1, reason: `${surface === "sand" ? "Sand" : "Deep loam"} loads the fork: a click firmer holds it up.`, label });
+    push({ circuit: "fork_reb", delta: -1, reason: "A click slower rebound keeps the front planted in the soft stuff.", label });
+  } else if (surface === "mud") {
+    push({ circuit: "fork_comp", delta: -2, reason: "Mud: two clicks firmer. Bigger change on purpose; back it off once it dries.", label: "mud" });
+  }
+  if (c.temp_band === "hot") {
+    if (hasAirFork && has("fork_air")) push({ circuit: "fork_air", delta: -0.2, reason: "Heat raises air pressure as the fork warms. Start 0.2 bar lower.", label: "heat" });
+    else push({ circuit: "shock_lsc", delta: -1, reason: "Heat thins the oil and drops damping. A click firmer on the shock makes up for it.", label: "heat" });
+  } else if (c.temp_band === "cold") {
+    if (hasAirFork && has("fork_air")) push({ circuit: "fork_air", delta: 0.1, reason: "Cold air reads low. Start 0.1 bar higher so the fork holds up.", label: "cold" });
+  }
+  const tirePsiDelta = c.watered ? -0.5 : 0;
+  return { deltas, tirePsiDelta };
+}
+
 /* --------------------------- Tune Two engine (mode: tune2_v1) --------------------------- */
 
-export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
+export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
   const prev = input.previous;
 
-  // Start from previous tune
-  let forkComp = prev.fork.comp_clicks;
-  let forkReb = prev.fork.reb_clicks;
-  let air = prev.fork.air_pressure_bar;
-  let shockLSC = prev.shock.lsc_clicks;
-  let shockReb = prev.shock.reb_clicks;
-  let shockHSC = prev.shock.hsc_turns;
-  const sag = prev.shock.sag_mm; // keep sag constant in Tune Two (for now)
+  // Start from the previous tune. A circuit the setup never recorded is null
+  // and stays null (contract v3, honest previous values): nothing is invented
+  // and no contribution can move it.
+  const prevOf: Record<Circuit, CircuitValue> = {
+    fork_comp: finiteOrNull(prev.fork?.comp_clicks),
+    fork_reb: finiteOrNull(prev.fork?.reb_clicks),
+    shock_lsc: finiteOrNull(prev.shock?.lsc_clicks),
+    shock_reb: finiteOrNull(prev.shock?.reb_clicks),
+    shock_hsc: finiteOrNull(prev.shock?.hsc_turns),
+    fork_air: finiteOrNull(prev.fork?.air_pressure_bar),
+  };
+  const known = (c: Circuit) => prevOf[c] !== null;
+  let air: number | undefined = prevOf.fork_air ?? undefined;
+  const sag = finiteOrNull(prev.shock?.sag_mm); // keep sag constant in Tune Two (for now)
 
   const fb = input.feedback;
   const symptoms = fb?.symptoms ?? [];
@@ -1168,22 +1506,34 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   else if (overall >= 3) globalScale = 1.3;
   else globalScale = 1.5; // really bad → bigger moves (still safe)
 
-  if (!symptoms.length) {
+  // ---- Contract v3: the conditions stage ----
+  const cond = input.conditions ? conditionsRuleDeltas(input.conditions, prevOf, air !== undefined) : null;
+
+  const echo = (notes: string[]): Partial<Tune2Result> => ({
+    fork: { comp_clicks: prevOf.fork_comp, reb_clicks: prevOf.fork_reb, air_pressure_bar: air },
+    shock: {
+      lsc_clicks: prevOf.shock_lsc,
+      hsc_turns: prevOf.shock_hsc,
+      reb_clicks: prevOf.shock_reb,
+      sag_mm: sag,
+    },
+    detected: prev.detected,
+    notes,
+    ...(cond ? { tire_psi_delta: cond.tirePsiDelta } : {}),
+  });
+
+  if (!symptoms.length && !(cond && cond.deltas.length)) {
+    if (cond) {
+      return echo([
+        "Nothing in today's conditions asks for a clicker change, so your setup stands.",
+        ...(cond.tirePsiDelta ? [`Tires: ${fmtDelta(cond.tirePsiDelta)} psi front and rear for the water.`] : []),
+      ]);
+    }
     // No feedback – just echo previous tune with a gentle note
-    return {
-      fork: { comp_clicks: forkComp, reb_clicks: forkReb, air_pressure_bar: air },
-      shock: {
-        lsc_clicks: shockLSC,
-        hsc_turns: shockHSC,
-        reb_clicks: shockReb,
-        sag_mm: sag,
-      },
-      detected: prev.detected,
-      notes: [
-        "No specific issues were selected, so this Tune Two keeps your last settings.",
-        "Next moto: pick where it felt off (braking bumps, whoops, landings, etc.) so we can make targeted changes.",
-      ],
-    };
+    return echo([
+      "No specific issues were selected, so this Tune Two keeps your last settings.",
+      "Next moto: pick where it felt off (braking bumps, whoops, landings, etc.) so we can make targeted changes.",
+    ]);
   }
 
   // v2: accumulate per-circuit CONTRIBUTIONS instead of running sums, so
@@ -1197,20 +1547,34 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     fork_air: [],
   };
   const symptomNotes: string[] = [];
+  const conditionNotes: string[] = [];
+  const unknownCircuits = new Set<Circuit>();
 
   const add = (
     circuit: Circuit,
-    symptomId: SymptomId,
+    symptomId: SymptomId | "conditions",
     delta: number,
     severity: number
   ) => {
     if (delta === 0) return;
+    if (!known(circuit)) {
+      unknownCircuits.add(circuit);
+      return;
+    }
     contribs[circuit].push({
       symptomId,
       delta,
       severity: clampInt(severity || 5, 1, 10),
     });
   };
+
+  if (cond) {
+    for (const d of cond.deltas) {
+      add(d.circuit, "conditions", d.delta, 5);
+      conditionNotes.push(`Conditions: ${d.label} → ${fmtDelta(d.delta)} ${CIRCUIT_META[d.circuit].label}. ${d.reason}`);
+    }
+    if (cond.tirePsiDelta) conditionNotes.push(`Tires: ${fmtDelta(cond.tirePsiDelta)} psi front and rear for the water.`);
+  }
 
   if (input.parsedAddedIds?.length) {
     const labels = input.parsedAddedIds
@@ -1247,14 +1611,15 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   // Where-suffix helper for symptom+where combos that have NO special modifier
   // (Change 4: "the where still appears in that symptom's note").
   const whereSuffix = (s: Tune2Symptom) =>
-    s.where ? ` (reported in ${s.where})` : "";
+    s.where ? ` (reported in ${s.where.replace(/_/g, " ")})` : "";
 
   // Reusable case bodies so where-modifiers can route between them (Change 4).
   const applyBottomsLandings = (s: Tune2Symptom, routedFrom?: SymptomId) => {
     const scale = clickDeltaForSeverity(s.severity);
     const airScale = airDeltaForSeverity(s.severity);
     const dLSC = Math.max(1, scale - 1);
-    const dHSC = 0.15 * (scale >= 3 ? 2 : 1);
+    // HSC moves in quarter turns (decision 4; was 0.15 / 0.30).
+    const dHSC = 0.25 * (scale >= 3 ? 2 : 1);
     add("shock_lsc", s.id, -dLSC, s.severity);
     add("shock_hsc", s.id, -dHSC, s.severity);
     if (air !== undefined) add("fork_air", s.id, airScale * 0.7, s.severity);
@@ -1287,7 +1652,7 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     }
   };
 
-  const applyFrontKnifes = (s: Tune2Symptom, routedFrom?: SymptomId) => {
+  const applyFrontKnifes = (s: Tune2Symptom, routedFrom?: SymptomId, label = "Front knifing in corners") => {
     const scale = clickDeltaForSeverity(s.severity);
     const dComp = Math.max(1, scale - 1);
     add("fork_comp", s.id, -dComp, s.severity);
@@ -1298,7 +1663,41 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
       );
     } else {
       symptomNotes.push(
-        `Front knifing in corners → -${dComp} fork compression clicks (firmer) and +1 fork rebound click for a touch more pop.`
+        `${label} → -${dComp} fork compression clicks (firmer) and +1 fork rebound click for a touch more pop.`
+      );
+    }
+  };
+
+  const applyHarsh = (s: Tune2Symptom, label: string, routedAs: SymptomId) => {
+    const scale = clickDeltaForSeverity(s.severity);
+    const airScale = airDeltaForSeverity(s.severity);
+    if (s.where === "landings" || s.where === "big_hits") {
+      // Change 4: it's a bottoming complaint — route to bottoms logic.
+      applyBottomsLandings(s, routedAs);
+      return;
+    }
+    // Front is too stiff / spiky on small chop → soften comp, tiny air tweak
+    add("fork_comp", s.id, scale, s.severity); // more clicks out = softer
+    if (s.where === "corners") {
+      // Change 4: weight softening toward fork comp only, skip the air tweak.
+      symptomNotes.push(
+        `Harsh into corners → +${scale} fork compression clicks (softer), leaving air pressure alone.`
+      );
+      return;
+    }
+    if (air !== undefined) add("fork_air", s.id, -(airScale * 0.5), s.severity);
+    symptomNotes.push(
+      `${label} → +${scale} fork compression clicks (softer).${
+        air !== undefined
+          ? ` Optionally -${airScale.toFixed(2)} bar AER.`
+          : ""
+      }${s.where === "whoops" ? "" : whereSuffix(s)}`
+    );
+    if (s.where === "whoops") {
+      // Change 4: harshness in whoops → also soften the shock a touch.
+      add("shock_lsc", s.id, 1, s.severity);
+      symptomNotes.push(
+        "Since it's harsh in the whoops → also +1 shock LSC click (softer)."
       );
     }
   };
@@ -1308,36 +1707,9 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     const airScale = airDeltaForSeverity(s.severity);
 
     switch (s.id) {
+      /* ------------------------------ legacy ids ------------------------------ */
       case "harsh_braking_bumps": {
-        if (s.where === "landings") {
-          // Change 4: it's a bottoming complaint — route to bottoms logic.
-          applyBottomsLandings(s, "harsh_braking_bumps");
-          break;
-        }
-        // Front is too stiff / spiky on small chop → soften comp, tiny air tweak
-        add("fork_comp", s.id, scale, s.severity); // more clicks out = softer
-        if (s.where === "corners") {
-          // Change 4: weight softening toward fork comp only, skip the air tweak.
-          symptomNotes.push(
-            `Harsh into corners → +${scale} fork compression clicks (softer), leaving air pressure alone.`
-          );
-          break;
-        }
-        if (air !== undefined) add("fork_air", s.id, -(airScale * 0.5), s.severity);
-        symptomNotes.push(
-          `Harsh on braking bumps → +${scale} fork compression clicks (softer).${
-            air !== undefined
-              ? ` Optionally -${airScale.toFixed(2)} bar AER.`
-              : ""
-          }${s.where === "whoops" ? "" : whereSuffix(s)}`
-        );
-        if (s.where === "whoops") {
-          // Change 4: harshness in whoops → also soften the shock a touch.
-          add("shock_lsc", s.id, 1, s.severity);
-          symptomNotes.push(
-            "Since it's harsh in the whoops → also +1 shock LSC click (softer)."
-          );
-        }
+        applyHarsh(s, "Harsh on braking bumps", "harsh_braking_bumps");
         break;
       }
       case "deflects_in_chop": {
@@ -1463,6 +1835,135 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
         }
         break;
       }
+
+      /* ------------------------------ v3 taxonomy ------------------------------ */
+      // Rows marked SIGN-OFF are tuning authorship (2026-09-05) awaiting
+      // River's per-row confirmation; the direction follows the legacy row
+      // closest in meaning.
+      case "harsh_small_bumps": {
+        applyHarsh(s, "Harsh on small bumps", "harsh_small_bumps");
+        break;
+      }
+      case "bottoming": {
+        applyBottomsLandings(s);
+        break;
+      }
+      case "front_pushes": {
+        applyFrontKnifes(s, undefined, "Front pushes in corners");
+        break;
+      }
+      case "deflects": {
+        add("fork_reb", s.id, -scale, s.severity);
+        symptomNotes.push(
+          `Front deflects → -${scale} fork rebound clicks (slower to keep the tire planted).${whereSuffix(s)}`
+        );
+        break;
+      }
+      case "rear_kicks": {
+        add("shock_reb", s.id, -scale, s.severity);
+        const special = s.where === "jump_face" || s.where === "logs_ledges" || s.where === "braking_bumps";
+        symptomNotes.push(
+          `Rear kicks → -${scale} shock rebound clicks (slower to stop kicking).${special ? "" : whereSuffix(s)}`
+        );
+        if (s.where === "jump_face") {
+          add("shock_hsc", s.id, -0.25, s.severity);
+          symptomNotes.push("Since it kicks on jump faces → also -0.25 HSC turns to hold the rear up on the face.");
+        } else if (s.where === "logs_ledges") {
+          add("shock_lsc", s.id, 1, s.severity);
+          symptomNotes.push("Since it kicks on logs and ledges → also +1 shock LSC click (softer) so the rear can absorb the edge.");
+        } else if (s.where === "braking_bumps") {
+          add("fork_reb", s.id, -1, s.severity);
+          symptomNotes.push("Since it kicks in the braking bumps → also -1 fork rebound click to keep the front settled under braking.");
+        }
+        break;
+      }
+      case "packs_in_chop": {
+        add("fork_reb", s.id, scale, s.severity);
+        add("shock_reb", s.id, scale, s.severity);
+        symptomNotes.push(
+          `Packing in chop → +${scale} fork rebound clicks and +${scale} shock rebound clicks (faster to avoid packing).${
+            s.where === "rocks" ? "" : whereSuffix(s)
+          }`
+        );
+        if (s.where === "rocks") {
+          add("fork_comp", s.id, 1, s.severity);
+          symptomNotes.push("Since it packs in the rocks → also +1 fork compression click (softer) for the sharp hits.");
+        }
+        break;
+      }
+      case "wallows_dives": {
+        // SIGN-OFF: under-damped compression → firmer front, a click firmer LSC.
+        const dComp = Math.max(1, scale - 1);
+        add("fork_comp", s.id, -dComp, s.severity);
+        add("shock_lsc", s.id, -1, s.severity);
+        symptomNotes.push(
+          `Wallowing / diving → -${dComp} fork compression clicks (firmer) and -1 shock LSC click for hold-up.${whereSuffix(s)}`
+        );
+        break;
+      }
+      case "rear_swaps": {
+        // SIGN-OFF: the rear steps out → softer LSC for traction, a click slower rebound.
+        add("shock_lsc", s.id, scale, s.severity);
+        add("shock_reb", s.id, -1, s.severity);
+        symptomNotes.push(
+          `Rear swaps → +${scale} shock LSC clicks (softer for traction) and -1 shock rebound click to settle it.${whereSuffix(s)}`
+        );
+        break;
+      }
+      case "rear_squats": {
+        // SIGN-OFF: squats on the gas → firmer LSC, a quarter turn of HSC when it is bad.
+        const dLSC = Math.max(1, scale - 1);
+        add("shock_lsc", s.id, -dLSC, s.severity);
+        if (scale >= 3) add("shock_hsc", s.id, -0.25, s.severity);
+        symptomNotes.push(
+          `Rear squats on the gas → -${dLSC} shock LSC clicks (firmer)${scale >= 3 ? " and -0.25 HSC turns" : ""}.${whereSuffix(s)}`
+        );
+        break;
+      }
+      case "too_stiff": {
+        // Mirrors general_harsh.
+        const dComp = Math.max(1, scale - 1);
+        add("fork_comp", s.id, dComp, s.severity);
+        add("shock_lsc", s.id, 1, s.severity);
+        if (air !== undefined) add("fork_air", s.id, -(airScale * 0.5), s.severity);
+        symptomNotes.push(
+          `Too stiff → +${dComp} fork compression clicks (softer) and +1 shock LSC click.${whereSuffix(s)}`
+        );
+        if (air !== undefined) symptomNotes.push(`Also -${(airScale * 0.5).toFixed(2)} bar AER for a touch more comfort.`);
+        break;
+      }
+      case "too_soft": {
+        // SIGN-OFF: the mirror of too_stiff.
+        const dComp = Math.max(1, scale - 1);
+        add("fork_comp", s.id, -dComp, s.severity);
+        add("shock_lsc", s.id, -1, s.severity);
+        if (air !== undefined) add("fork_air", s.id, airScale * 0.5, s.severity);
+        symptomNotes.push(
+          `Too soft → -${dComp} fork compression clicks (firmer) and -1 shock LSC click.${whereSuffix(s)}`
+        );
+        if (air !== undefined) symptomNotes.push(`Also +${(airScale * 0.5).toFixed(2)} bar AER for more hold-up.`);
+        break;
+      }
+      case "arm_pump": {
+        // SIGN-OFF: comfort first: softer comp, a click faster rebound, a touch less air.
+        add("fork_comp", s.id, scale, s.severity);
+        add("fork_reb", s.id, 1, s.severity);
+        if (air !== undefined) add("fork_air", s.id, -(airScale * 0.5), s.severity);
+        symptomNotes.push(
+          `Arm pump → +${scale} fork compression clicks (softer) and +1 fork rebound click so the front stops hammering your hands.${whereSuffix(s)}`
+        );
+        if (air !== undefined) symptomNotes.push(`Also -${(airScale * 0.5).toFixed(2)} bar AER for comfort.`);
+        break;
+      }
+      case "chatters": {
+        // SIGN-OFF: chatter = rebound too fast plus a spiky front: slower rebound, a click softer comp.
+        add("fork_reb", s.id, -scale, s.severity);
+        add("fork_comp", s.id, 1, s.severity);
+        symptomNotes.push(
+          `Chatter → -${scale} fork rebound clicks (slower) and +1 fork compression click (softer) to settle the front.${whereSuffix(s)}`
+        );
+        break;
+      }
     }
   }
 
@@ -1569,7 +2070,7 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
       // Only when this feedback re-reports a symptom the last refinement addressed,
       // and that symptom pulls on this circuit this round.
       const reReported = contribs[key].some((c) =>
-        lo.symptoms.includes(c.symptomId)
+        c.symptomId !== "conditions" && lo.symptoms.includes(c.symptomId)
       );
       if (!reReported) continue;
 
@@ -1601,12 +2102,14 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   const dShockHSC = clampFloat(resolved.shock_hsc, -0.5, 0.5);
   const dAir = clampFloat(resolved.fork_air, -0.3, 0.3);
 
-  // Apply deltas
-  forkComp += dForkComp;
-  forkReb += dForkReb;
-  shockLSC += dShockLSC;
-  shockReb += dShockReb;
-  shockHSC += dShockHSC;
+  // Apply deltas (a null circuit stays null: nothing was contributed to it)
+  const applied = (c: Circuit, d: number): CircuitValue => (known(c) ? (prevOf[c] as number) + d : null);
+  const forkComp = applied("fork_comp", dForkComp);
+  const forkReb = applied("fork_reb", dForkReb);
+  const shockLSC = applied("shock_lsc", dShockLSC);
+  const shockReb = applied("shock_reb", dShockReb);
+  // HSC lands on a quarter turn when it moves (decision 4); untouched stays.
+  const shockHSC = dShockHSC !== 0 && known("shock_hsc") ? quarterTurns((prevOf.shock_hsc as number) + dShockHSC) : applied("shock_hsc", dShockHSC);
   if (air !== undefined) {
     air += dAir;
   }
@@ -1630,8 +2133,10 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     goalsArr.length > 0 ? `Goals: ${goalsArr.join(", ")}.` : undefined;
 
   const issuesPart = humanSymptoms.length
-    ? `small changes for ${humanSymptoms.join(", ")}.`
-    : "small changes based on your feedback.";
+    ? `small changes for ${humanSymptoms.join(", ")}${cond && cond.deltas.length ? " and today's conditions" : ""}.`
+    : cond && cond.deltas.length
+      ? "small changes for today's conditions."
+      : "small changes based on your feedback.";
 
   const summary: string[] = [
     `Tune Two for ${bikeStr} on ${terrainStr}: ${issuesPart}`,
@@ -1639,17 +2144,25 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
   ];
   if (goalsStr) summary.push(goalsStr);
 
+  const unknownNotes = [...unknownCircuits].map((c) => {
+    const label = CIRCUIT_META[c].label;
+    return `${label[0].toUpperCase()}${label.slice(1)} has no saved value on this setup, so I left it. Set it once and I can move it next time.`;
+  });
+
   // Notes priority when trimming to 12 (safeShape slices): summary first, then
-  // adaptive/protect/conflict decisions, then routine per-symptom notes.
+  // adaptive/protect/conflict decisions, then conditions, then routine
+  // per-symptom notes, then the circuits that could not be moved.
   const notes = [
     ...summary,
     ...adaptiveNotes,
     ...protectNotes,
     ...conflictNotes,
+    ...conditionNotes,
     ...symptomNotes,
+    ...unknownNotes,
   ];
 
-  const out: Partial<ZeroResult> = {
+  const out: Partial<Tune2Result> = {
     fork: {
       comp_clicks: forkComp,
       reb_clicks: forkReb,
@@ -1663,6 +2176,7 @@ export function buildTuneTwo(input: Tune2Input): Partial<ZeroResult> {
     },
     detected: prev.detected,
     notes,
+    ...(cond ? { tire_psi_delta: cond.tirePsiDelta } : {}),
   };
 
   return out;
@@ -2087,6 +2601,11 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // ---- Change 3: merge (explicit chips win) ----
         const merged = mergeFeedback(raw.feedback as Tune2Feedback, parsed);
 
+        // Contract v3: a conditions ask has no symptoms of its own and never
+        // runs the adaptive step against the bike's last outcome.
+        const feedbackSource = raw.feedback?.source;
+        const isConditionsAsk = feedbackSource === "conditions";
+
         const tune2Input: Tune2Input = {
           make: raw.make,
           model: raw.model,
@@ -2094,19 +2613,21 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           terrain: raw.terrain,
           track: raw.track,
           rider: raw.rider,
-          previous: raw.previous as ZeroResult,
+          previous: sanitizePrevious(raw.previous),
           feedback: {
             ...(raw.feedback as Tune2Feedback),
             symptoms: merged.symptoms,
           },
           guardrails: raw.guardrails,
           protectedAreas: merged.protectedAreas,
-          lastOutcome: sanitizeLastOutcome(raw.last_outcome),
+          lastOutcome: isConditionsAsk ? undefined : sanitizeLastOutcome(raw.last_outcome),
           parsedAddedIds: merged.parsedAddedIds,
+          conditions: sanitizeConditions(raw.conditions),
+          setupId: typeof raw.setup_id === "string" && ANON_ID_RE.test(raw.setup_id) ? raw.setup_id.toLowerCase() : undefined,
         };
 
         const partial = buildTuneTwo(tune2Input);
-        const result = safeShape(partial, tune2Input.guardrails);
+        const result = safeShapeSparse(partial, tune2Input.guardrails);
 
         if (callId !== null) await deps.recordOutput?.(callId, result);
         return jsonResponse(result, 200);
@@ -2118,10 +2639,14 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
 
         // Build initial baseline (fallback). If OpenAI is available, refine.
         let partial: Partial<ZeroResult> = buildFallback(z);
+        let engineSource: EngineSource = "formula";
 
         if (OPENAI_API_KEY) {
           try {
             const ai = await callOpenAI(z);
+            // {} means the model's text was not JSON (callOpenAI swallows the
+            // parse): the formula's numbers ship, and the response says so.
+            engineSource = ai && typeof ai === "object" && ("fork" in ai || "shock" in ai) ? "llm" : "fallback_parse";
             // merge AI fields over baseline
             partial = {
               ...partial,
@@ -2133,6 +2658,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
             };
           } catch (e) {
             // keep baseline but include note
+            engineSource = "fallback_error";
             const msg = (e as Error).message ?? String(e);
             partial.notes = [
               ...(partial.notes ?? []),
@@ -2145,6 +2671,8 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
             "OPENAI_API_KEY not set — using safe baseline.",
           ];
         }
+
+        partial.engine_source = engineSource;
 
         // Fork type is decided by the catalog flag or the rider's toggle, never
         // by the model (decision 1): a coil bike ships with no air value even
