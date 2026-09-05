@@ -23,12 +23,19 @@ export type ModelSpecs = {
   shock_type: string | null;
   has_air_fork: boolean | null;
   spec_verified: boolean | null;
+  /** Provenance flags (migration 20260906120000, decision 9): the sag window
+   *  and the rider weight range are SOURCED for this row. The spring check
+   *  renders only when both are true; absent columns (a project without the
+   *  migration) read as false. */
+  sag_window_verified?: boolean | null;
+  weight_range_verified?: boolean | null;
 };
 
 const SPEC_COLS =
   "id, make, model, stock_sag_mm, sag_min, sag_max, stock_fork_spring_nmm, " +
   "stock_shock_spring_nmm, rider_weight_min_lbs, rider_weight_max_lbs, " +
   "fork_type, shock_type, has_air_fork, spec_verified";
+const PROVENANCE_COLS = ", sag_window_verified, weight_range_verified";
 
 // Per-bike, per-session cache (bikes barely change mid-session; keyed by uuid or
 // the make|model|year identity for guest-local bikes).
@@ -95,11 +102,22 @@ export async function fetchModelSpecs(bike: SpecBike): Promise<ModelSpecs | null
     }
 
     if (modelId) {
-      const { data, error } = await supabase
+      // The provenance columns are staged (20260906120000). Against a project
+      // that lacks them PostgREST answers 42703; retry with the base columns
+      // so sag bounds and the fork type never fall back to defaults because
+      // of a flag the app can live without (both then read false).
+      let { data, error } = await supabase
         .from("bike_models")
-        .select(SPEC_COLS)
+        .select(SPEC_COLS + PROVENANCE_COLS)
         .eq("id", modelId)
         .maybeSingle();
+      if (error && (error as any)?.code === "42703") {
+        ({ data, error } = await supabase
+          .from("bike_models")
+          .select(SPEC_COLS)
+          .eq("id", modelId)
+          .maybeSingle());
+      }
       if (error) {
         definitive = false;
         console.warn("modelSpecs: bike_models fetch failed", {
@@ -148,11 +166,22 @@ const MARGINAL_LBS = 10;
  * (no specs, no rider weight, or no comparable spring — air fork w/ no shock, or
  * an SFF fork whose spring rate isn't comparable and no shock data). The caller
  * records status ?? "unknown" for the training context and renders nothing here.
+ *
+ * Provenance gate (decision 9, 2026-09-05): a verdict is only as good as the
+ * weight range it compares against, so the check renders ONLY for rows whose
+ * sag window and rider weight range are sourced (both provenance flags true),
+ * the same rule click_range_verified applies to the range bars. Until a row
+ * is confirmed the card does not appear; the rates stay display data elsewhere.
  */
+export function hasSourcedRanges(specs: ModelSpecs | null | undefined): boolean {
+  return !!specs && specs.sag_window_verified === true && specs.weight_range_verified === true;
+}
+
 export function computeSpringCheck(
   specs: ModelSpecs | null | undefined,
   riderWeightLbs: number | null | undefined
 ): SpringCheck | undefined {
+  if (!hasSourcedRanges(specs)) return undefined;
   if (
     !specs ||
     typeof riderWeightLbs !== "number" ||

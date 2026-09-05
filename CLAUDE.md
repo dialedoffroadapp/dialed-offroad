@@ -386,6 +386,13 @@ candidate in a 2h window).
 - **`bike_models.fork_comp_max` etc. are seed defaults (30 on all 116 rows),
   not data.** Never treat them as "known"; the v3 setup sheet renders a
   range bar only when `click_range_verified` is true.
+  **Same rule for the spring PASS/FAIL card (decision 9, 2026-09-05):**
+  `computeSpringCheck` renders only when the row's `sag_window_verified` AND
+  `weight_range_verified` are true (staged `20260906120000`, both default
+  false, no backfill: the sag windows are 9 platform conventions across 116
+  rows and the weight ranges 8, with no per-row source). `fetchModelSpecs`
+  retries without the two columns on 42703 so a project without the
+  migration still resolves sag bounds and fork type.
 - **`loop_preview_shown` / `hook_ride_armed` are unwhitelisted until the
   assembly migration** (see checklist item in Data model). Guest sessions on
   dev/TestFlight builds of `feat/loop-surfacing` will queue
