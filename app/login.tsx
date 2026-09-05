@@ -3,45 +3,16 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableWithoutFeedback,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View } from "react-native";
 import { ToastProvider, useToast } from "../components/Toast";
 import type { ThemeTokens } from "../constants/theme";
 import { completeAuthSuccess } from "../lib/authSuccess";
 import { QUIZ_ONBOARDING_ENABLED } from "../lib/featureFlags";
-import { completeOnboardingSequence } from "../lib/onboardingCompletion";
-import { isActionGatedPaywall } from "../lib/paywallPosition";
 import type { OnboardingStep } from "../lib/onboarding";
-import {
-  readLocalOnboardingState,
-  readPendingTune,
-  useOnboarding,
-} from "../lib/onboarding";
-import { deriveIsPro } from "../lib/proUtils";
-import {
-  isAppleSignInAvailable,
-  isGoogleSignInAvailable,
-  signInWithApple,
-  signInWithGoogle,
-  type SocialProvider,
-} from "../lib/socialAuth";
+import { useOnboarding } from "../lib/onboarding";
+import { isAppleSignInAvailable, isGoogleSignInAvailable, signInWithApple, signInWithGoogle, type SocialProvider } from "../lib/socialAuth";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
-import { claimAnonTuneCalls } from "../lib/tuneAttribution";
-import { logEvent } from "../lib/usage";
 
 function isOnboardingStep(value: unknown): value is OnboardingStep {
   return (
@@ -61,7 +32,10 @@ function LoginInner() {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { state, markAccountCreated, setStep, completeOnboarding } = useOnboarding();
-  const params = useLocalSearchParams<{ email?: string }>();
+  const params = useLocalSearchParams<{ email?: string; returnTo?: string }>();
+  // The quiz gate hands us the reveal: the rider is this device's guest and
+  // their pending tune must land in the garage.
+  const fromGate = typeof params.returnTo === "string" && params.returnTo.startsWith("/quiz/reveal");
 
   const [email, setEmail] = useState(
     typeof params.email === "string" ? params.email : ""
@@ -119,133 +93,33 @@ function LoginInner() {
 
     setLoadingIn(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error } = await supabase.auth.signInWithPassword({
         email: emailClean,
         password: passwordRaw,
       });
       if (error) throw error;
 
-      toast.show("Signed in ✅", { kind: "success" });
-      // Attribute pre-auth tune_calls (WS-C). The email sign-in path keeps
-      // its own inline flow (the IndexGate-mirror routing below) and never
-      // reaches completeAuthSuccess — so it claims directly; OAuth on this
-      // screen claims inside completeAuthSuccess like every other path.
-      await claimAnonTuneCalls();
-      await logEvent("sign_in");
-
-      // Record locally that this device's user has an account — downstream
-      // auth routing (results CTA) uses this to route to /login, not /signup.
-      await markAccountCreated();
-
-      // Route based on onboarding state (mirrors IndexGate logic)
-      // Supabase-first, local-AsyncStorage-fallback resolution
-      let target: string = "/(tabs)";
-      try {
-        const [{ data: authData }, localState, { tune: pendingTune }] =
-          await Promise.all([
-            supabase.auth.getUser(),
-            readLocalOnboardingState(),
-            readPendingTune(),
-          ]);
-        const uid = authData?.user?.id;
-        if (uid) {
-          let { data: prof } = await supabase
-            .from("profiles")
-            .select("onboarding_complete, onboarding_step, is_pro, pro_until, trial_tunes_used")
-            .eq("user_id", uid)
-            .maybeSingle();
-
-          // Recovery: if the auth user exists but has no profile row
-          // (e.g. signup created auth but profile insert failed), create it now.
-          if (!prof) {
-            const fallbackStep = localState.onboardingStep === "signup" ? "trial" : (localState.onboardingStep ?? "complete");
-            // is_pro is server-only (webhook/service role) since 20260710170000
-            // — including it would fail the whole upsert on column grants.
-            await supabase.from("profiles").upsert(
-              {
-                user_id: uid,
-                onboarding_step: fallbackStep,
-                onboarding_complete: fallbackStep === "complete",
-              },
-              { onConflict: "user_id" }
-            );
-            // Re-read the profile so routing logic below uses the new row
-            const { data: refetched } = await supabase
-              .from("profiles")
-              .select("onboarding_complete, onboarding_step, is_pro, pro_until, trial_tunes_used")
-              .eq("user_id", uid)
-              .maybeSingle();
-            prof = refetched;
-          }
-
-          const hasPro = deriveIsPro(prof);
-          const onboardingComplete =
-            hasPro ||
-            prof?.onboarding_complete === true ||
-            localState.onboardingComplete;
-          const onboardingStep =
-            prof && isOnboardingStep(prof.onboarding_step)
-              ? prof.onboarding_step
-              : localState.onboardingStep;
-
-          if (hasPro || onboardingComplete || onboardingStep === "complete") {
-            target = "/(tabs)";
-          } else {
-            switch (onboardingStep) {
-              case "intro":
-                target = "/";
-                break;
-              case "garage_locked":
-                target = "/(tabs)/garage";
-                break;
-              case "tune":
-                target = "/(tabs)/tune";
-                break;
-              case "results_locked":
-                target = pendingTune ? "/tune-results" : "/(tabs)/tune";
-                break;
-              case "signup":
-                if (isActionGatedPaywall()) {
-                  // Reveal-first world: complete now, no funnel paywall
-                  // (mirrors app/index.tsx and completeAuthSuccess).
-                  const done = await completeOnboardingSequence({
-                    completeOnboarding,
-                    onboardingStep: "signup",
-                    accountCreated: true,
-                    trialStarted: state.trialStarted,
-                    ageMinutesSinceLastStep: 0,
-                    sourceRoute: "/login",
-                    viaPaywall: false,
-                    returnTo: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
-                  });
-                  target = done.target;
-                  break;
-                }
-                // Already signed in — advance past signup to trial in BOTH
-                // stores, then send to the paywall. Garage stranded the user:
-                // tabs hidden mid-onboarding and no funnel CTA there (S4).
-                await setStep("trial");
-                void supabase.from("profiles").upsert(
-                  { user_id: uid, onboarding_step: "trial" },
-                  { onConflict: "user_id" }
-                );
-                target = "/premium";
-                break;
-              case "trial":
-                target = "/premium";
-                break;
-              default:
-                target = "/(tabs)";
-                break;
-            }
-          }
-        }
-      } catch {
-        // Fall through to default "/(tabs)" if profile check fails
-      }
-      // target is assembled from typed literals above; the cast mirrors the
-      // signup screen's replace callback (typed-routes vs dynamic string).
-      router.replace(target as never);
+      // The ONE post-auth path (audit item 9): profile heal (login mode never
+      // downgrades onboarding columns), claim, sign_in event, funnel
+      // completion when the local step is "signup", routing. The inline
+      // IndexGate mirror that lived here routed retired legacy screens.
+      await completeAuthSuccess({
+        userId: signInData?.user?.id ?? null,
+        isNewAccount: false,
+        method: "email",
+        mode: "login",
+        onboardingStep: state.onboardingStep,
+        onboardingComplete: state.onboardingComplete,
+        ageMinutesSinceLastStep,
+        notify: () => toast.show("Signed in ✅", { kind: "success" }),
+        markAccountCreated,
+        setStep,
+        completeOnboarding,
+        revealRoute: QUIZ_ONBOARDING_ENABLED ? "/quiz/reveal" : undefined,
+        absorbGuestState: fromGate,
+        replace: (route) => router.replace(route as never),
+        returnTo: typeof params.returnTo === "string" && params.returnTo.length > 0 ? params.returnTo : "/(tabs)",
+      });
     } catch (e: any) {
       const msg =
         e?.message?.toLowerCase().includes("invalid")

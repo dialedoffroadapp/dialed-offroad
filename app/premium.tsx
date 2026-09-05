@@ -268,7 +268,9 @@ export default function PremiumScreen() {
             paywall_result: "dismissed",
           });
           await setStep("trial");
-          target = pending ? "/tune-results" : "/(tabs)/tune";
+          // A caller-supplied returnTo (the quiz reveal) wins on dismiss and error
+          // too (decision 15); the legacy results screen is the fallback only.
+          target = hasReturnTo ? returnTo : pending ? "/tune-results" : "/(tabs)/tune";
         } else {
           void logEvent("paywall_dismissed", {
             paywall_trigger_action: trigger,
@@ -309,7 +311,9 @@ export default function PremiumScreen() {
             error_code: e?.code ?? e?.message ?? "unknown",
           });
           await setStep("trial");
-          target = pending ? "/tune-results" : "/(tabs)/tune";
+          // A caller-supplied returnTo (the quiz reveal) wins on dismiss and error
+          // too (decision 15); the legacy results screen is the fallback only.
+          target = hasReturnTo ? returnTo : pending ? "/tune-results" : "/(tabs)/tune";
         }
       } finally {
         // ✅ Navigation is unconditional: the flow finished, so we leave —

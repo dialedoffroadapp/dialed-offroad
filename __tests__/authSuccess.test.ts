@@ -524,6 +524,16 @@ describe("guest-state migration latch (dup-bike fix, 2026-07-27 incident)", () =
     expect(tune?.migratedForUserId).toBeUndefined(); // unclaimed for its owner
   });
 
+  test("login-mode returning auth from the quiz gate (absorbGuestState) migrates: the rider IS the guest", async () => {
+    await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
+
+    await completeAuthSuccess(
+      makeParams({ mode: "login", isNewAccount: false, absorbGuestState: true })
+    );
+
+    expect(bikeInsert).toHaveBeenCalledTimes(1);
+  });
+
   test("login-mode auth that MINTS a new account still migrates (funnel exit)", async () => {
     await AsyncStorage.setItem(PENDING_TUNE_STORAGE_KEY, pendingTuneRaw());
 

@@ -74,6 +74,9 @@ export type AuthSuccessParams = {
   completeOnboarding?: () => Promise<unknown>;
   /** Extra meta for the completion events (quiz markers). */
   completionMeta?: Record<string, unknown>;
+  /** Login mode only: the rider signing in is this device's guest (the quiz
+   *  gate's sign-in link), so migrate the guest bike + pending tune. */
+  absorbGuestState?: boolean;
 };
 
 export async function completeAuthSuccess(params: AuthSuccessParams): Promise<void> {
@@ -94,6 +97,7 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
     revealRoute,
     completeOnboarding,
     completionMeta,
+    absorbGuestState,
   } = params;
   const paywallPosition = params.paywallPosition ?? getPaywallPosition();
   // Signup-mode funnel exits complete onboarding HERE in the action-gated
@@ -159,7 +163,11 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
     // account. A RETURNING login-screen auth must NOT absorb device-local
     // guest state that may belong to someone else (shipped dup, 2026-07-27:
     // one guest bike migrated into two accounts on the same device).
-    const shouldMigrateGuestState = mode === "signup" || isNewAccount;
+    // absorbGuestState: the quiz gate's "Have an account? Sign in" (audit item
+    // 9). The rider IS the device's guest (they just built the pending tune),
+    // so a returning login there must migrate like a signup. A plain login
+    // never absorbs device guest state (a different rider's tune).
+    const shouldMigrateGuestState = mode === "signup" || isNewAccount || !!absorbGuestState;
 
     let pendingBike: { make: string; model: string; year: number } | null = null;
     try {

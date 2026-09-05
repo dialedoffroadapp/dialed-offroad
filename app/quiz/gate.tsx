@@ -264,6 +264,16 @@ export default function QuizGateScreen() {
     }
   };
 
+  /** "Have an account? Sign in": a returning rider who just built this tune
+   *  as a guest. Advance the funnel to signup and hand login the reveal, so
+   *  the shared completion migrates the bike and versions the tune (audit
+   *  item 9); before this the tune was stranded on Home. */
+  const goToLogin = async () => {
+    if (busy) return;
+    if (onboardingActive) await setStep("signup");
+    router.push({ pathname: "/login", params: { ...(email.trim() ? { email: email.trim() } : {}), returnTo: REVEAL_ROUTE } } as never);
+  };
+
   const openEmail = () => {
     if (loading) return;
     setEmailOpen(true);
@@ -295,13 +305,13 @@ export default function QuizGateScreen() {
       const result = await signUpWithEmail(email, password);
       if (result.status === "exists_wrong_password") {
         toast.show("An account with this email already exists. Please sign in.", { kind: "info" });
-        router.replace({ pathname: "/login", params: { email: email.trim() } } as never);
+        router.replace({ pathname: "/login", params: { email: email.trim(), returnTo: REVEAL_ROUTE } } as never);
         return;
       }
       if (result.status === "created_signin_failed") {
         await markAccountCreated();
         toast.show("Account created! Please sign in to continue.", { kind: "success" });
-        router.replace({ pathname: "/login", params: { email: email.trim() } } as never);
+        router.replace({ pathname: "/login", params: { email: email.trim(), returnTo: REVEAL_ROUTE } } as never);
         return;
       }
       if (result.status === "error") {
@@ -409,7 +419,7 @@ export default function QuizGateScreen() {
               {pwErr ? <Text style={styles.fieldError}>{pwErr}</Text> : null}
             </View>
             <Pressable
-              onPress={() => router.push({ pathname: "/login", params: email.trim() ? { email: email.trim() } : {} } as never)}
+              onPress={() => void goToLogin()}
               disabled={busy}
               accessibilityRole="button"
               style={styles.signInLink}
