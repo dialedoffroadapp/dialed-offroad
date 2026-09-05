@@ -16,6 +16,8 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     recordCall: () => Promise.resolve(),
     parseFreeText: () => Promise.resolve(null),
     modelExists: () => Promise.resolve(true),
+    claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }),
+    refundClaim: () => Promise.resolve(),
     ...overrides,
   };
 }
@@ -55,12 +57,9 @@ async function recordedFor(
     })
   );
   const resp = await h(fakeReq({ mode: "zero_baseline_v1", input: BASELINE_INPUT, ...body }));
-  // Anon baseline completes fully offline. The AUTHENTICATED baseline path
-  // hits enforceBaselineCredit, whose service client isn't dep-injected and
-  // can't run under the offline test env (same pre-existing limitation that
-  // fails engine_test #10's authenticated leg on main) — recordCall fires
-  // BEFORE that gate, so the attribution capture is asserted either way.
-  if (!userId) assertEquals(resp.status, 200);
+  // Both legs complete offline now: the baseline gate is dep-injected
+  // (claimBaseline, decision 3) and answers "pro" in these fakes.
+  assertEquals(resp.status, 200);
   if (!row) throw new Error("recordCall was not invoked");
   return row;
 }

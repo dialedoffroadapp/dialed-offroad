@@ -18,6 +18,7 @@ import {
 import { resolveSagBounds } from "./sagBounds";
 import { supabase } from "./supabase";
 import { getOrCreateFunnelId, logEvent } from "./usage";
+import { isUuid } from "./uuid";
 
 const GENERATE_TIMEOUT_MS = 30_000;
 
@@ -54,6 +55,8 @@ export async function generateQuizTune(params: {
   const { answers, onboardingStep, onboardingActive, lastUpdatedAt } = params;
   const input = buildQuizTuneInput(answers);
   if (!input) throw new QuizGenerateError("invalid_answers", "Some answers are missing.");
+  // The edge's per-bike rule keys on the garage bike; guest-local ids stay off the wire.
+  if (isUuid(answers.bikeLocalId)) input.bike_id = answers.bikeLocalId;
 
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user ?? null;

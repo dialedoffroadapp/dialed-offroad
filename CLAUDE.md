@@ -368,10 +368,21 @@ candidate in a 2h window).
   purchase" is true (dashboard work).
 - **`claim_free_tune()` (zero-arg) is DROPPED by staged `20260904140000`;** the
   defaulted `claim_free_tune(p_bike_id uuid default null)` replaces it, so
-  old clients' `rpc("claim_free_tune")` still resolves. `ai-tune`'s
-  `CLIENT_CLAIM_GRACE_MS` (2 min) is now load-bearing for regenerates and
-  first-baselines-on-a-second-bike — do NOT drop it to 0 until the edge's
-  `server_claim_free_tune` takes a bike id.
+  old clients' `rpc("claim_free_tune")` still resolves. **Since 2026-09-05
+  (decision 3, staged `20260906110000`) the edge enforces the per-bike rule
+  itself through `server_claim_baseline(p_user_id, p_bike_id)`:** pro passes;
+  an owned bike with a baseline is a REGENERATE, not consumed, capped at
+  `app_config.regenerates_per_day` (5) per rolling 24 h per bike (counted
+  from `tune_calls` rows with an output whose `input.bike_id` matches; 429
+  `regenerate_limit`); an owned bike without one is a FIRST BASELINE counted
+  once; no bike = the legacy single credit (402 `no_trial`). The gate runs
+  BEFORE the `tune_calls` insert and independently of the hourly limit. The
+  2-minute client-claim grace window lives in the SQL function now, as the
+  double-consume guard only; `CLIENT_CLAIM_GRACE_MS` is gone from the edge.
+  Both baseline builders send `input.bike_id` (uuid only). The gate, the
+  catalog check and the insert are dep-injected (`HandlerDeps.claimBaseline`
+  / `refundClaim` / `modelExists`), so the Deno suite covers the signed-in
+  leg offline (the old #10 failure is gone).
 - **`bike_models.fork_comp_max` etc. are seed defaults (30 on all 116 rows),
   not data.** Never treat them as "known"; the v3 setup sheet renders a
   range bar only when `click_range_verified` is true.

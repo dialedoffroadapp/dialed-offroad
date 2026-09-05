@@ -82,6 +82,8 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     recordCall: () => Promise.resolve(),
     parseFreeText: () => Promise.resolve(null),
     modelExists: () => Promise.resolve(true),
+    claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }),
+    refundClaim: () => Promise.resolve(),
     ...overrides,
   };
 }
@@ -606,4 +608,57 @@ Deno.test("13. fork type: catalog flag > rider toggle; a KTM SX name alone is co
   const catalogCoil = await call({ make: "KTM", model: "250 SX-F", year: 2023, wants_air_fork: true, guardrails: { ...GUARDRAILS, has_air_fork: false } });
   assertEquals(catalogCoil.fork.air_pressure_bar, undefined);
   assertEquals(catalogCoil.detected.has_air_fork, false);
+});
+
+/* ---------------- Test 14: the per-bike baseline rule, before the insert ---------------- */
+// Decision 3 (2026-09-05): the server decides pro / regenerate (capped) /
+// first_baseline / legacy credit itself, before the tune_calls insert and
+// independently of the hourly limit.
+
+const BIKE_ID = "22222222-2222-4333-8444-555555555555";
+
+Deno.test("14. per-bike rule: regenerate cap → 429 unrecorded; no_trial → 402; first baseline and regenerate → 200; infra → fail-open", async () => {
+  const seen: { bikeId: string | null; recorded: number } = { bikeId: "unset", recorded: 0 };
+  const mk = (outcome: any) =>
+    makeHandler(
+      deps({
+        claimBaseline: (_u, bikeId) => {
+          seen.bikeId = bikeId;
+          return Promise.resolve(outcome);
+        },
+        recordCall: () => {
+          seen.recorded += 1;
+          return Promise.resolve();
+        },
+      })
+    );
+  const body = { mode: "zero_baseline_v1", input: { ...BASELINE, bike_id: BIKE_ID } };
+
+  const capped = await mk({ ok: false, reason: "regenerate_limit", regenerates_today: 5, limit: 5 })(fakeReq(body));
+  assertEquals(capped.status, 429);
+  const cappedBody = await capped.json();
+  assertEquals(cappedBody.reason, "regenerate_limit");
+  assert(cappedBody.error.startsWith("5 baseline updates a day"));
+  assertEquals(seen.recorded, 0); // rejected calls are not recorded
+  assertEquals(seen.bikeId, BIKE_ID); // the bike id reached the rule
+
+  const noTrial = await mk({ ok: false, reason: "no_trial" })(fakeReq(body));
+  assertEquals(noTrial.status, 402);
+  assertEquals((await noTrial.json()).error, "no_trial");
+  assertEquals(seen.recorded, 0);
+
+  assertEquals((await mk({ ok: true, reason: "regenerate", regenerates_today: 2, limit: 5 })(fakeReq(body))).status, 200);
+  assertEquals((await mk({ ok: true, reason: "first_baseline", claimed: true })(fakeReq(body))).status, 200);
+  assertEquals(seen.recorded, 2);
+
+  // A guest/local bike id never reaches the rule.
+  await mk({ ok: true, reason: "pro" })(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, bike_id: "1783553470201_9a0e52e462e018" } }));
+  assertEquals(seen.bikeId, null);
+
+  // Infra failure of the rule fails open (logged), the call is served.
+  assertEquals((await mk(null)(fakeReq(body))).status, 200);
+
+  // The rule is independent of the hourly limit: the limit still fires first.
+  const limited = makeHandler(deps({ countRecentCalls: () => Promise.resolve(20), claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }) }));
+  assertEquals((await limited(fakeReq(body))).status, 429);
 });

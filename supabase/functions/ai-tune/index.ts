@@ -33,6 +33,10 @@ type ZeroInput = {
     // capture). Stamped onto tune_calls.bike_model_id; never used for math —
     // guardrails stay the resolved-values contract.
     model_id?: string;
+    // The garage bike this baseline is for (decision 3, 2026-09-05): drives
+    // the server-side per-bike rule and is stored in tune_calls.input so
+    // regenerates can be counted per bike. uuid-gated; absent for guests.
+    bike_id?: string;
     // Coarse client fix (v2.4.0 data capture, ~110 m rounding). Persisted in
     // tune_calls.input verbatim; NOT used by generation. sanitizeLocation
     // strips the key when malformed.
@@ -1701,6 +1705,20 @@ export type HandlerDeps = {
    *  reject the request before any insert; null = lookup infra failure, the
    *  id is dropped (never stored) and the call proceeds. */
   modelExists: (modelId: string) => Promise<boolean | null>;
+  /** The per-bike baseline rule (decision 3, 2026-09-05): server_claim_baseline.
+   *  null = infra failure (fail-open with a loud log, the function's precedent). */
+  claimBaseline: (userId: string, bikeId: string | null) => Promise<ClaimOutcome | null>;
+  /** Exact inverse of a consumed server claim, after a generation throw. */
+  refundClaim: (userId: string) => Promise<void>;
+};
+
+export type ClaimOutcome = {
+  ok: boolean;
+  reason: "pro" | "regenerate" | "regenerate_limit" | "first_baseline" | "client_claimed" | "claimed" | "no_trial" | string;
+  /** This call consumed a credit (refund it if generation throws). */
+  claimed?: boolean;
+  regenerates_today?: number;
+  limit?: number;
 };
 
 // deno-lint-ignore no-explicit-any
@@ -1799,6 +1817,30 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
+  claimBaseline: async (userId, bikeId) => {
+    const { data, error } = await getServiceClient().rpc("server_claim_baseline", {
+      p_user_id: userId,
+      p_bike_id: bikeId,
+    });
+    if (error) {
+      // Fail-open with a loud log (this runs as service role, so a caller
+      // cannot induce the failure; blocking paying riders on an infra blip is
+      // worse than one uncounted tune).
+      console.error("server_claim_baseline failed (fail-open):", String(error.message ?? error).slice(0, 160));
+      return null;
+    }
+    return (data ?? null) as ClaimOutcome | null;
+  },
+
+  refundClaim: async (userId) => {
+    try {
+      const { error } = await getServiceClient().rpc("server_refund_free_tune", { p_user_id: userId });
+      if (error) console.error("server refund failed:", String(error.message ?? error).slice(0, 160));
+    } catch (e) {
+      console.error("server refund threw:", e instanceof Error ? e.message : String(e));
+    }
+  },
+
   recordOutput: async (callId, output) => {
     try {
       const { error } = await getServiceClient()
@@ -1815,97 +1857,34 @@ export const defaultDeps: HandlerDeps = {
   parseFreeText: (text) => callParseFeedback(text),
 };
 
-/* ---------------- H2: server-side entitlement / credit gate ---------------- */
-// Until now the free-credit quota and Pro gate lived only in the client
-// (tune.tsx calls claim_free_tune before invoking this function), so direct
-// API calls got unlimited baseline tunes and the claim/refund pairing was
-// client-trusted. Enforcement now happens here, per request:
-//
-//   guests (anon-key, zero_baseline only): allowed — guest onboarding depends
-//     on it; abuse-bounded by the per-IP hourly rate limit.
-//   tune2_v1: authenticated-only (checked above the mode branch), and NO
-//     Pro/credit gate — mirrors the product: the client refine flow
-//     (tune-feedback.tsx) has never been Pro-gated (churned users may refine
-//     their saved setups); it never claims credits for refinements.
-//   zero_baseline_v1 + authenticated: Pro passes through untouched; non-Pro
-//     must hold the free credit. The server claims it atomically BEFORE
-//     generation and refunds it itself if generation throws.
-//
-// INTERIM COMPATIBILITY with deployed v2.0.x clients (they claim client-side
-// via claim_free_tune, then call this function; a second server claim would
-// double-consume and reject legitimate first tunes): claim_free_tune stamps
-// profiles.trial_claimed_at when it consumes (migration 20260710180000).
-// "Credit consumed + fresh stamp" therefore means THIS request carries the
-// client's claim → pass through without claiming again, and without a server
-// refund on failure (the old client performs its own refund, which clears
-// the stamp). Server-side claims deliberately do NOT stamp, so a
-// server-claimed request opens no grace window of its own — the second
-// direct call sees a stale/absent stamp and is rejected. Once pre-claiming
-// clients age out, drop CLIENT_CLAIM_GRACE_MS to 0.
-
-const CLIENT_CLAIM_GRACE_MS = 2 * 60 * 1000;
+/* ---------------- Baseline gate: the per-bike rule (decision 3, 2026-09-05) ---------------- */
+// Guests (anon-key, zero_baseline only) pass: guest onboarding depends on it,
+// bounded by the per-IP hourly limit. tune2_v1 is authenticated-only and has
+// no credit gate (refining a saved setup was never Pro-gated server-side).
+// Signed-in baseline callers go through server_claim_baseline (migration
+// 20260906110000), which decides pro / regenerate (capped per rolling day) /
+// first_baseline / legacy credit, and absorbs the old client-claim grace
+// window as its double-consume guard. The gate runs BEFORE the tune_calls
+// insert so a rejected call is neither counted nor captured, and
+// independently of the hourly abuse limit above it.
 
 type CreditDecision =
   | { allow: true; serverClaimed: boolean }
-  | { allow: false; status: number; error: string };
+  | { allow: false; status: number; error: string; reason: string };
 
-async function enforceBaselineCredit(userId: string): Promise<CreditDecision> {
-  // Atomic claim/pro decision lives in SQL (server_claim_free_tune,
-  // migration 20260710190000, service_role-only) under the same row lock the
-  // client RPC uses. NOTE: this was first built as a PostgREST guarded
-  // update with an or=() filter, which Postgres rejects with a spurious
-  // 42703 on UPDATE — do not reintroduce that shape.
-  const { data, error } = await getServiceClient().rpc(
-    "server_claim_free_tune",
-    { p_user_id: userId },
-  );
-  if (error) {
-    // Fail-open with a loud log, matching this function's rate-limit
-    // precedent: this runs as service role, so a caller cannot induce the
-    // failure, and blocking paying users on an infra blip is worse than one
-    // uncounted tune.
-    console.error(
-      "server claim failed (fail-open):",
-      String(error.message ?? error).slice(0, 160),
-    );
-    return { allow: true, serverClaimed: false };
+function decideBaselineCredit(outcome: ClaimOutcome | null): CreditDecision {
+  if (!outcome) return { allow: true, serverClaimed: false }; // infra fail-open (logged by the dep)
+  if (outcome.ok) return { allow: true, serverClaimed: outcome.claimed === true };
+  if (outcome.reason === "regenerate_limit") {
+    const limit = outcome.limit ?? 5;
+    return {
+      allow: false,
+      status: 429,
+      reason: "regenerate_limit",
+      error: `${limit} baseline updates a day is the cap for this bike. It resets tomorrow.`,
+    };
   }
-
-  const reason = (data as any)?.reason;
-  if (reason === "pro") return { allow: true, serverClaimed: false };
-  if (reason === "claimed") return { allow: true, serverClaimed: true };
-
-  // no_trial → interim pass-through window: an old client claimed for this
-  // exact request moments ago (claim_free_tune stamps trial_claimed_at;
-  // server claims never do).
-  const claimedAtMs = (data as any)?.claimed_at
-    ? new Date((data as any).claimed_at).getTime()
-    : 0;
-  if (claimedAtMs && Date.now() - claimedAtMs <= CLIENT_CLAIM_GRACE_MS) {
-    return { allow: true, serverClaimed: false };
-  }
-  return { allow: false, status: 402, error: "no_trial" };
-}
-
-/** Exact inverse of a server-side claim (guarded decrement in SQL). */
-async function refundServerClaim(userId: string): Promise<void> {
-  try {
-    const { error } = await getServiceClient().rpc(
-      "server_refund_free_tune",
-      { p_user_id: userId },
-    );
-    if (error) {
-      console.error(
-        "server refund failed:",
-        String(error.message ?? error).slice(0, 160),
-      );
-    }
-  } catch (e) {
-    console.error(
-      "server refund threw:",
-      e instanceof Error ? e.message : String(e),
-    );
-  }
+  return { allow: false, status: 402, reason: "no_trial", error: "no_trial" };
 }
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -1939,6 +1918,13 @@ function anonIdFrom(body: ZeroInput, userId: string | null): string | null {
 function riderWeightFrom(body: ZeroInput): number | null {
   const w = body.input?.rider?.weight_lbs;
   return typeof w === "number" && Number.isFinite(w) ? Math.round(w) : null;
+}
+
+// Strict uuid gate for the baseline's bike id (decision 3): the per-bike rule
+// keys on it; guest/local ids never reach the RPC.
+function bikeIdFrom(body: ZeroInput): string | null {
+  const raw = (body.input as { bike_id?: unknown })?.bike_id;
+  return typeof raw === "string" && ANON_ID_RE.test(raw) ? raw.toLowerCase() : null;
 }
 
 // Same strict uuid gate as anon_id: tune_calls.bike_model_id is a uuid FK,
@@ -2018,6 +2004,18 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           429
         );
       }
+      // ---------------- baseline gate: the per-bike rule (decision 3) ----------------
+      // Before the insert: a rejected call is not recorded and never counts
+      // as a regenerate.
+      let serverClaimedCredit = false;
+      if (mode !== "tune2_v1" && userId) {
+        const decision = decideBaselineCredit(await deps.claimBaseline(userId, bikeIdFrom(body)));
+        if (!decision.allow) {
+          return jsonResponse({ error: decision.error, reason: decision.reason }, decision.status);
+        }
+        serverClaimedCredit = decision.serverClaimed;
+      }
+
       // ---------------- model_id: catalog existence (decision 2) ----------------
       // bike_model_id is a foreign key. An unknown id used to fail the insert,
       // which was swallowed, which left the call uncounted: a rate-limit bypass.
@@ -2115,16 +2113,6 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       }
 
       // ------------------------ MODE: Baseline (zero_baseline_v1) ------------------------
-      // ---- H2: server-side Pro/credit gate (guests pass; see helper) ----
-      let serverClaimedCredit = false;
-      if (userId) {
-        const decision = await enforceBaselineCredit(userId);
-        if (!decision.allow) {
-          return jsonResponse({ error: decision.error }, decision.status);
-        }
-        serverClaimedCredit = decision.serverClaimed;
-      }
-
       try {
         const z = body.input;
 
@@ -2177,7 +2165,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // server-owned now). Old-client pass-through requests refund
         // themselves via refund_free_tune.
         if (serverClaimedCredit && userId) {
-          await refundServerClaim(userId);
+          await deps.refundClaim(userId);
         }
         throw genErr;
       }

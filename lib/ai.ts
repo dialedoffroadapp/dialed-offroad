@@ -47,6 +47,10 @@ export type ZeroTuneInput = {
   // capture). Sent verbatim; the edge stamps it on tune_calls.bike_model_id
   // and never computes with it.
   model_id?: string;
+  // The garage bike (uuid) this baseline is for (decision 3, 2026-09-05): the
+  // edge's per-bike rule (one baseline per owned bike, regenerates capped per
+  // day) keys on it. Omitted for guests and local bikes.
+  bike_id?: string;
 
   // riding context
   terrain: string; // e.g., "hardpack", "sand", "roots", ...
@@ -220,6 +224,7 @@ export async function generateTune(
       year: input.year ?? undefined,
       // undefined (not null) when unmatched — JSON.stringify drops the key.
       model_id: input.model_id || undefined,
+      bike_id: isUuid(input.bike_id) ? input.bike_id : undefined,
       terrain: input.terrain,
       track: input.track || undefined,
       temp_f: isFiniteNumber(input.temp_f) ? input.temp_f : undefined,

@@ -854,6 +854,8 @@ export default function TuneScreen() {
 
         // NEW: pass the AER / air-fork toggle through to the Edge Function
         wants_air_fork: wantsAirFork,
+        // The per-bike rule on the edge keys on the garage bike (uuid only).
+        bike_id: isUuid(selectedBikeId) ? selectedBikeId : undefined,
       };
 
       // Per-model specs (verified bike_models row or null) drive the sag bounds
