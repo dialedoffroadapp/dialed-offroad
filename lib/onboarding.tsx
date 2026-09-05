@@ -354,10 +354,13 @@ export function OnboardingProvider({
       const current = stateRef.current;
       const resolved = typeof next === "function" ? next(current) : next;
       const persisted = await persistState(resolved);
-      setState(() => {
-        stateRef.current = persisted;
-        return persisted;
-      });
+      // Update the ref NOW, not inside React's updater (which runs at the next
+      // render): two awaited writes back to back (markIntroSeen, then setStep)
+      // otherwise both start from the same stale snapshot and the second
+      // silently reverts the first (hasSeenIntro stayed false on a device
+      // whose step had advanced, sim pass 2026-09-04).
+      stateRef.current = persisted;
+      setState(persisted);
       return persisted;
     },
     [persistState]
