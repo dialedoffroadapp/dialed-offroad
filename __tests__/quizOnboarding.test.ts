@@ -171,7 +171,7 @@ describe("engine mappings (existing inputs only)", () => {
 
   test("meter: endowed 20% with a reason, Pro rows locked, sums to 100", () => {
     expect(meterPct()).toBe(20);
-    expect(METER_REASON).toBe("Baseline's in. That's the first 20%. Every ride from here pushes this number.");
+    expect(METER_REASON).toBe("Baseline's in. That's the first 20%. Measure your sag for 15 more; every ride pushes it from there.");
     expect(METER_CATEGORIES.reduce((n, c) => n + c.pct, 0)).toBe(100);
     expect(METER_CATEGORIES.filter((c) => c.state === "locked_pro").map((c) => c.key)).toEqual([
       "first_refinement",

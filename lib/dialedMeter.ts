@@ -33,8 +33,11 @@ export type MeterCategory = {
 
 export const METER_ENDOWED_PCT = 20;
 /** The endowed state's reason line, shared by Home's day-one glance card and
- *  the quiz reveal's meter card (the plan: "endowed 20% with the reason stated"). */
-export const METER_ENDOWED_REASON = `Baseline's in. That's the first ${METER_ENDOWED_PCT}%. Every ride from here pushes this number.`;
+ *  the quiz reveal's meter card (the plan: "endowed 20% with the reason stated").
+ *  It names sag as the next earnable step (decision 7, 2026-09-05): until the
+ *  measure-sag walkthrough ships, the 15-point sag category must read as
+ *  earnable everywhere the meter appears, never as a silent zero. */
+export const METER_ENDOWED_REASON = `Baseline's in. That's the first ${METER_ENDOWED_PCT}%. Measure your sag for 15 more; every ride pushes it from there.`;
 /** Refinements needed to fill the refined category (plan: count-based). */
 export const METER_REFINEMENTS_FULL = 5;
 /** Recorded outcomes needed to fill consistency (count-based, NOT a streak). */
