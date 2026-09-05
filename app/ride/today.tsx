@@ -12,9 +12,11 @@ import { Eyebrow, Label, Small, Sub } from "../../components/v3/primitives";
 import { V3 } from "../../components/v3/theme";
 import { Cta, RideH1, RideScreenBg, RowSet, ValueRow } from "../../components/ride/ridePrimitives";
 import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
-import { previewValue, todaysSetupRules, type RuleResult } from "../../lib/conditionsRules";
+import { previewValue, tirePressureForToday } from "../../lib/conditionsRules";
+import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
+import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { CIRCUIT_STEPS, snapshotFromVersion, type CircuitKey } from "../../lib/currentSetup";
-import { conditionsSummary, surfaceLabel } from "../../lib/rideConditions";
+import { conditionsSummary, surfaceLabel, primarySurface } from "../../lib/rideConditions";
 import { applyDeltas, readDraft, readOpenSession, startSession, type RideDraft } from "../../lib/rideDay";
 import { startRideActivity } from "../../lib/rideLiveActivity";
 import { supabase } from "../../lib/supabase";
@@ -39,6 +41,10 @@ export default function RideTodayScreen() {
   const [extras, setExtras] = useState<BikeExtras | null>(null);
   const [reason, setReason] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [freeText, setFreeText] = useState("");
+  const [asked, setAsked] = useState(0);
+  const [thinking, setThinking] = useState(false);
+  const [rules, setRules] = useState<SuggestResult | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -58,10 +64,29 @@ export default function RideTodayScreen() {
   }, [router, from]);
 
   const base = useMemo(() => (draft?.startingVersion ? snapshotFromVersion(draft.startingVersion) : null), [draft]);
-  const rules: RuleResult | null = useMemo(
-    () => (draft && base ? todaysSetupRules(draft.conditions, base, draft.setupName ?? "setup", draft.hasAirFork) : null),
-    [draft, base]
-  );
+  // Engine when online (free text is what it can act on), rules otherwise.
+  useEffect(() => {
+    if (!draft || !base || !draft.bike) return;
+    let alive = true;
+    setThinking(true);
+    void suggestForConditions({
+      bike: draft.bike,
+      hasAirFork: draft.hasAirFork,
+      trackName: draft.trackName ?? null,
+      conditions: draft.conditions,
+      effective: base,
+      setupName: draft.setupName ?? "setup",
+      freeText,
+    }).then((r) => {
+      if (!alive) return;
+      setRules(r);
+      setThinking(false);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, base, asked]);
 
   if (!draft || !base || !rules || !extras) {
     return (
@@ -75,7 +100,9 @@ export default function RideTodayScreen() {
   const rows = ROWS.filter((r) => !r.air || draft.hasAirFork || typeof base.fork_air === "number");
   const tiresF = extras.tireFrontPsi;
   const tiresR = extras.tireRearPsi;
-  const tireNew = (v: number | null) => (typeof v === "number" && rules.tirePsiDelta ? v + rules.tirePsiDelta : v);
+  // Always a tire pressure: saved value (plus any rule delta), else the
+  // per-surface default, shown as a changed row with its reason.
+  const tires = tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta);
 
   const onStart = async () => {
     if (starting) return;
@@ -83,13 +110,10 @@ export default function RideTodayScreen() {
     try {
       const { data: auth } = await supabase.auth.getUser();
       let s = await startSession(draft, auth?.user?.id ?? null);
-      s = { ...s, suggestionShown: rules.deltas.length > 0 || rules.tirePsiDelta !== 0, suggestionApplied: rules.deltas.length > 0 || rules.tirePsiDelta !== 0 };
+      s = { ...s, suggestionShown: rules.deltas.length > 0 || tires.changed, suggestionApplied: rules.deltas.length > 0 || tires.changed };
       if (rules.deltas.length) s = await applyDeltas(s, rules.deltas, "conditions");
-      if (rules.tirePsiDelta && (typeof tiresF === "number" || typeof tiresR === "number")) {
-        await saveBikeExtras(draft.bike!.id, {
-          tireFrontPsi: typeof tiresF === "number" ? tiresF + rules.tirePsiDelta : tiresF,
-          tireRearPsi: typeof tiresR === "number" ? tiresR + rules.tirePsiDelta : tiresR,
-        });
+      if (tires.changed && (typeof tires.front === "number" || typeof tires.rear === "number")) {
+        await saveBikeExtras(draft.bike!.id, { tireFrontPsi: tires.front, tireRearPsi: tires.rear });
       }
       void startRideActivity({ startedAt: s.startedAt, track: s.trackName });
       void logEvent("ride_day_started", {
@@ -102,6 +126,9 @@ export default function RideTodayScreen() {
         suggestion_applied: s.suggestionApplied,
         tweaks: rules.deltas.length,
         conditions: draft.conditions,
+        source: rules.source,
+        engine_skipped: rules.engineSkipped ?? null,
+        tire_source: tires.source,
       });
       router.replace("/ride/mode" as never);
     } finally {
@@ -114,7 +141,12 @@ export default function RideTodayScreen() {
       <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 12, paddingBottom: 24 + insets.bottom }]} showsVerticalScrollIndicator={false}>
         <Eyebrow>{[draft.trackName, conditionsSummary(draft.conditions)].filter(Boolean).join(" · ")}</Eyebrow>
         <RideH1>Set this before moto 1</RideH1>
-        <Small style={{ fontSize: 14, marginTop: -4, marginBottom: 14 }}>{rules.summary}</Small>
+        <Small style={{ fontSize: 14, marginTop: -4, marginBottom: 6 }}>{thinking ? "Asking the engine…" : rules.summary}</Small>
+        {!thinking && rules.reasoning ? (
+          <Small style={{ fontSize: 12, color: V3.muted, marginBottom: 12 }}>{rules.source === "engine" ? "Engine: " : "Rules: "}{rules.reasoning}</Small>
+        ) : (
+          <View style={{ height: 8 }} />
+        )}
 
         {(["Fork", "Shock"] as const).map((group) => {
           const gr = rows.filter((r) => r.group === group);
@@ -146,21 +178,29 @@ export default function RideTodayScreen() {
         <RowSet>
           <ValueRow
             label="Tires"
-            value={`${typeof tiresF === "number" ? String(tireNew(tiresF)) : "—"} / ${typeof tiresR === "number" ? String(tireNew(tiresR)) : "—"}`}
-            old={rules.tirePsiDelta && typeof tiresF === "number" ? `${tiresF} / ${tiresR ?? "—"}` : null}
+            value={`${typeof tires.front === "number" ? String(tires.front) : "—"} / ${typeof tires.rear === "number" ? String(tires.rear) : "—"}`}
+            old={tires.changed ? `${typeof tiresF === "number" ? tiresF : "—"} / ${typeof tiresR === "number" ? tiresR : "—"}` : null}
             unit="psi"
             last
-            onPress={rules.tirePsiDelta ? () => setReason("Watered track: half a psi out front and rear for grip.") : undefined}
+            onPress={tires.reason ? () => setReason(tires.reason) : undefined}
           />
         </RowSet>
 
+        <SayItYourWay
+          value={freeText}
+          onChangeText={setFreeText}
+          placeholder="Anything about today? Say it your way and the engine weighs in."
+          onSubmitEditing={() => setAsked((n) => n + 1)}
+          style={{ marginTop: 6 }}
+        />
+
         <View style={{ flex: 1 }} />
-        <Cta label={starting ? "Starting…" : "Bike's set. Start the clock"} onPress={() => void onStart()} disabled={starting} />
+        <Cta label={starting ? "Starting…" : "Bike's set. Start the clock"} onPress={() => void onStart()} disabled={starting || thinking} />
       </ScrollView>
 
       <BottomSheet open={!!reason} onClose={() => setReason(null)} title="Why">
         <Sub style={{ marginTop: 0, fontSize: 15, color: V3.white }}>{reason}</Sub>
-        <Small style={{ marginTop: 10 }}>{surfaceLabel(draft.conditions.surface) ?? "Today"} · rule base, deterministic. One change at a time; re-test after moto 1.</Small>
+        <Small style={{ marginTop: 10 }}>{surfaceLabel(primarySurface(draft.conditions)) ?? "Today"} · {rules.source === "engine" ? "the engine, from your words" : "rule base, deterministic"}. One change at a time; re-test after moto 1.</Small>
       </BottomSheet>
     </View>
   );

@@ -12,7 +12,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { interFont, V3 } from "../../components/v3/theme";
 import { ChoiceChip, Cta, Grid, RideH1, RideScreenBg } from "../../components/ride/ridePrimitives";
-import { logMoto, nextMotoNumber, readOpenSession, type MotoSymptom, type RideSession, type Sentiment } from "../../lib/rideDay";
+import { logMoto, motoDurationMin, nextMotoNumber, readOpenSession, type MotoSymptom, type RideSession, type Sentiment } from "../../lib/rideDay";
+import { BottomSheet } from "../../components/v3/BottomSheet";
+import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { MORE_SYMPTOMS, PRIMARY_SYMPTOMS, type SymptomChip } from "../../lib/rideSymptoms";
 import { logEvent } from "../../lib/usage";
 
@@ -25,6 +27,9 @@ export default function RideLogScreen() {
   const [qualifier, setQualifier] = useState<string | null>(null);
   const [more, setMore] = useState(false);
   const [note, setNote] = useState("");
+  const [durationMin, setDurationMin] = useState<number | null>(null);
+  const [laps, setLaps] = useState<string>("");
+  const [editTime, setEditTime] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -58,13 +63,16 @@ export default function RideLogScreen() {
     if (!canSave || saving || !sentiment) return;
     setSaving(true);
     const symptoms: MotoSymptom[] = picked ? [{ id: picked.id, qualifier, label: picked.label }] : [];
-    const next = await logMoto(s, { sentiment, symptoms, note: note.trim() || null });
+    const lapsNum = laps.trim() ? Number(laps) : null;
+    const next = await logMoto(s, { sentiment, symptoms, note: note.trim() || null, durationMin: durationMin ?? motoDurationMin(s), laps: Number.isFinite(lapsNum as number) ? lapsNum : null });
     void logEvent("moto_logged", {
       moto: n,
       sentiment,
       symptom_ids: symptoms.map((x) => x.id),
       qualifiers: symptoms.map((x) => x.qualifier),
       has_note: !!note.trim(),
+      duration_min: durationMin ?? motoDurationMin(s),
+      laps: laps.trim() ? Number(laps) : null,
     });
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setSaving(false);
@@ -83,7 +91,11 @@ export default function RideLogScreen() {
           <Pressable onPress={() => router.back()} hitSlop={12} accessibilityRole="button" accessibilityLabel="Back">
             <Ionicons name="arrow-back" size={20} color={V3.steel} />
           </Pressable>
-          <Eyebrow style={{ marginBottom: 0 }}>Log moto {n}</Eyebrow>
+          <Pressable onPress={() => setEditTime(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Edit moto time and laps">
+            <Eyebrow style={{ marginBottom: 0 }}>
+              Moto {n} · {durationMin ?? motoDurationMin(s)} min{laps.trim() ? ` · ${laps.trim()} laps` : ""} <Ionicons name="pencil-outline" size={12} color={V3.steel} />
+            </Eyebrow>
+          </Pressable>
         </View>
         <RideH1 out>How was it?</RideH1>
 
@@ -119,22 +131,33 @@ export default function RideLogScreen() {
           </View>
         ) : null}
 
-        <View style={styles.noteRow}>
-          <Ionicons name="create-outline" size={18} color={V3.steel} />
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            placeholder="Say it your way (optional). Voice arrives with the next update."
-            placeholderTextColor={V3.steel}
-            style={[styles.note, interFont(400)]}
-            multiline
-            maxLength={400}
-          />
-        </View>
+        <SayItYourWay value={note} onChangeText={setNote} />
 
         <View style={{ flex: 1 }} />
         <Cta label={saving ? "Saving…" : "Save moto"} dim={!canSave} disabled={saving} onPress={() => void onSave()} />
       </ScrollView>
+      <BottomSheet open={editTime} onClose={() => setEditTime(false)} title={`Moto ${n}`}>
+        <Small style={{ marginBottom: 12 }}>Timed from the clock start or your last log. Fix it if you sat around.</Small>
+        <Label style={{ marginBottom: 6 }}>Minutes</Label>
+        <TextInput
+          value={String(durationMin ?? motoDurationMin(s))}
+          onChangeText={(t) => setDurationMin(t.trim() === "" ? null : Math.max(0, Math.min(600, Math.round(Number(t) || 0))))}
+          keyboardType="number-pad"
+          style={[styles.field, interFont(600)]}
+          accessibilityLabel="Moto minutes"
+        />
+        <Label style={{ marginTop: 12, marginBottom: 6 }}>Laps (optional)</Label>
+        <TextInput
+          value={laps}
+          onChangeText={(t) => setLaps(t.replace(/[^0-9]/g, "").slice(0, 3))}
+          keyboardType="number-pad"
+          placeholder="—"
+          placeholderTextColor={V3.steel}
+          style={[styles.field, interFont(600)]}
+          accessibilityLabel="Lap count"
+        />
+        <Cta label="Done" onPress={() => setEditTime(false)} style={{ marginTop: 16 }} />
+      </BottomSheet>
     </View>
   );
 }
@@ -144,6 +167,5 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: V3.screenPadX, flexGrow: 1 },
   top: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
   card: { backgroundColor: V3.panel, borderRadius: 16, padding: 16, marginBottom: 12 },
-  noteRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingVertical: 10 },
-  note: { flex: 1, color: "#FFFFFF", fontSize: 14, minHeight: 40, paddingTop: 0 },
+  field: { backgroundColor: V3.panel, borderRadius: 12, color: "#FFFFFF", fontSize: 18, paddingHorizontal: 14, paddingVertical: 12 },
 });

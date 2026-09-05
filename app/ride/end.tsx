@@ -32,6 +32,8 @@ export default function RideEndScreen() {
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const { shareView, share, available: canShare } = useShareSetup();
+  // The offscreen capture view mounts only once Share is tapped.
+  const [shareMounted, setShareMounted] = useState(false);
   const [s, setS] = useState<RideSession | null>(null);
   const [extras, setExtras] = useState<BikeExtras | null>(null);
   const [meterBefore, setMeterBefore] = useState<MeterInputs | null>(null);
@@ -119,7 +121,8 @@ export default function RideEndScreen() {
     }
   };
 
-  const onShare = () =>
+  const onShare = () => {
+    setShareMounted(true);
     void share(
       {
         bikeTitle: [s.bike.year, s.bike.make, s.bike.model].filter(Boolean).join(" "),
@@ -129,6 +132,7 @@ export default function RideEndScreen() {
       },
       "history"
     );
+  };
 
   const W = 300;
   const n = Math.max(1, s.motos.length);
@@ -196,7 +200,7 @@ export default function RideEndScreen() {
           {canShare ? <Ghost thin label="Share" icon={<Ionicons name="share-outline" size={16} color="#FFFFFF" />} onPress={onShare} /> : null}
         </View>
       </ScrollView>
-      {shareView}
+      {shareMounted && canShare ? shareView : null}
       <BottomSheet open={editHours} onClose={() => setEditHours(false)} title="Ride time">
         <Small style={{ marginBottom: 14 }}>Prefilled from the clock. Fix it if you sat around; engine hours follow it.</Small>
         <DecimalStepper value={hours} onChange={setHours} step={0.1} min={0} max={24} unit="hrs" digits={1} />

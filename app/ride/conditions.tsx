@@ -8,8 +8,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Chip, Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { V3 } from "../../components/v3/theme";
 import { ChoiceChip, Cta, Grid, RideH1, RideScreenBg } from "../../components/ride/ridePrimitives";
-import { conditionsComplete, EMPTY_CONDITIONS, SURFACES, TEMP_BANDS, TRACK_STATES, type RideConditions } from "../../lib/rideConditions";
+import { conditionsComplete, EMPTY_CONDITIONS, normalizeConditions, SURFACES, surfacesOf, TEMP_BANDS, TRACK_STATES, type RideConditions, type Surface } from "../../lib/rideConditions";
 import { readDraft, readOpenSession, writeDraft, writeSession } from "../../lib/rideDay";
+
+const TILE = 64;
 
 export default function RideConditionsScreen() {
   const router = useRouter();
@@ -19,8 +21,8 @@ export default function RideConditionsScreen() {
   const [c, setC] = useState<RideConditions>({ ...EMPTY_CONDITIONS });
 
   useEffect(() => {
-    if (sessionMode) void readOpenSession().then((o) => o && setC(o.conditions));
-    else void readDraft().then((d) => setC(d.conditions));
+    if (sessionMode) void readOpenSession().then((o) => o && setC(normalizeConditions(o.conditions)));
+    else void readDraft().then((d) => setC(normalizeConditions(d.conditions)));
   }, [sessionMode]);
 
   const set = (patch: Partial<RideConditions>) => {
@@ -28,6 +30,14 @@ export default function RideConditionsScreen() {
     setC(next);
     if (sessionMode) void readOpenSession().then((o) => o && writeSession({ ...o, conditions: next }));
     else void readDraft().then((d) => writeDraft({ ...d, conditions: next }));
+  };
+
+  // Multi-select: first tap is the primary surface, later taps add
+  // secondaries; tapping the primary again promotes the next one.
+  const surfaces = surfacesOf(c);
+  const toggleSurface = (id: Surface) => {
+    const next = surfaces.includes(id) ? surfaces.filter((x) => x !== id) : [...surfaces, id];
+    set({ surfaces: next });
   };
 
   const onDone = () => {
@@ -46,24 +56,37 @@ export default function RideConditionsScreen() {
         </View>
         <RideH1>What&apos;s the dirt doing?</RideH1>
 
-        <Label style={{ marginBottom: 8 }}>Surface</Label>
-        <Grid cols={2} style={{ marginBottom: 14 }}>
-          {SURFACES.map((s) => (
-            <ChoiceChip key={s.id} label={s.label} on={c.surface === s.id} onPress={() => set({ surface: s.id })} />
-          ))}
+        <Label style={{ marginBottom: 8 }}>Surface <Small style={{ fontSize: 11 }}>· first tap is the main one</Small></Label>
+        <Grid cols={3} style={{ marginBottom: 14 }}>
+          {SURFACES.map((s) => {
+            const idx = surfaces.indexOf(s.id);
+            const primary = idx === 0;
+            const secondary = idx > 0;
+            return (
+              <ChoiceChip
+                key={s.id}
+                label={s.label}
+                sub={primary ? "main" : secondary ? "also" : undefined}
+                on={primary}
+                minHeight={TILE}
+                onPress={() => toggleSurface(s.id)}
+                style={secondary ? { borderColor: V3.blue } : undefined}
+              />
+            );
+          })}
         </Grid>
 
         <Label style={{ marginBottom: 8 }}>Track state</Label>
         <Grid cols={3} style={{ marginBottom: 14 }}>
           {TRACK_STATES.map((s) => (
-            <ChoiceChip key={s.id} label={s.label} on={c.state === s.id} onPress={() => set({ state: s.id })} />
+            <ChoiceChip key={s.id} label={s.label} on={c.state === s.id} minHeight={TILE} onPress={() => set({ state: s.id })} />
           ))}
         </Grid>
 
         <Label style={{ marginBottom: 8 }}>Temperature</Label>
         <Grid cols={3} style={{ marginBottom: 8 }}>
           {TEMP_BANDS.map((t) => (
-            <ChoiceChip key={t.id} label={t.label} sub={t.sub} on={c.temp === t.id} onPress={() => set({ temp: t.id })} />
+            <ChoiceChip key={t.id} label={t.label} sub={t.sub} on={c.temp === t.id} minHeight={TILE} onPress={() => set({ temp: t.id })} />
           ))}
         </Grid>
         <Small style={{ marginBottom: 12 }}>Heat thins oil and raises air fork pressure. We account for it.</Small>

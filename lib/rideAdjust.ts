@@ -9,7 +9,7 @@
 // the engine's frozen contract is untouched.
 import { generateTuneTwo, type Tune2Context, type Tune2SymptomId, type ZeroTuneResult } from "./ai";
 import { CIRCUIT_STEPS, type CircuitKey } from "./currentSetup";
-import { tempBandToF } from "./rideConditions";
+import { surfacesOf, tempBandToF } from "./rideConditions";
 import type { RideSession } from "./rideDay";
 import { ratingFor, severityFor } from "./rideSymptoms";
 import type { SettingsSnapshot } from "./setupVersions";
@@ -100,33 +100,59 @@ export function directionLine(c: AdjustChange): string {
   return `${mag} ${out ? "OUT" : "IN"} · ${out ? "counterclockwise" : "clockwise"}`;
 }
 
-export async function fetchAdjustChanges(
+export type AdjustResult = {
+  changes: AdjustChange[];
+  /** The engine's own summary line (its first note), shown under the change. */
+  reasoning: string | null;
+  source: "engine";
+};
+
+/** One engine call for a logged moto: symptom + qualifier + the rider's own
+ *  words (feedback.free_text, parsed server-side; an EXISTING Tune Two input,
+ *  no contract change). */
+export async function fetchAdjustResult(
   s: RideSession,
-  symptom: Tune2SymptomId,
+  symptom: Tune2SymptomId | null,
   qualifier: string | null,
   sentiment: "better" | "same" | "worse",
-  effective: SettingsSnapshot
-): Promise<AdjustChange[]> {
+  effective: SettingsSnapshot,
+  freeText?: string | null
+): Promise<AdjustResult> {
   const previous = snapshotToTune(effective, s.hasAirFork);
+  const surfaces = surfacesOf(s.conditions);
   const context: Tune2Context = {
     make: s.bike.make ?? undefined,
     model: s.bike.model ?? undefined,
     year: s.bike.year ?? undefined,
     model_id: s.bike.model_id ?? undefined,
-    terrain: s.conditions.surface ?? undefined,
+    terrain: surfaces[0] ?? undefined,
     track: s.trackName ?? undefined,
     temp_f: tempBandToF(s.conditions.temp),
     wants_air_fork: s.hasAirFork,
   };
+  const text = typeof freeText === "string" && freeText.trim() ? freeText.trim().slice(0, 800) : undefined;
   const result = await generateTuneTwo({
     previous,
     feedback: {
       overall_rating: ratingFor(sentiment),
-      symptoms: [{ id: symptom, severity: severityFor(sentiment), ...(qualifier ? { where: qualifier } : {}) }],
-      terrain_tags: [s.conditions.surface, s.conditions.state].filter(Boolean) as string[],
+      symptoms: symptom ? [{ id: symptom, severity: severityFor(sentiment), ...(qualifier ? { where: qualifier } : {}) }] : [],
+      terrain_tags: [...surfaces, s.conditions.state, s.conditions.watered ? "watered" : null].filter(Boolean) as string[],
+      ...(text ? { free_text: text } : {}),
     },
     context,
     bikeId: s.bike.id,
   } as any);
-  return diffChanges(effective, result);
+  const reasoning = Array.isArray(result?.notes) ? (result.notes.find((n: unknown) => typeof n === "string" && n.trim()) as string | undefined) ?? null : null;
+  return { changes: diffChanges(effective, result), reasoning, source: "engine" };
+}
+
+export async function fetchAdjustChanges(
+  s: RideSession,
+  symptom: Tune2SymptomId,
+  qualifier: string | null,
+  sentiment: "better" | "same" | "worse",
+  effective: SettingsSnapshot,
+  freeText?: string | null
+): Promise<AdjustChange[]> {
+  return (await fetchAdjustResult(s, symptom, qualifier, sentiment, effective, freeText)).changes;
 }

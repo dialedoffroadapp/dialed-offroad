@@ -63,7 +63,7 @@ function draft(): RideDraft {
     hasAirFork: true,
     trackId: null,
     trackName: "OMC",
-    conditions: { surface: "hardpack", state: "choppy", temp: "hot", watered: false },
+    conditions: { surfaces: ["hardpack"], state: "choppy", temp: "hot", watered: false },
   };
 }
 
@@ -75,7 +75,7 @@ describe("conditions rule base (deterministic, v1 text)", () => {
   const base: SettingsSnapshot = { fork_comp: 13, fork_reb: 12, fork_air: 10.6, shock_lsc: 11, shock_hsc: 1, shock_reb: 15, shock_sag: 105 };
 
   test("choppy hardpack + hot on an air fork = the mockup's two tweaks", () => {
-    const r = todaysSetupRules({ surface: "hardpack", state: "choppy", temp: "hot", watered: false }, base, "MX setup", true);
+    const r = todaysSetupRules({ surfaces: ["hardpack"], state: "choppy", temp: "hot", watered: false }, base, "MX setup", true);
     expect(r.deltas).toEqual([
       expect.objectContaining({ circuit: "fork_comp", delta: 1 }),
       expect.objectContaining({ circuit: "fork_air", delta: -0.2 }),
@@ -87,14 +87,14 @@ describe("conditions rule base (deterministic, v1 text)", () => {
   });
 
   test("never more than two tweaks; watered adds tires only", () => {
-    const r = todaysSetupRules({ surface: "sand", state: "choppy", temp: "hot", watered: true }, base, "Dunes", false);
+    const r = todaysSetupRules({ surfaces: ["sand"], state: "choppy", temp: "hot", watered: true }, base, "Dunes", false);
     expect(r.deltas.length).toBeLessThanOrEqual(2);
     expect(r.deltas[0]).toEqual(expect.objectContaining({ circuit: "fork_comp", delta: -1 }));
     expect(r.tirePsiDelta).toBe(-0.5);
   });
 
   test("fresh mild dry hardpack changes nothing and says so", () => {
-    const r = todaysSetupRules({ surface: "hardpack", state: "fresh", temp: "mild", watered: false }, base, "MX setup", true);
+    const r = todaysSetupRules({ surfaces: ["hardpack"], state: "fresh", temp: "mild", watered: false }, base, "MX setup", true);
     expect(r.deltas).toEqual([]);
     expect(r.summary).toBe("Your MX setup, as it stands. Nothing today's dirt asks to change.");
   });
@@ -144,7 +144,7 @@ describe("ride session store", () => {
     const twoH = Date.parse(s.startedAt) + 2 * 3600000 + 36 * 60000;
     expect(formatElapsed(elapsedMs(s, twoH))).toBe("2:36");
     expect(hoursFromMs(elapsedMs(s, twoH))).toBe(2.6);
-    const withMotos = { ...s, motos: [1, 2, 3].map((n) => ({ seq: n, loggedAt: s.startedAt, sentiment: "better" as const, symptoms: [], note: null, values: s.base, localId: `m${n}`, serverId: null })) };
+    const withMotos = { ...s, motos: [1, 2, 3].map((n) => ({ seq: n, loggedAt: s.startedAt, sentiment: "better" as const, symptoms: [], note: null, durationMin: null, laps: null, values: s.base, localId: `m${n}`, serverId: null })) };
     const d = meterDelta({ hasBaseline: true, sagMeasured: true, ridesLogged: 3, refinements: 2, outcomesRecorded: 2 }, withMotos);
     expect(d.to).toBeGreaterThan(d.from);
   });

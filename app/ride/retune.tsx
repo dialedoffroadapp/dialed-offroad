@@ -12,7 +12,9 @@ import { Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { V3 } from "../../components/v3/theme";
 import { ChoiceChip, Cta, Grid, Hint, RideH1, RideScreenBg, ValueRow } from "../../components/ride/ridePrimitives";
 import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
-import { previewValue, RETUNE_TILES, retuneRules, todaysSetupRules, type RetuneTile, type RuleResult } from "../../lib/conditionsRules";
+import { previewValue, RETUNE_TILES, type RetuneTile } from "../../lib/conditionsRules";
+import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
+import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { CIRCUIT_STEPS, type CircuitKey } from "../../lib/currentSetup";
 import { conditionsSummary } from "../../lib/rideConditions";
 import { applyDeltas, readOpenSession, rideEffective, type RideSession } from "../../lib/rideDay";
@@ -28,6 +30,10 @@ export default function RideRetuneScreen() {
   const [extras, setExtras] = useState<BikeExtras | null>(null);
   const { tile: tileParam } = useLocalSearchParams<{ tile?: string }>();
   const [tile, setTile] = useState<RetuneTile | null>(tileParam === "new_track" ? "new_track" : null);
+  const [freeText, setFreeText] = useState("");
+  const [asked, setAsked] = useState(0);
+  const [thinking, setThinking] = useState(false);
+  const [result, setResult] = useState<SuggestResult | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -39,11 +45,33 @@ export default function RideRetuneScreen() {
   }, [router]);
 
   const eff = useMemo(() => (s ? rideEffective(s) : null), [s]);
-  const result: RuleResult | null = useMemo(() => {
-    if (!s || !eff || !tile) return null;
-    if (tile === "new_track") return todaysSetupRules(s.conditions, eff, s.setupName, s.hasAirFork);
-    return retuneRules(tile, eff, s.hasAirFork, s.pending.filter((p) => p.kind === "conditions").map((p) => ({ circuit: p.circuit, delta: p.delta })));
-  }, [s, eff, tile]);
+  useEffect(() => {
+    if (!s || !eff || !tile) {
+      setResult(null);
+      return;
+    }
+    let alive = true;
+    setThinking(true);
+    void suggestForConditions({
+      bike: s.bike,
+      hasAirFork: s.hasAirFork,
+      trackName: s.trackName ?? null,
+      conditions: s.conditions,
+      effective: eff,
+      setupName: s.setupName,
+      freeText,
+      tile: tile === "new_track" ? null : tile,
+      priorTweaks: s.pending.filter((p) => p.kind === "conditions").map((p) => ({ circuit: p.circuit, delta: p.delta })),
+    }).then((r) => {
+      if (!alive) return;
+      setResult(r);
+      setThinking(false);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s, eff, tile, asked]);
 
   if (!s || !eff || !extras) {
     return (
@@ -71,7 +99,7 @@ export default function RideRetuneScreen() {
         tireRearPsi: typeof extras.tireRearPsi === "number" ? extras.tireRearPsi + result.tirePsiDelta : extras.tireRearPsi,
       });
     }
-    void logEvent("retune_applied", { reason: tile, changes: result.deltas.length + (result.tirePsiDelta ? 1 : 0), after_moto: s.motos.length });
+    void logEvent("retune_applied", { reason: tile, changes: result.deltas.length + (result.tirePsiDelta ? 1 : 0), after_moto: s.motos.length, source: result.source, engine_skipped: result.engineSkipped ?? null, has_free_text: !!freeText.trim() });
     setS(next);
     router.back();
   };
@@ -116,10 +144,20 @@ export default function RideRetuneScreen() {
             {nothing ? <Small style={{ marginTop: 4 }}>Your numbers already fit that. Ride it.</Small> : null}
           </View>
         ) : null}
-        {result?.note && !nothing ? <Hint>{result.note}</Hint> : null}
+        {thinking ? <Hint>Asking the engine…</Hint> : null}
+        {!thinking && result?.reasoning && !nothing ? <Hint>{result.source === "engine" ? "Engine: " : ""}{result.reasoning}</Hint> : null}
+        {tile ? (
+          <SayItYourWay
+            value={freeText}
+            onChangeText={setFreeText}
+            placeholder="What changed, in your words? The engine weighs in."
+            onSubmitEditing={() => setAsked((n) => n + 1)}
+            style={{ marginTop: 6 }}
+          />
+        ) : null}
 
         <View style={{ flex: 1 }} />
-        <Cta label="Set it, back to riding" dim={!result || !!nothing} onPress={() => void apply()} />
+        <Cta label="Set it, back to riding" dim={!result || !!nothing || thinking} onPress={() => void apply()} />
         <Pressable onPress={() => router.back()} accessibilityRole="button" style={{ alignItems: "center", paddingVertical: 12 }}>
           <Small>Keep what I&apos;ve got</Small>
         </Pressable>

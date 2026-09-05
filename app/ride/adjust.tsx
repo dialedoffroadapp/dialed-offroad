@@ -16,7 +16,8 @@ import { Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { interFont, V3 } from "../../components/v3/theme";
 import { Cta, Ghost, RideH1, RideScreenBg } from "../../components/ride/ridePrimitives";
 import { CIRCUIT_STEPS, type CircuitKey } from "../../lib/currentSetup";
-import { CIRCUIT_LABELS, directionLine, fetchAdjustChanges, type AdjustChange } from "../../lib/rideAdjust";
+import { CIRCUIT_LABELS, directionLine, fetchAdjustResult, type AdjustChange } from "../../lib/rideAdjust";
+import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { readOpenSession, rideEffective, setAbsolute, type RideSession } from "../../lib/rideDay";
 import { symptomById } from "../../lib/rideSymptoms";
 import { logEvent } from "../../lib/usage";
@@ -35,6 +36,9 @@ export default function RideAdjustScreen() {
   const [i, setI] = useState(0);
   const [custom, setCustom] = useState<{ circuit: CircuitKey; value: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [freeText, setFreeText] = useState<string>("");
+  const [reasoning, setReasoning] = useState<string | null>(null);
+  const [asked, setAsked] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -48,9 +52,17 @@ export default function RideAdjustScreen() {
         return;
       }
       try {
-        const list = await fetchAdjustChanges(open, symptom as any, qualifier || null, (sentiment as any) || "worse", rideEffective(open));
+        setPhase("loading");
+        // The rider's own words: the moto's note on first load, then whatever
+        // they type here and re-ask with (feedback.free_text, engine-parsed).
+        const lastNote = open.motos[open.motos.length - 1]?.note ?? "";
+        const text = asked > 0 ? freeText : lastNote;
+        if (asked === 0 && lastNote && !freeText) setFreeText(lastNote);
+        const res = await fetchAdjustResult(open, symptom as any, qualifier || null, (sentiment as any) || "worse", rideEffective(open), text);
+        const list = res.changes;
         if (!alive) return;
-        void logEvent("adjust_shown", { moto: Number(moto ?? 0), changes: list.length, symptom_id: symptom, qualifier: qualifier || null, circuits: list.map((c) => c.circuit) });
+        setReasoning(res.reasoning);
+        void logEvent("adjust_shown", { moto: Number(moto ?? 0), changes: list.length, symptom_id: symptom, qualifier: qualifier || null, circuits: list.map((c) => c.circuit), source: res.source, has_free_text: !!text });
         if (list.length === 0) {
           setError("The engine would leave it where it is for that one. Ride it again, or adjust by hand.");
           setPhase("error");
@@ -67,7 +79,8 @@ export default function RideAdjustScreen() {
     return () => {
       alive = false;
     };
-  }, [router, symptom, qualifier, sentiment, moto, manual]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, symptom, qualifier, sentiment, moto, manual, asked]);
 
   if (!s || phase === "loading") {
     return (
@@ -157,6 +170,16 @@ export default function RideAdjustScreen() {
           </Text>
         </View>
         <Small style={{ textAlign: "center", lineHeight: 21, fontSize: 14, paddingHorizontal: 8 }}>{reason}</Small>
+        {reasoning && reasoning !== c.reason ? (
+          <Small style={{ textAlign: "center", lineHeight: 19, fontSize: 12, paddingHorizontal: 8, marginTop: 8, color: V3.muted }}>Engine: {reasoning}</Small>
+        ) : null}
+        <SayItYourWay
+          value={freeText}
+          onChangeText={setFreeText}
+          placeholder="Add to it in your own words, then ask again."
+          onSubmitEditing={() => setAsked((n) => n + 1)}
+          style={{ marginTop: 12 }}
+        />
 
         <View style={{ flex: 1 }} />
         <Cta huge label="Done, turned it" icon={<Ionicons name="checkmark" size={26} color={V3.carbon} />} onPress={() => void confirm(c, c.to, false)} style={{ marginBottom: 10 }} />

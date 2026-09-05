@@ -13,7 +13,7 @@
 //   heat                     → thins oil, raises air pressure (mockup 04 copy)
 //   always                   → one change at a time, re-test, ask again
 import type { CircuitKey } from "./currentSetup";
-import type { RideConditions } from "./rideConditions";
+import { primarySurface, type RideConditions, type Surface } from "./rideConditions";
 import type { SettingsSnapshot } from "./setupVersions";
 
 export type RuleDelta = { circuit: CircuitKey; delta: number; reason: string };
@@ -40,6 +40,7 @@ function tweakWord(n: number): string {
 
 /** Morning rules: conditions vs the running setup's values. */
 export function todaysSetupRules(c: RideConditions, base: SettingsSnapshot, setupName: string, hasAirFork: boolean): RuleResult {
+  const surface = primarySurface(c);
   const deltas: RuleDelta[] = [];
   const themes: string[] = [];
   const push = (d: RuleDelta) => {
@@ -47,17 +48,17 @@ export function todaysSetupRules(c: RideConditions, base: SettingsSnapshot, setu
   };
 
   // Surface + state
-  if (c.surface === "hardpack" && c.state === "choppy") {
+  if (surface === "hardpack" && c.state === "choppy") {
     push({ circuit: "fork_comp", delta: +1, reason: "Choppy hardpack: a click softer keeps the fork moving over the chop." });
     themes.push("dirt");
-  } else if (c.surface === "hardpack" && c.state === "rutted") {
+  } else if (surface === "hardpack" && c.state === "rutted") {
     push({ circuit: "fork_reb", delta: +1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts." });
     themes.push("dirt");
-  } else if (c.surface === "sand" || (c.surface === "loam" && c.state !== "fresh")) {
-    push({ circuit: "fork_comp", delta: -1, reason: `${c.surface === "sand" ? "Sand" : "Deep loam"} loads the fork: a click firmer holds it up.` });
+  } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
+    push({ circuit: "fork_comp", delta: -1, reason: `${surface === "sand" ? "Sand" : "Deep loam"} loads the fork: a click firmer holds it up.` });
     push({ circuit: "fork_reb", delta: -1, reason: "A click slower rebound keeps the front planted in the soft stuff." });
     themes.push("dirt");
-  } else if (c.surface === "mud") {
+  } else if (surface === "mud") {
     push({ circuit: "fork_comp", delta: -2, reason: "Mud: two clicks firmer. Bigger change on purpose; back it off once it dries." });
     themes.push("mud");
   }
@@ -126,4 +127,41 @@ export function previewValue(v: number | null, delta: number, decimals: number):
   if (typeof v !== "number") return null;
   const f = Math.pow(10, decimals);
   return Math.round((v + delta) * f) / f;
+}
+
+/* ------------------------- Tire pressure (today) ------------------------- */
+// Today's setup ALWAYS produces a tire pressure (2026-09-04): the rider's
+// saved value when present, else a rule-base starting point per PRIMARY
+// surface. DRAFT defaults for River's review; front / rear psi.
+export const TIRE_DEFAULT_PSI: Record<Surface, { front: number; rear: number; reason: string }> = {
+  hardpack: { front: 13.5, rear: 13, reason: "No tire pressure saved. Hardpack starting point: 13.5 front, 13 rear. Firm enough to keep the carcass from folding on slick corners." },
+  loam: { front: 13, rear: 12.5, reason: "No tire pressure saved. Loam starting point: 13 front, 12.5 rear. A touch lower for bite in the soft top layer." },
+  sand: { front: 12.5, rear: 12, reason: "No tire pressure saved. Sand starting point: 12.5 front, 12 rear. Lower pressure floats and hooks up." },
+  mud: { front: 12.5, rear: 12, reason: "No tire pressure saved. Mud starting point: 12.5 front, 12 rear. Lower pressure opens the knobs for grip." },
+};
+
+export type TirePlan = {
+  front: number | null;
+  rear: number | null;
+  /** True when the row should render as changed (default applied, or a rule delta). */
+  changed: boolean;
+  reason: string | null;
+  source: "saved" | "default" | "none";
+};
+
+export function tirePressureForToday(
+  c: RideConditions,
+  saved: { front: number | null; rear: number | null },
+  psiDelta: number
+): TirePlan {
+  const hasSaved = typeof saved.front === "number" || typeof saved.rear === "number";
+  if (hasSaved) {
+    const front = typeof saved.front === "number" ? saved.front + psiDelta : null;
+    const rear = typeof saved.rear === "number" ? saved.rear + psiDelta : null;
+    return { front, rear, changed: psiDelta !== 0, reason: psiDelta !== 0 ? "Watered track: half a psi out front and rear for grip." : null, source: "saved" };
+  }
+  const surface = primarySurface(c);
+  if (!surface) return { front: null, rear: null, changed: false, reason: null, source: "none" };
+  const d = TIRE_DEFAULT_PSI[surface];
+  return { front: d.front + psiDelta, rear: d.rear + psiDelta, changed: true, reason: d.reason, source: "default" };
 }

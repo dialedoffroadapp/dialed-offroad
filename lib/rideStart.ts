@@ -2,6 +2,7 @@
 // Bike + setup choices for Start Riding (mockup 01/02, plan 4.1 step 2):
 // auto-selected with one bike, the setup step skipped when the bike has one
 // setup, both defaulted to the last ride otherwise.
+import { normalizeConditions, surfacesOf } from "./rideConditions";
 import { readNamedSetups, readVersionSetupMap, setupsForBike, type SetupWithVersions } from "./bikeSetups";
 import { loadBikes } from "./garageV3";
 import { fetchModelSpecs } from "./modelSpecs";
@@ -53,6 +54,6 @@ export async function defaultDraft(draft: RideDraft, choices: BikeChoice[]): Pro
     }
   }
   if (last && !next.trackName && !next.trackId) next = { ...next, trackId: last.trackId, trackName: last.trackName };
-  if (last && !next.conditions.surface && !next.conditions.state && !next.conditions.temp) next = { ...next, conditions: last.conditions };
+  if (last && surfacesOf(next.conditions).length === 0 && !next.conditions.state && !next.conditions.temp) next = { ...next, conditions: normalizeConditions(last.conditions) };
   return next;
 }

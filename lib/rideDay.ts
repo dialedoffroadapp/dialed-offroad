@@ -42,6 +42,10 @@ export type MotoLog = {
   sentiment: Sentiment;
   symptoms: MotoSymptom[];
   note: string | null;
+  /** Minutes since the previous log (or the clock start), editable at log time. */
+  durationMin: number | null;
+  /** Optional lap count the rider typed. */
+  laps: number | null;
   /** Effective values in force when the moto was ridden. */
   values: SettingsSnapshot;
   /** Local id until the track_sessions row lands. */
@@ -284,9 +288,18 @@ export async function setAbsolute(
   return applyDeltas(s, [{ circuit, delta: value - cur, reason }], kind);
 }
 
+/** Minutes from the last log (or the clock start) to now: the moto's duration
+ *  by timestamps, shown as "Moto N · 18 min" and editable before saving. */
+export function motoDurationMin(s: RideSession, now = Date.now()): number {
+  const last = s.motos[s.motos.length - 1];
+  const from = Date.parse(last?.loggedAt ?? s.startedAt);
+  if (!Number.isFinite(from)) return 0;
+  return Math.max(0, Math.round((now - from) / 60000));
+}
+
 export async function logMoto(
   s: RideSession,
-  entry: { sentiment: Sentiment; symptoms: MotoSymptom[]; note: string | null }
+  entry: { sentiment: Sentiment; symptoms: MotoSymptom[]; note: string | null; durationMin?: number | null; laps?: number | null }
 ): Promise<RideSession> {
   const moto: MotoLog = {
     seq: nextMotoNumber(s),
@@ -294,6 +307,8 @@ export async function logMoto(
     sentiment: entry.sentiment,
     symptoms: entry.symptoms,
     note: entry.note,
+    durationMin: typeof entry.durationMin === "number" ? entry.durationMin : motoDurationMin(s),
+    laps: typeof entry.laps === "number" && entry.laps > 0 ? Math.round(entry.laps) : null,
     values: rideEffective(s),
     localId: newLocalId("moto"),
     serverId: null,
@@ -390,6 +405,8 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
                 symptoms: moto.symptoms.map((x) => ({ id: x.id, qualifier: x.qualifier })),
                 effective_values: moto.values,
                 note: moto.note,
+                duration_min: moto.durationMin ?? null,
+                laps: moto.laps ?? null,
                 logged_at: moto.loggedAt,
                 local_id: moto.localId,
               },

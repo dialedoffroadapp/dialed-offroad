@@ -11,7 +11,7 @@ import { BottomSheet } from "../../components/v3/BottomSheet";
 import { Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { V3 } from "../../components/v3/theme";
 import { Cta, Hint, PickCard, RideH1, RideScreenBg } from "../../components/ride/ridePrimitives";
-import { conditionsComplete, conditionsSummary } from "../../lib/rideConditions";
+import { conditionsComplete, conditionsSummary, primarySurface } from "../../lib/rideConditions";
 import { readDraft, readOpenSession, writeDraft, type RideDraft } from "../../lib/rideDay";
 import { bikeLine, bikeSetupLine, defaultDraft, loadBikeChoices, type BikeChoice } from "../../lib/rideStart";
 import { supabase } from "../../lib/supabase";
@@ -39,7 +39,7 @@ export default function RideStartScreen() {
         if (!alive) return;
         const defaulted = await defaultDraft(d, c);
         setChoices(c);
-        setFirstRide(!(defaulted.trackName || defaulted.trackId) && !defaulted.conditions.surface);
+        setFirstRide(!(defaulted.trackName || defaulted.trackId) && !primarySurface(defaulted.conditions));
         setDraft(defaulted);
         if (defaulted !== d) void writeDraft(defaulted);
       })();

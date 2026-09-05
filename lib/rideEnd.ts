@@ -4,6 +4,7 @@
 // time (editable) is added to bikes.hours; the moto timeline and the dialed
 // delta are derived. "Save as [track] baseline" creates or updates that
 // track's named setup from the settled values.
+import { primarySurface } from "./rideConditions";
 import { readBikeExtras, saveBikeExtras } from "./bikeExtras";
 import { createManualVersion, createNamedSetup, readNamedSetups } from "./bikeSetups";
 import { computeMeter, type MeterInputs } from "./dialedMeter";
@@ -75,7 +76,7 @@ export async function settleRideDay(s: RideSession, rideHours: number): Promise<
           shock_reb_clicks: eff.shock_reb,
           sag_mm: eff.shock_sag,
         },
-        terrain: s.conditions.surface ?? from?.terrain ?? null,
+        terrain: primarySurface(s.conditions) ?? from?.terrain ?? null,
         note: `Ride day settled${s.trackName ? ` at ${s.trackName}` : ""}: ${s.motos.length} ${s.motos.length === 1 ? "moto" : "motos"}, ${changed} ${changed === 1 ? "change" : "changes"}`,
         ...(s.serverId ? { extra: { ride_day_id: s.serverId } } : {}),
       });
@@ -125,7 +126,7 @@ export async function saveTrackBaseline(s: RideSession, settled: SetupVersionRow
         from,
         parentId: from?.id ?? null,
         patch: { fork_comp_clicks: eff.fork_comp, fork_reb_clicks: eff.fork_reb, fork_air_bar: eff.fork_air, shock_lsc_clicks: eff.shock_lsc, shock_hsc_turns: eff.shock_hsc, shock_reb_clicks: eff.shock_reb, sag_mm: eff.shock_sag },
-        terrain: s.conditions.surface ?? null,
+        terrain: primarySurface(s.conditions) ?? null,
         note: `${s.trackName} baseline updated after a ride day`,
       });
     } catch (e) {
@@ -134,7 +135,7 @@ export async function saveTrackBaseline(s: RideSession, settled: SetupVersionRow
     void logEvent("baseline_saved", { track_id: s.trackId, setup_id: existing.id, created: false });
     return { created: false, setupId: existing.id };
   }
-  const res = await createNamedSetup({ bikeId: s.bike.id, name, terrain: s.conditions.surface ?? null, from });
+  const res = await createNamedSetup({ bikeId: s.bike.id, name, terrain: primarySurface(s.conditions) ?? null, from });
   void logEvent("baseline_saved", { track_id: s.trackId, setup_id: res.setup.id, created: true, server: res.serverOk });
   return { created: true, setupId: res.setup.id };
 }
