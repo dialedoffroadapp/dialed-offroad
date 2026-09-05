@@ -1,4 +1,5 @@
 // app/(tabs)/profile.tsx
+import { clearEntitlementCache } from "../../lib/entitlement";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
@@ -200,6 +201,7 @@ export default function ProfileScreen() {
     try {
       resetThemeToDefault();
       await resetPurchases();
+      clearEntitlementCache();
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       toast.show("Signed out", { kind: "success" });
@@ -238,6 +240,7 @@ export default function ProfileScreen() {
 
       resetThemeToDefault();
       await resetPurchases();
+      clearEntitlementCache();
       await supabase.auth.signOut();
       router.replace("/login");
       if (Platform.OS === "web" && typeof window !== "undefined") {
