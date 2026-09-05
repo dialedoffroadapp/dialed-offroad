@@ -3,6 +3,7 @@
 // 02-home-day-one.html), same skeleton in both states. Never shows anything
 // the app cannot know: no weather, no conditions, no notification tied to
 // the next ride. Rendered by app/(tabs)/index.tsx behind HOME_GARAGE_V3_ENABLED.
+import { startGarageQuizFlow } from "../../lib/quizOnboarding";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -35,7 +36,6 @@ import { logEvent } from "../../lib/usage";
 // the way back into a ride in progress.
 const START_RIDING_ROUTE = "/ride/start";
 const SETUP_SHEET_ROUTE = "/setup-sheet";
-const TUNE_ROUTE = "/(tabs)/tune";
 const WALKTHROUGH_ROUTE = "/set-on-bike";
 const STORY_ROUTE = "/setup-story";
 
@@ -178,7 +178,10 @@ export function HomeV3() {
   const onPrimary = () => {
     if (!bike) return router.push("/(tabs)/garage" as never);
     // No running version yet: the Tune flow (relocated into Garage, 3.0) builds the baseline.
-    if (!running) return router.push({ pathname: TUNE_ROUTE, params: { bikeId: bike.id } } as never);
+    if (!running) {
+      void startGarageQuizFlow("regenerate", { bikeId: bike.id, make: bike.make ?? undefined, model: bike.model ?? undefined, year: bike.year ?? undefined }).then((first) => router.push(first as never));
+      return;
+    }
     if (needsSetOnBike) {
       // First time: the per-adjuster walkthrough (completing marks First Steps
       // step 2; skipping opens the plain sheet). Returning riders go straight

@@ -9,6 +9,7 @@
 // signup → trial → complete) are untouched, and every answer maps onto an
 // EXISTING engine input (lib/ai.ts ZeroTuneInput). No ai-tune changes.
 
+import { supabase } from "./supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BIKE_BRANDS, BIKE_CATALOG } from "../constants/bike-catalog";
 import type { ZeroTuneInput } from "./ai";
@@ -364,7 +365,7 @@ export function modelListSubline(d: QuizDiscipline | null | undefined): string {
 
 /* ------------------------------ Answers store ---------------------------- */
 
-export type QuizFlow = "add_bike" | "new_setup";
+export type QuizFlow = "add_bike" | "new_setup" | "regenerate";
 
 export type QuizAnswers = {
   version: 1;
@@ -435,7 +436,7 @@ export function parseQuizAnswers(raw: string | null): QuizAnswers {
       model: optStr(p.model),
       year: optNum(p.year),
       bikeLocalId: optStr(p.bikeLocalId),
-      flow: p.flow === "add_bike" || p.flow === "new_setup" ? p.flow : undefined,
+      flow: p.flow === "add_bike" || p.flow === "new_setup" || p.flow === "regenerate" ? p.flow : undefined,
       flowBikeId: optStr(p.flowBikeId),
       flowFromVersionId: optStr(p.flowFromVersionId),
       flowFromLabel: optStr(p.flowFromLabel),
@@ -536,7 +537,26 @@ export async function startGarageQuizFlow(
     startedAt: now,
     updatedAt: now,
   });
-  return flow === "add_bike" ? "/quiz/bike" : "/quiz/terrain";
+  if (flow === "add_bike") return "/quiz/bike";
+  if (flow === "new_setup") return "/quiz/terrain";
+  // regenerate: the bike is known; ask only what is missing, else build.
+  return nextQuizRoute("bike", await readQuizAnswers());
+}
+
+/** "Update my baseline" / "New tune" / Home's "Build a tune": the ONE door
+ *  into a fresh baseline for a known garage bike (audit item 10). Reads the
+ *  bike row so the discipline and engine input are never missing. */
+export async function startRegenerateQuizFlow(bikeId: string): Promise<string> {
+  let make: string | undefined, model: string | undefined, year: number | undefined;
+  try {
+    const { data } = await supabase.from("bikes").select("make, model, year").eq("id", bikeId).maybeSingle();
+    make = (data as any)?.make ?? undefined;
+    model = (data as any)?.model ?? undefined;
+    year = typeof (data as any)?.year === "number" ? (data as any).year : undefined;
+  } catch {
+    // offline: the answers store may still carry the bike from the last run
+  }
+  return startGarageQuizFlow("regenerate", { bikeId, make, model, year });
 }
 
 /** "Dunes" for the new-setup name ("Dunes setup"), from the main terrain tile. */
@@ -561,7 +581,7 @@ export function nextQuizRoute(from: QuizRouteStep, a: QuizAnswers): string {
       case "reveal": return "/(tabs)";
     }
   }
-  const order: QuizRouteStep[] = a.flow === "add_bike" ? ["bike", "skill", "terrain", "weight"] : ["terrain", "skill", "weight"];
+  const order: QuizRouteStep[] = a.flow === "add_bike" ? ["bike", "skill", "terrain", "weight"] : a.flow === "new_setup" ? ["terrain", "skill", "weight"] : ["skill", "terrain", "weight"];
   const needed = (step: QuizRouteStep) =>
     step === "skill" ? !a.skill : step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
   if (from === "building") return "/quiz/reveal";

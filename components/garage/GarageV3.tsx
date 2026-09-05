@@ -19,8 +19,6 @@ import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 import { Text } from "react-native";
 
-const TUNE_ROUTE = "/(tabs)/tune";
-
 export function GarageV3() {
   useV3Fonts();
   const router = useRouter();
@@ -69,7 +67,10 @@ export function GarageV3() {
           <H1 style={{ marginBottom: 0 }}>Your bikes</H1>
           {state.bikes.length > 0 ? (
             <Pressable
-              onPress={() => router.push({ pathname: TUNE_ROUTE, params: { bikeId: state.bikes[0].id } } as never)}
+              onPress={() => {
+                const b = state.bikes[0];
+                void startGarageQuizFlow("regenerate", { bikeId: b.id, make: b.make ?? undefined, model: b.model ?? undefined, year: b.year ?? undefined }).then((first) => router.push(first as never));
+              }}
               hitSlop={10}
               accessibilityRole="button"
               accessibilityLabel="New tune"

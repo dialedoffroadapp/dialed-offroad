@@ -1,4 +1,6 @@
 // app/(tabs)/profile.tsx
+import { HOME_GARAGE_V3_ENABLED } from "../../lib/featureFlags";
+import { pricingHref } from "../../lib/proGate";
 import { clearEntitlementCache } from "../../lib/entitlement";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
@@ -352,6 +354,12 @@ export default function ProfileScreen() {
 
   // ---------- RevenueCat Paywall ----------
   const openPaywall = async () => {
+    // 3.0: every paywall entry is instrumented and placed; Profile's Go Pro
+    // opens the pricing page like the gates do (audit item 10).
+    if (HOME_GARAGE_V3_ENABLED) {
+      router.push(pricingHref("history") as never);
+      return;
+    }
     // Once a purchase succeeded this session, never present the paywall again
     // — refresh state instead.
     if (hasPurchasedThisSession()) {

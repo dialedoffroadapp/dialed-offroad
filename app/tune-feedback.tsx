@@ -1,4 +1,5 @@
 // app/tune-feedback.tsx
+import { HOME_GARAGE_V3_ENABLED } from "../lib/featureFlags";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -175,7 +176,7 @@ async function offerReminderPermission(params: {
               if (granted) {
                 // The re-arm at submit no-op'd while permission was still
                 // undetermined — schedule the same reminder now.
-                void scheduleRideReminder({
+                if (!HOME_GARAGE_V3_ENABLED) void scheduleRideReminder({
                   versionId: params.versionId,
                   versionNumber: params.versionNumber,
                   bikeName: params.bikeName,
@@ -786,7 +787,7 @@ export default function TuneFeedbackScreen() {
           // The refined setup is the next thing to ride — re-arm the 36h
           // check-in for it. Replaces the reminder we just cancelled for the
           // version we critiqued (scheduleRideReminder keeps one pending).
-          void scheduleRideReminder({
+          if (!HOME_GARAGE_V3_ENABLED) void scheduleRideReminder({
             versionId: refinement.id,
             versionNumber: refinement.version_number,
             bikeName: bikeTitle,

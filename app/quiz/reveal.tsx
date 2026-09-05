@@ -133,7 +133,7 @@ export default function QuizRevealScreen() {
     if (savePromiseRef.current) return savePromiseRef.current;
     const run = (async () => {
       try {
-        if (answers.flow === "add_bike") {
+        if (answers.flow === "add_bike" || answers.flow === "regenerate") {
           const bikeId = answers.flowBikeId ?? answers.bikeLocalId ?? null;
           // Adding a bike that is already in the garage is a REGENERATE:
           // parent the new baseline onto the running default version.

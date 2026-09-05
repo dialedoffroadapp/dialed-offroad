@@ -5,6 +5,8 @@
 // pre-selected tier) with "See all plans" beside it. Still offers the free
 // alternative ("Update my baseline instead") when a baseline exists, and
 // the locked-row Pro set. Mounted once in the root layout (ProGateHost).
+import { QUIZ_ONBOARDING_ENABLED } from "../../lib/featureFlags";
+import { startRegenerateQuizFlow } from "../../lib/quizOnboarding";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -100,6 +102,11 @@ export function ProGateHost() {
     if (!altBike) return;
     void logEvent("pro_gate_alternative", { paywall_trigger_action: gate, bike_id: altBike });
     hideProGate();
+    if (QUIZ_ONBOARDING_ENABLED) {
+      // 3.0: the Tune flow lives in Garage as a quiz flow (audit item 10).
+      void startRegenerateQuizFlow(altBike).then((first) => router.push(first as never));
+      return;
+    }
     router.push(regenerateHref(altBike) as never);
   };
 

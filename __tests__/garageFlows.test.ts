@@ -32,3 +32,15 @@ test("add_bike keeps the rider's own discipline when present", async () => {
   await startGarageQuizFlow("add_bike", {});
   expect((await readQuizAnswers()).discipline).toBe("mx");
 });
+
+test("regenerate: bike known, rider facts present → straight to the drumroll; missing facts asked first", async () => {
+  await AsyncStorage.setItem("dialed_quiz_answers_v1", JSON.stringify({ version: 1, discipline: "mx", skill: "comfortable", weightLbs: 175, terrainMain: "hardpack", startedAt: "x", updatedAt: "x" }));
+  const first = await startGarageQuizFlow("regenerate", { bikeId: "11111111-2222-4333-8444-555555555555", make: "KTM", model: "250 SX-F", year: 2026 });
+  expect(first).toBe("/quiz/building");
+  const a = await readQuizAnswers();
+  expect(a.flow).toBe("regenerate");
+  expect(a.terrainMain).toBe("hardpack");
+  expect(nextQuizRoute("reveal", a)).toBe("/garage-bike?bikeId=11111111-2222-4333-8444-555555555555");
+  await AsyncStorage.clear();
+  expect(await startGarageQuizFlow("regenerate", { bikeId: "11111111-2222-4333-8444-555555555555", make: "KTM", model: "250 SX-F", year: 2026 })).toBe("/quiz/skill");
+});

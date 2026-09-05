@@ -1,4 +1,5 @@
 // app/tune-results.tsx
+import { HOME_GARAGE_V3_ENABLED } from "../lib/featureFlags";
 import { paywallHref } from "../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
@@ -879,7 +880,9 @@ export default function TuneResultScreen() {
       }
 
       // Free plan: enforce saved-baseline cap (using sessions table)
-      if (!isPro) {
+      // Legacy 10-baseline cap; 3.0 free rule is one baseline per bike,
+      // regenerable (lib/freeTune.ts), so the cap never fires under the flag.
+      if (!isPro && !HOME_GARAGE_V3_ENABLED) {
         const { count, error: countErr } = await supabase
           .from("sessions")
           .select("*", { count: "exact", head: true })
@@ -1016,7 +1019,9 @@ export default function TuneResultScreen() {
       toast.show(isTuneTwo ? "Refined setup saved ✅" : "Baseline saved ✅", {
         kind: "success",
       });
-      router.push("/(tabs)/sessions");
+      // 3.0: the Sessions tab is retired; the saved setup lives in Garage.
+      if (HOME_GARAGE_V3_ENABLED) router.replace("/(tabs)/garage" as never);
+      else router.push("/(tabs)/sessions");
     } catch (e: any) {
       toast.show(e?.message ?? "Save failed", { kind: "error" });
     } finally {
@@ -1487,7 +1492,7 @@ export default function TuneResultScreen() {
         {/* Post-reveal ride check-in, promoted from the inline hook to a
             card (v2.3.0 approved design). Baseline results only — the
             TuneTwo variant already lives inside the loop. */}
-        {!shouldBlur && !isTuneTwo ? (
+        {!shouldBlur && !isTuneTwo && !HOME_GARAGE_V3_ENABLED ? (
           <RideCheckinCard
             caps="THE NEXT STEP"
             body="Ride it, then tell me how it felt. I'll adjust."

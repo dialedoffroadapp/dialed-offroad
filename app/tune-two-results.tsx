@@ -1,4 +1,5 @@
 // app/tune-two-results.tsx
+import { HOME_GARAGE_V3_ENABLED } from "../lib/featureFlags";
 import { paywallHref } from "../lib/paywall";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -572,7 +573,7 @@ export default function TuneTwoResultScreen() {
       // The natural end of the loop teaches its new beginning: land on the
       // bike's home page, where the saved setup now lives.
       router.replace({
-        pathname: "/bike-home",
+        pathname: HOME_GARAGE_V3_ENABLED ? "/garage-bike" : "/bike-home",
         params: { bikeId: saveBikeId },
       } as any);
     }

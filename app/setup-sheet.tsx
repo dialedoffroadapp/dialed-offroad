@@ -5,6 +5,7 @@
 // labels, "What it does", "Why N for you", history line, tap-to-fix. One row
 // expanded at a time. A non-running setup shows deltas vs the RUNNING setup
 // (our own data) and "Run this setup".
+import { startGarageQuizFlow } from "../lib/quizOnboarding";
 import { formatValue } from "../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
@@ -336,14 +337,9 @@ export default function SetupSheetScreen() {
               label="Update my baseline"
               ghost
               onPress={() =>
-                router.push({
-                  pathname: "/(tabs)/tune",
-                  params: {
-                    bikeId: bike.id,
-                    regenerate: "1",
-                    ...(v?.terrain ? { prefill: encodeURIComponent(JSON.stringify({ terrain: v.terrain })) } : {}),
-                  },
-                } as never)
+                void startGarageQuizFlow("regenerate", { bikeId: bike.id, make: bike.make ?? undefined, model: bike.model ?? undefined, year: bike.year ?? undefined }).then((first) =>
+                  router.push(first as never)
+                )
               }
               style={{ marginTop: 10 }}
             />

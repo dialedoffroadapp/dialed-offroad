@@ -17,6 +17,7 @@
 // - Skip claim_free_tune RPC when guest
 // - Pass meta.guest to results so we can blur + "Unlock for free" later
 
+import { HOME_GARAGE_V3_ENABLED } from "../../lib/featureFlags";
 import { paywallHref } from "../../lib/paywall";
 import { claimBaselineCredit, refundBaselineCredit, type ClaimResult } from "../../lib/freeTune";
 import { showProGate } from "../../lib/proGate";
@@ -1279,7 +1280,7 @@ export default function TuneScreen() {
           </View>
 
           {/* One-time wayfinding for the Bike Home restructure */}
-          {!isOnboarding && <GarageCoachmark />}
+          {!isOnboarding && !HOME_GARAGE_V3_ENABLED && <GarageCoachmark />}
 
 
           {/* Garage Selector */}
@@ -1357,7 +1358,7 @@ export default function TuneScreen() {
 
         {/* Running setup: one-line pointer to Bike Home. The tune tab is for
             generating; managing setups lives in the garage. */}
-        {!isOnboarding && selectedBikeId && isUuid(selectedBikeId) && (
+        {!isOnboarding && !HOME_GARAGE_V3_ENABLED && selectedBikeId && isUuid(selectedBikeId) && (
           <RunningSetupRow bikeId={selectedBikeId} />
         )}
 
