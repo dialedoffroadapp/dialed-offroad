@@ -15,6 +15,7 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     countRecentCalls: () => Promise.resolve(0),
     recordCall: () => Promise.resolve(),
     parseFreeText: () => Promise.resolve(null),
+    modelExists: () => Promise.resolve(true),
     ...overrides,
   };
 }

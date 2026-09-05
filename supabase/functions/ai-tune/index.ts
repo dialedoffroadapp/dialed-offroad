@@ -1694,6 +1694,10 @@ export type HandlerDeps = {
   recordOutput?: (callId: number, output: unknown) => Promise<void>;
   /** Parse free-text feedback (Change 2). null = skip (fail-open). */
   parseFreeText: (text: string) => Promise<unknown | null>;
+  /** Does this bike_models id exist? (decision 2, 2026-09-05). false =
+   *  reject the request before any insert; null = lookup infra failure, the
+   *  id is dropped (never stored) and the call proceeds. */
+  modelExists: (modelId: string) => Promise<boolean | null>;
 };
 
 // deno-lint-ignore no-explicit-any
@@ -1754,26 +1758,40 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
+  // Throws on failure (decision 2, 2026-09-05): a call whose row cannot be
+  // written is NOT served. Swallowing the error used to leave the call
+  // uncounted by the rate limit and uncaptured, and a caller could induce
+  // the failure with a bad bike_model_id foreign key.
   recordCall: async ({ userId, ip, mode, anonId, input, riderWeightLbs, bikeModelId }) => {
+    const { data, error } = await getServiceClient()
+      .from("tune_calls")
+      .insert({
+        user_id: userId,
+        ip,
+        mode,
+        anon_id: anonId ?? null,
+        input: input ?? null,
+        rider_weight_lbs: riderWeightLbs ?? null,
+        bike_model_id: bikeModelId ?? null,
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return typeof data?.id === "number" ? data.id : null;
+  },
+
+  modelExists: async (modelId) => {
     try {
       const { data, error } = await getServiceClient()
-        .from("tune_calls")
-        .insert({
-          user_id: userId,
-          ip,
-          mode,
-          anon_id: anonId ?? null,
-          input: input ?? null,
-          rider_weight_lbs: riderWeightLbs ?? null,
-          bike_model_id: bikeModelId ?? null,
-        })
+        .from("bike_models")
         .select("id")
-        .single();
+        .eq("id", modelId)
+        .maybeSingle();
       if (error) throw error;
-      return typeof data?.id === "number" ? data.id : null;
+      return !!data?.id;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn("tune_calls insert failed:", msg.slice(0, 160));
+      console.warn("bike_models lookup failed (id dropped):", msg.slice(0, 160));
       return null;
     }
   },
@@ -1997,20 +2015,45 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           429
         );
       }
+      // ---------------- model_id: catalog existence (decision 2) ----------------
+      // bike_model_id is a foreign key. An unknown id used to fail the insert,
+      // which was swallowed, which left the call uncounted: a rate-limit bypass.
+      // Validate first; reject unknown ids; drop the id on a lookup blip.
+      let bikeModelId = bikeModelIdFrom(body);
+      if (bikeModelId) {
+        const exists = await deps.modelExists(bikeModelId);
+        if (exists === false) {
+          return jsonResponse({ error: "invalid_model_id" }, 400);
+        }
+        if (exists === null) bikeModelId = null;
+      }
+
       // The insert stays HERE (before generation) so rate-limit counting is
       // unchanged; the generated tune is attached to the row afterwards via
       // recordOutput. `input` is body.input verbatim — top-level mode/anon_id
       // are excluded (already dedicated columns) and ip never enters the body.
-      const recordedId = await deps.recordCall({
-        userId: userId ?? null,
-        ip: userId ? null : ip,
-        mode,
-        anonId: anonIdFrom(body, userId),
-        input: body.input,
-        riderWeightLbs: riderWeightFrom(body),
-        bikeModelId: bikeModelIdFrom(body),
-      });
-      const callId = typeof recordedId === "number" ? recordedId : null;
+      // A failed insert ABORTS the call (never swallowed): an unrecorded call
+      // would be invisible to the rate limit and to capture.
+      let callId: number | null = null;
+      try {
+        const recordedId = await deps.recordCall({
+          userId: userId ?? null,
+          ip: userId ? null : ip,
+          mode,
+          anonId: anonIdFrom(body, userId),
+          input: body.input,
+          riderWeightLbs: riderWeightFrom(body),
+          bikeModelId,
+        });
+        callId = typeof recordedId === "number" ? recordedId : null;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("tune_calls insert failed, call aborted:", msg.slice(0, 160));
+        return jsonResponse(
+          { error: "Couldn't record this tune. Try again in a moment." },
+          503
+        );
+      }
 
       // ------------------------ MODE: Tune Two (feedback refinement) ------------------------
       if (mode === "tune2_v1") {

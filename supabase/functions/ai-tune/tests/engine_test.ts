@@ -81,6 +81,7 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     countRecentCalls: () => Promise.resolve(0),
     recordCall: () => Promise.resolve(),
     parseFreeText: () => Promise.resolve(null),
+    modelExists: () => Promise.resolve(true),
     ...overrides,
   };
 }
@@ -486,4 +487,88 @@ Deno.test("10. 21st call in an hour → 429 (and anon at 10)", async () => {
   );
   assertEquals(respOk.status, 200);
   assertEquals(recorded, 1);
+});
+
+/* ---------------- Tests 11/12: model_id validation and the insert-abort rule ---------------- */
+// Decision 2 (2026-09-05): a bad bike_model_id used to fail the tune_calls
+// insert, the failure was swallowed, and the call was served uncounted by
+// the rate limit and uncaptured. Now the id is checked first and a failed
+// insert aborts the call.
+
+const MODEL_ID = "490e0276-f66a-4ef6-bbf1-ffbb2a4fe1b7";
+const BASELINE = {
+  terrain: "mx",
+  rider: { skill: "intermediate", style: "short_motos", goals: [] },
+  has_zeroed_clickers: true,
+  guardrails: GUARDRAILS,
+};
+
+Deno.test("11. unknown model_id → 400 before the insert; a known id is stored; a lookup blip drops the id", async () => {
+  let recorded: any = "not called";
+  const h = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      modelExists: () => Promise.resolve(false),
+      recordCall: (r) => {
+        recorded = r;
+        return Promise.resolve();
+      },
+    })
+  );
+  const bad = await h(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, model_id: MODEL_ID } }, ""));
+  assertEquals(bad.status, 400);
+  assertEquals((await bad.json()).error, "invalid_model_id");
+  assertEquals(recorded, "not called");
+
+  const hOk = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      modelExists: () => Promise.resolve(true),
+      recordCall: (r) => {
+        recorded = r;
+        return Promise.resolve();
+      },
+    })
+  );
+  assertEquals((await hOk(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, model_id: MODEL_ID } }, ""))).status, 200);
+  assertEquals(recorded.bikeModelId, MODEL_ID);
+
+  const hBlip = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      modelExists: () => Promise.resolve(null),
+      recordCall: (r) => {
+        recorded = r;
+        return Promise.resolve();
+      },
+    })
+  );
+  assertEquals((await hBlip(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, model_id: MODEL_ID } }, ""))).status, 200);
+  assertEquals(recorded.bikeModelId, null); // dropped, never stored, call still served
+});
+
+Deno.test("12. a failed tune_calls insert aborts the call: 503, no tune served (the bypass is closed)", async () => {
+  const h = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      recordCall: () => Promise.reject(new Error("insert or update on table tune_calls violates foreign key constraint")),
+    })
+  );
+  const resp = await h(fakeReq({ mode: "zero_baseline_v1", input: BASELINE }, ""));
+  assertEquals(resp.status, 503);
+  const body = await resp.json();
+  assert(typeof body.error === "string" && body.error.length > 0);
+  assertEquals(body.fork, undefined); // nothing generated
+
+  // tune2 takes the same exit
+  const h2 = makeHandler(
+    deps({ recordCall: () => Promise.reject(new Error("boom")) })
+  );
+  const r2 = await h2(
+    fakeReq({
+      mode: "tune2_v1",
+      input: { ...BASELINE, previous: PREV_AIR, feedback: { overall_rating: 6, symptoms: [{ id: "headshake", severity: 5 }] } },
+    })
+  );
+  assertEquals(r2.status, 503);
 });
