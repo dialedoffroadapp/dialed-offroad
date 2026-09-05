@@ -45,8 +45,8 @@ Functions), RevenueCat for IAP. Expo SDK 54, React Native 0.81, New Arch on.
 | Auth (email + native Apple/Google) | `app/signup.tsx`, `app/login.tsx` (both have provider buttons), `lib/authSuccess.ts` (**`completeAuthSuccess` is the ONE post-auth success path** — profile upsert, guest-bike migration, events, onboarding advance; email signup and both screens' OAuth call it, never reimplement it; `mode: "login"` = email login's heal-only profile write for returning users — NEVER downgrades onboarding columns), `lib/socialAuth.ts` (signInWithIdToken flows, module-presence feature gates), `lib/emailSignup.ts` (**the ONE email auth sequence**: signUp → already-registered recovery signIn → auto signIn, status result; `app/signup.tsx` and the quiz gate both call it, never reimplement it). **Under the quiz flag `app/signup.tsx` is a redirect** (pending tune → `/quiz/gate`, else `/quiz`; its blurred tease and `returnTo` retire with it): email sign-up happens INLINE on `app/quiz/gate.tsx`, and its recovered-account case goes through `completeAuthSuccess` (the legacy screen keeps its inline heal for the flag-off world). Same-email OAuth collisions rely on Supabase auto-linking (default-on, verified email) — no in-app linking code by decision |
 | Onboarding | `lib/onboarding.tsx`, `app/index.tsx`, root `app/_layout.tsx` |
 | Quiz onboarding (3.0 first-run, flagged) | `lib/featureFlags.ts` (`EXPO_PUBLIC_QUIZ_ONBOARDING=1`), `lib/quizOnboarding.ts` (answers store, engine-input mappings, model classification/ordering, catalog search, `logQuizEvent`), `lib/quizContext.tsx` (provider + `useQuizStepView`), `lib/guestGarage.ts` (the guest bike store the garage sheet + signup migration already use), `components/quiz/*` (fixed Carbon palette, Barlow Condensed via `-google-fonts/barlow-condensed` runtime load, `useAnswerRhythm` = the one tap→hold→advance rhythm), `app/quiz/*` (one screen per question; `_layout` owns fonts + slide stack) |
-| Ride day (3.0, `feat/ride-day-flow` off the integration branch) | `lib/rideDay.ts` (on-disk session + idempotent outbox; pending deltas reuse `lib/currentSetup.ts` shapes; settle rule = ONE manual version at End ride), `lib/conditionsRules.ts` (deterministic conditions rule base, v1 text), `lib/rideAdjust.ts` (Adjust change set = Tune Two diff, reasons from engine notes; NO hardcoded symptom→adjuster mapping; two-change PRESENTATION cap), `lib/rideSymptoms.ts` (4 + More over the existing 11 engine ids; qualifiers = `where`), `lib/tracks.ts` (recent / nearby via `match_tracks` / new-track-here), `lib/rideEnd.ts`, `lib/rideLiveActivity.ts` (require-guarded no-op until native), `components/ride/*`, `app/ride/*` (start, track, conditions, today, mode, retune, log, adjust, end). Mockups: `design/mockups/ride/` |
-| Home + Garage v3 (3.0 core screens, flagged) | (2026-09-04 round 2: Garage ALWAYS opens to the list; the Tune tab slot leaves the bar under the flag and the flow is reached via Garage doors: Add a bike, New setup (Pro, `setupId` → `setup_versions.setup_id`), Update my baseline (`regenerate=1`), New tune; Home day-one CTA opens `/setup-sheet` and marks First Steps step 2 via `lib/firstSteps.ts`; `expo-sharing` is loaded lazily in `components/ShareSetupCard.tsx`, Share hides when absent) | `lib/featureFlags.ts` (`HOME_GARAGE_V3_ENABLED`, follows the quiz flag when unset), `components/v3/*` (dialed.css tokens/primitives, Barlow Condensed headings + Inter 700 numbers via runtime `useFonts`), `components/home/*` + `lib/homeV3.ts` (Home view model; rides = `ride_feedback` rows), `components/garage/*` + `lib/garageV3.ts` + `lib/bikeSetups.ts` (named setups, default = `setup_id` null), `app/garage-bike.tsx` / `app/setup-sheet.tsx` / `app/setup-story.tsx`, pure logic in `lib/dialedMeter.ts`, `lib/homeCopy.ts`, `lib/setupStory.ts`, `lib/rideRules.ts`, `lib/adjusterCopy.ts`; local-first stores `lib/bikeExtras.ts`, `lib/seasonGoals.ts`, `lib/nextRide.ts`, `lib/bikePhoto.ts`. Mockups: `design/mockups/` (visual source of truth) |
+| Ride day (3.0, `feat/ride-day-flow` off the integration branch) | (2026-09-04 device pass: `conditions.surfaces` is an ARRAY, primary first, read via `surfacesOf`/`primarySurface`; `lib/rideEngine.ts:suggestForConditions` = engine when online with free text, rules fallback, `source` + `engineSkipped` in event meta; the Tune Two edge has NO conditions input, adding one is a frozen-contract change; moto `durationMin`/`laps` → `track_sessions.duration_min`/`laps` via staged `20260905110000`; shared `components/ride/SayItYourWay.tsx`) | `lib/rideDay.ts` (on-disk session + idempotent outbox; pending deltas reuse `lib/currentSetup.ts` shapes; settle rule = ONE manual version at End ride), `lib/conditionsRules.ts` (deterministic conditions rule base, v1 text), `lib/rideAdjust.ts` (Adjust change set = Tune Two diff, reasons from engine notes; NO hardcoded symptom→adjuster mapping; two-change PRESENTATION cap), `lib/rideSymptoms.ts` (4 + More over the existing 11 engine ids; qualifiers = `where`), `lib/tracks.ts` (recent / nearby via `match_tracks` / new-track-here), `lib/rideEnd.ts`, `lib/rideLiveActivity.ts` (require-guarded no-op until native), `components/ride/*`, `app/ride/*` (start, track, conditions, today, mode, retune, log, adjust, end). Mockups: `design/mockups/ride/` |
+| Home + Garage v3 (3.0 core screens, flagged) | (2026-09-04 round 2: Garage ALWAYS opens to the list; the Tune tab slot leaves the bar under the flag and the flow is reached via Garage doors: Add a bike, New setup (Pro, `setupId` → `setup_versions.setup_id`), Update my baseline (`regenerate=1`), New tune; Home day-one CTA opens `/setup-sheet` and marks First Steps step 2 via `lib/firstSteps.ts`; `components/ShareSetupCard.tsx` loads BOTH natives (`expo-sharing`, `react-native-view-shot`) lazily inside a try, Share hides when absent, pinned by `__tests__/shareSetupCard.test.ts`; Garage flows reuse the QUIZ screens post-onboarding via `answers.flow` (`lib/quizOnboarding.ts`: `startGarageQuizFlow`, `nextQuizRoute`, `resetQuizForNextRun` keeps rider facts): Add a bike = picker → drumroll → reveal (`autoCreateBaselineFromPendingTune`), New setup = terrain tiles → drumroll → reveal (named from the terrain, `setup_id` + parent = running version, rename by long-press on the bike page); "Set it on the bike" first run = `app/set-on-bike.tsx` walkthrough (copy DRAFT in `lib/adjusterLocations.ts`, keyed by fork/shock family; complete marks First Steps step 2, skip opens the sheet, returning riders skip it) | `lib/featureFlags.ts` (`HOME_GARAGE_V3_ENABLED`, follows the quiz flag when unset), `components/v3/*` (dialed.css tokens/primitives, Barlow Condensed headings + Inter 700 numbers via runtime `useFonts`), `components/home/*` + `lib/homeV3.ts` (Home view model; rides = `ride_feedback` rows), `components/garage/*` + `lib/garageV3.ts` + `lib/bikeSetups.ts` (named setups, default = `setup_id` null), `app/garage-bike.tsx` / `app/setup-sheet.tsx` / `app/setup-story.tsx`, pure logic in `lib/dialedMeter.ts`, `lib/homeCopy.ts`, `lib/setupStory.ts`, `lib/rideRules.ts`, `lib/adjusterCopy.ts`; local-first stores `lib/bikeExtras.ts`, `lib/seasonGoals.ts`, `lib/nextRide.ts`, `lib/bikePhoto.ts`. Mockups: `design/mockups/` (visual source of truth) |
 | Theme | `useTheme()` from `lib/theme`; tokens in `constants/theme.ts` (also `lib/themeManager.ts`, `theme/ThemeProvider.tsx`) |
 | Analytics | `lib/usage.ts` (`logEvent`, `UsageEvent` union) |
 | Legacy sessions | `lib/sessions.ts` + many screens (see Data model) |
@@ -124,6 +124,13 @@ candidate in a 2h window).
   prod.** Pushing from a branch missing an applied migration diverges history.
   `release/v2.2.0` satisfies this (it merged `feat/bike-entry-canonicalization`
   first, which carries all applied prod migrations — through `20260715150000`).
+- **3.0 push order (decision 2026-09-04):** the 3.0 batch is pushed with
+  `supabase db push --include-all --dry-run` first, then `--include-all`,
+  regardless of what the hotfix branch pushed before it. Reason: the hotfix
+  carries `20260905100000`; once prod's newest applied version is that, a
+  default `db push` skips every older staged file and `20260905110000` then
+  fails on a missing `track_sessions`. `--include-all` applies every file
+  missing from the remote history, in order.
 - **v2.3.0 migration batch: APPLIED to prod 2026-07-27** from
   `release/v2.3.0` — `20260724090000` (oauth event types), `20260724110000`
   (tune_calls anon claim), `20260727100000` (loop event types; 54-type
@@ -258,6 +265,19 @@ candidate in a 2h window).
   re-applied the delta on top of the engine value until 2026-09-04 (reveal
   10.2, legacy results 9.80 for the same tune). Every screen reads the
   saved version; none re-derives.
+- **A write that fails must surface to the rider or to the outbox, never
+  warn-and-continue** (audit rule a, 2026-09-04). supabase-js returns
+  `{ error }` instead of throwing: check it. Offline or failed writes either
+  enqueue a retry (the ride-day outbox in `lib/rideDay.ts` is the one outbox;
+  extend its job kinds, never build a second) or show the rider an honest
+  state. "Syncs after the next update" copy is allowed ONLY on paths that
+  really enqueue.
+- **Every screen shows the saved value exactly, through one shared
+  formatter, never a re-derived or re-rounded one** (audit rule b). The
+  air-display bug and the HSC 1.25 → "1.3" class both came from screen-local
+  rounding. Format for display with `lib/format.ts:formatSetting` (two
+  decimals, trailing zeros trimmed, integers untouched); store deltas rounded
+  to the circuit's decimals (`CIRCUIT_STEPS`).
 - **Engine output is frozen by a byte-identical v1 regression test.** Clamps:
   ±4 clicks/step, ±0.5 hsc turns, ±0.3 air bar; severities 1–10. Don't change
   engine math or note wording without updating the tests.
@@ -663,6 +683,29 @@ that change none of those skip it.)*
   any kind is tied to ride days; the only prompt is the in-app "Still
   riding?" after 12 h idle. Native lock-screen presence (Live Activity /
   foreground service) and voice are adapter stubs pending a native build.
+
+- **Audit follow-through decisions (River, 2026-09-04; audit at
+  `docs/audit-v3-2026-09-04.md`):** (1) widen the Tune Two contract to accept
+  conditions, in the same PR as the symptom-taxonomy change set; client rules
+  stay the offline fallback; (2) map the six dropped qualifier labels onto the
+  engine's four `where` tags client-side now; (3) ride days count on Home
+  (archived history folded into the meter and season stats) AND End ride
+  writes one `ride_feedback` row per moto; (4) the ride-day outbox grows job
+  kinds for garage writes (extras, rename, running switch); (5) draft tire
+  defaults stay but Start never persists them, only rider-saved values;
+  (6) AER 48 rebound is at the bottom of the right leg (adjuster copy still
+  under review); (7) the passive terms line covers email sign-up; (8) no
+  launch trial for any account that ever paid, winback is email; (9) one
+  `downgraded` leg (the 3-day cron), separate clock-ended `trial_ending`
+  copy, lower bounds on both cron legs; (10) intro-trial removal is on the
+  RC dashboard checklist, prices 7.99 / 59.99, `analytics.paid_accounts`
+  excludes `period_type = 'TRIAL'`; (11) bike photos private with signed
+  URLs and purged on account deletion, `rc_events.raw` stripped of subscriber
+  attributes, `tracks` select column-scoped; (12) R8 + resource shrinking
+  on for Android release builds, portrait stays for 3.0; (13) push order
+  rule above; (14) PROMPT.md follows the code on Home's newest-plus-N,
+  the Pro-gated tires tile and the list-first Garage; (15) `paywall_position`
+  stays action-gated, `premium.tsx` honors `returnTo` anyway.
 
 ## Sprint focus (in order)
 
