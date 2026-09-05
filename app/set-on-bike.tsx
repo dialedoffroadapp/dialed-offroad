@@ -4,10 +4,12 @@
 // fork/shock family in lib/adjusterPhotos, else nothing, + copy keyed by
 // family), HOW to set it (count-from-closed), a Set button that advances,
 // progress segments, a full-width ghost "Skip, I know my bike". Completing
-// marks First Steps step 2 done; skipping opens the plain sheet; returning riders (completed or
+// shows a short "Bike's set" beat and lands on Home (First Steps step 2
+// done there); skipping opens the plain sheet; returning riders (completed or
 // skipped) never see this again (Home routes them straight to the sheet).
 import { formatSetting } from "../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -28,6 +30,8 @@ import { logEvent } from "../lib/usage";
 type PageData = Awaited<ReturnType<typeof loadBikePage>>;
 
 const SHEET_ROUTE = "/setup-sheet";
+/** How long the "Bike's set" beat stays up before Home. */
+const BEAT_MS = 1100;
 
 type CardDef = { key: AdjusterKey; value: string; unit: string; group: "Fork" | "Shock" };
 
@@ -59,6 +63,7 @@ export default function SetOnBikeScreen() {
   const [version, setVersion] = useState<SetupVersionRow | null>(null);
   const [i, setI] = useState(0);
   const [missing, setMissing] = useState(false);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -106,7 +111,10 @@ export default function SetOnBikeScreen() {
     }
     await markSetOnBike(String(bikeId ?? ""));
     void logEvent("home_module_viewed", { module: "set_on_bike_walkthrough", state: "completed", bike_id: bikeId ?? null });
-    toSheet();
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    // The beat, then Home: its First Steps re-reads step 2 on focus.
+    setDone(true);
+    setTimeout(() => router.replace("/(tabs)" as never), BEAT_MS);
   };
 
   if (missing) {
@@ -126,6 +134,16 @@ export default function SetOnBikeScreen() {
       <View style={[styles.root, styles.center]}>
         <ActivityIndicator color={V3.steel} />
       </View>
+    );
+  }
+
+  if (done) {
+    return (
+      <Animated.View entering={FadeIn.duration(220)} style={[styles.root, styles.center]} accessibilityLiveRegion="polite">
+        <Ionicons name="checkmark-circle" size={44} color={V3.blue} />
+        <Text style={[styles.beat, headingFont()]}>BIKE&apos;S SET.</Text>
+        <Small style={{ marginTop: 8, textAlign: "center" }}>Ride it. Then tell it how it felt.</Small>
+      </Animated.View>
     );
   }
 
@@ -194,6 +212,7 @@ const styles = StyleSheet.create({
   segmentOn: { backgroundColor: V3.blue },
   content: { paddingHorizontal: V3.screenPadX, paddingTop: 8 },
   label: { color: V3.white, fontSize: 28, lineHeight: 30, marginTop: 6 },
+  beat: { color: V3.white, fontSize: 40, lineHeight: 44, marginTop: 14, textAlign: "center" },
   valueRow: { flexDirection: "row", alignItems: "baseline", gap: 8, marginTop: 6 },
   value: { color: V3.white, fontSize: 72, lineHeight: 76, letterSpacing: -1 },
   unit: { color: V3.steel, fontSize: 18 },

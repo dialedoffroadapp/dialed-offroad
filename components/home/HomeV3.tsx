@@ -87,9 +87,16 @@ export function HomeV3() {
   // home_module_viewed: once per module per focus (analytics-dark until the
   // v3 CHECK migration lands; signed-in only, so no queue hazard).
   const loggedRef = useRef<Set<string>>(new Set());
+  // First Steps step 2 lives in local storage; the walkthrough's "Bike's set"
+  // beat lands here, so re-read it on every focus (data alone doesn't change).
+  const bikeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    bikeIdRef.current = data?.bike?.id ?? null;
+  }, [data?.bike?.id]);
   useFocusEffect(
     useCallback(() => {
       loggedRef.current = new Set();
+      void hasSetOnBike(bikeIdRef.current).then(setSetOnBike);
       // Ride mode is a persistent takeover: an open session (survives app
       // kill and reboot) lands straight back in it.
       void readOpenSession().then(async (open) => {
