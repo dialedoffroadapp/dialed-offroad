@@ -36,8 +36,13 @@ export async function hydrateRemoteConfig(): Promise<void> {
   try {
     const keys = Object.keys(CONFIG_DEFAULTS);
     const query = supabase.from("app_config").select("key, value").in("key", keys);
-    const timeout = new Promise<null>((r) => setTimeout(() => r(null), 4000));
-    const res = (await Promise.race([query, timeout])) as any;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<null>((r) => {
+      timer = setTimeout(() => r(null), 4000);
+    });
+    const res = (await Promise.race([query, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    })) as any;
     const rows = res?.data as { key: string; value: unknown }[] | undefined;
     if (rows?.length) {
       const next = { ...cache };

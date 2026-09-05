@@ -63,8 +63,13 @@ export async function refreshPaywallPositionFromRemote(): Promise<PaywallPositio
       .select("value")
       .eq("key", PAYWALL_POSITION_CONFIG_KEY)
       .maybeSingle();
-    const timeout = new Promise<null>((r) => setTimeout(() => r(null), REMOTE_TIMEOUT_MS));
-    const res = await Promise.race([query, timeout]);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<null>((r) => {
+      timer = setTimeout(() => r(null), REMOTE_TIMEOUT_MS);
+    });
+    const res = await Promise.race([query, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
     const remote = parsePaywallPosition((res as any)?.data?.value);
     if (remote) {
       current = remote;

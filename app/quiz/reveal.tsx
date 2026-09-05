@@ -18,7 +18,9 @@ import { paywallHref } from "../../lib/paywall";
 import { deriveIsPro } from "../../lib/proUtils";
 import { hasPurchasedThisSession } from "../../lib/purchases";
 import { useQuiz } from "../../lib/quizContext";
-import { bikeDisplayName, clearQuizAnswers, logQuizEvent, type TuneLike } from "../../lib/quizOnboarding";
+import { bikeDisplayName, defaultSetupTerrainLabel, logQuizEvent, nextQuizRoute, resetQuizForNextRun, type TuneLike } from "../../lib/quizOnboarding";
+import { autoCreateBaselineFromPendingTune } from "../../lib/autoBaseline";
+import { createNamedSetup, defaultSetupName } from "../../lib/bikeSetups";
 import { supabase } from "../../lib/supabase";
 import { clearFunnelId, logEvent } from "../../lib/usage";
 import { startReverseTrial } from "../../lib/entitlement";
@@ -76,12 +78,17 @@ export default function QuizRevealScreen() {
         setLocked(isLocked);
         if (!viewedRef.current) {
           viewedRef.current = true;
-          void logQuizEvent("quiz_reveal_viewed", { locked: isLocked });
-          if (!isLocked) {
+          void logQuizEvent("quiz_reveal_viewed", { locked: isLocked, flow: answers.flow ?? "onboarding" });
+          if (!isLocked && !answers.flow) {
             // Conversion model: the reveal is where a new account's usage-
             // anchored reverse trial starts (idempotent server-side).
             void startReverseTrial("reveal");
             void emitLifecycleEvent("account_created", { bike: bikeDisplayName(answers) || null });
+          }
+          if (!isLocked && answers.flow) {
+            // Garage flows (signed in, onboarding long done): persist the
+            // version NOW so backing out never loses the numbers.
+            void saveFlowVersion();
           }
         }
       })();
@@ -113,10 +120,35 @@ export default function QuizRevealScreen() {
     }
   };
 
+  const savedRef = useRef(false);
+  const saveFlowVersion = async () => {
+    if (savedRef.current) return;
+    savedRef.current = true;
+    try {
+      if (answers.flow === "add_bike") {
+        await autoCreateBaselineFromPendingTune();
+      } else if (answers.flow === "new_setup" && answers.flowBikeId) {
+        const label = defaultSetupTerrainLabel(answers);
+        const created = await createNamedSetup({ bikeId: answers.flowBikeId, name: defaultSetupName(label), terrain: label, from: null });
+        await autoCreateBaselineFromPendingTune({
+          setupId: created.setup.id,
+          parentVersionId: answers.flowFromVersionId ?? null,
+          allowExisting: true,
+        });
+      }
+    } catch (e) {
+      console.warn("[quiz] flow version save failed", e);
+      savedRef.current = false;
+    }
+  };
+
   const onSetIt = async () => {
-    await clearFunnelId();
-    await clearQuizAnswers();
-    router.replace("/(tabs)" as never);
+    if (answers.flow) await saveFlowVersion();
+    const target = nextQuizRoute("reveal", answers);
+    if (!answers.flow) await clearFunnelId();
+    // Keep the rider facts for the next Garage flow; clear bike/terrain/flow.
+    await resetQuizForNextRun();
+    router.replace(target as never);
   };
 
   return (
@@ -161,7 +193,7 @@ export default function QuizRevealScreen() {
                   ))
                 ) : (
                   <Text style={styles.whyLine}>
-                    Built from your weight, your riding, and this bike's stock settings. Ride it, then tell us what it did.
+                    Built from your weight, your riding, and this bike&apos;s stock settings. Ride it, then tell us what it did.
                   </Text>
                 )}
               </Animated.View>

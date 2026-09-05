@@ -247,7 +247,7 @@ function AuthCallbackInner() {
       mounted = false;
       clearTimeout(timeout);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <View style={styles.page}>

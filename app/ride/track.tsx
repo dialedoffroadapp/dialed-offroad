@@ -8,7 +8,7 @@ import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { interFont, V3 } from "../../components/v3/theme";
-import { PickCard, RideH1, RideScreenBg } from "../../components/ride/ridePrimitives";
+import { PickCard, RideH1, RideScreenBg, Cta } from "../../components/ride/ridePrimitives";
 import { readDraft, readOpenSession, writeDraft, writeSession } from "../../lib/rideDay";
 import { createTrackHere, formatDistance, nearbyTracks, recentTracks, type TrackChoice } from "../../lib/tracks";
 import { logEvent } from "../../lib/usage";
@@ -58,7 +58,7 @@ export default function RideTrackScreen() {
     router.back();
   };
 
-  const useFreeText = async () => {
+  const chooseFreeText = async () => {
     if (!query.trim()) return;
     await choose({ id: null, name: query.trim(), rides: 0, setupName: null }, "free_text");
   };
@@ -94,11 +94,22 @@ export default function RideTrackScreen() {
             style={[styles.searchInput, interFont(400)]}
             autoCorrect={false}
             returnKeyType="done"
-            onSubmitEditing={() => void useFreeText()}
+            onSubmitEditing={() => void chooseFreeText()}
           />
         </View>
         {q && filteredRecent.length === 0 && filteredNearby.length === 0 ? (
-          <PickCard title={`Use "${query.trim()}"`} onPress={() => void useFreeText()} icon="checkmark" iconColor={V3.blue} />
+          <>
+            {/* No match: create it here (pinned to this spot) as the primary
+                action, with the free-text "Use" row kept underneath. */}
+            <Cta
+              label={creating ? "Adding…" : `Add "${query.trim()}" as a new track here`}
+              icon={<Ionicons name="add" size={18} color={V3.carbon} />}
+              onPress={() => void newHere()}
+              disabled={creating}
+              style={{ marginBottom: 10 }}
+            />
+            <PickCard title={`Use "${query.trim()}"`} onPress={() => void chooseFreeText()} icon="checkmark" iconColor={V3.blue} />
+          </>
         ) : null}
 
         {filteredRecent.length ? <Label style={styles.section}>Recent</Label> : null}
@@ -125,17 +136,6 @@ export default function RideTrackScreen() {
         ))}
 
         <View style={{ flex: 1 }} />
-        <Pressable
-          onPress={() => void newHere()}
-          disabled={!query.trim() || creating}
-          accessibilityRole="button"
-          style={[styles.newHere, (!query.trim() || creating) && { opacity: 0.6 }]}
-        >
-          <Ionicons name="add" size={16} color={V3.blue} />
-          <Small style={{ fontSize: 14 }}>
-            {query.trim() ? `New track "${query.trim()}" here (uses your location once)` : "New track here (name it above; uses your location once)"}
-          </Small>
-        </Pressable>
       </ScrollView>
     </View>
   );
@@ -147,5 +147,4 @@ const styles = StyleSheet.create({
   search: { backgroundColor: V3.panel, borderRadius: 16, minHeight: 56, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
   searchInput: { flex: 1, color: V3.white, fontSize: 16, paddingVertical: 12 },
   section: { marginTop: 6, marginBottom: 8 },
-  newHere: { borderWidth: 1, borderStyle: "dashed", borderColor: V3.line, borderRadius: 16, padding: 16, minHeight: 56, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10 },
 });

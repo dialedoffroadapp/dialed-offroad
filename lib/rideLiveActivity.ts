@@ -15,8 +15,7 @@ type Activity = {
 
 let impl: Activity | null = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mod = require("../native/rideActivity");
+    const mod = require("../native/rideActivity");
   if (mod && typeof mod.start === "function") impl = mod as Activity;
 } catch {
   impl = null;

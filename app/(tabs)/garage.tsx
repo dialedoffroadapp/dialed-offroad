@@ -654,7 +654,6 @@ function LegacyGarageScreen() {
       await writeGuestBikes(bikes);
       await writeGuestDefaultBikeId(defaultBikeId);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bikes, defaultBikeId]);
 
   // ---------- delete ----------

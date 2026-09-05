@@ -20,8 +20,7 @@ export type TuneLocation = {
 // expo-location joined the dev client see "unavailable", not a crash.
 let Location: any = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  Location = require("expo-location");
+    Location = require("expo-location");
 } catch {
   Location = null;
 }
