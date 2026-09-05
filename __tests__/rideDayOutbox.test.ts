@@ -1,0 +1,65 @@
+// Audit item 2: the outbox conflict target must match the (user_id, local_id)
+// unique indexes on ride_days and track_sessions exactly. With "local_id"
+// alone Postgres raised 42P10 on every job and no ride day ever synced.
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const upserts: { table: string; row: any; opts: any }[] = [];
+jest.mock("../lib/supabase", () => ({
+  supabase: {
+    auth: { getUser: async () => ({ data: { user: { id: "11111111-2222-4333-8444-555555555555" } } }) },
+    from: (table: string) => ({
+      upsert: (row: any, opts: any) => {
+        upserts.push({ table, row, opts });
+        return { select: () => ({ single: async () => ({ data: { id: table === "ride_days" ? "day-srv-1" : "moto-srv-1" }, error: null }) }) };
+      },
+    }),
+  },
+}));
+jest.mock("../lib/usage", () => ({ logEvent: jest.fn() }));
+
+/* eslint-disable import/first */
+import { enqueue, flushOutbox, type RideSession } from "../lib/rideDay";
+
+const session: RideSession = {
+  localId: "day-local-1",
+  serverId: null,
+  userId: "11111111-2222-4333-8444-555555555555",
+  bike: { id: "22222222-2222-4333-8444-555555555555", make: "KTM", model: "250 SX-F", year: 2026, nickname: null, model_id: null },
+  setupId: null,
+  setupName: "Baseline",
+  startingVersionId: "33333333-2222-4333-8444-555555555555",
+  startingVersionNumber: 1,
+  base: { fork_comp: 12, fork_reb: 10, fork_air: null, shock_lsc: 10, shock_hsc: 1.5, shock_reb: 12, shock_sag: 105 } as any,
+  hasAirFork: false,
+  trackId: null,
+  trackName: "Local",
+  conditions: { surfaces: ["hardpack"], state: "fresh", temp: "mild", watered: false },
+  startedAt: "2026-09-04T16:00:00.000Z",
+  endedAt: null,
+  lastActiveAt: "2026-09-04T16:00:00.000Z",
+  pending: [],
+  motos: [
+    { seq: 1, loggedAt: "2026-09-04T16:30:00.000Z", sentiment: "better", symptoms: [], note: null, durationMin: 30, laps: null, values: {} as any, localId: "moto-local-1", serverId: null },
+  ],
+  suggestionShown: false,
+  suggestionApplied: false,
+} as any;
+
+beforeEach(async () => {
+  upserts.length = 0;
+  await AsyncStorage.clear();
+});
+
+test("ride_days and track_sessions upserts name the full (user_id, local_id) conflict target", async () => {
+  await enqueue({ kind: "ride_day_upsert", localId: session.localId });
+  await enqueue({ kind: "moto_insert", localId: session.localId, motoLocalId: "moto-local-1" });
+  const done = await flushOutbox(session);
+  expect(done).toBe(2);
+  const day = upserts.find((u) => u.table === "ride_days");
+  const moto = upserts.find((u) => u.table === "track_sessions");
+  expect(day?.opts).toEqual({ onConflict: "user_id,local_id" });
+  expect(moto?.opts).toEqual({ onConflict: "user_id,local_id" });
+  expect(day?.row).toMatchObject({ user_id: session.userId, local_id: "day-local-1" });
+  expect(moto?.row).toMatchObject({ user_id: session.userId, ride_day_id: "day-srv-1", local_id: "moto-local-1", duration_min: 30, laps: null });
+  expect(session.serverId).toBe("day-srv-1");
+});

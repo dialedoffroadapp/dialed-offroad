@@ -349,7 +349,11 @@ export async function outboxEmpty(): Promise<boolean> {
 }
 
 let flushing = false;
-/** Best-effort server mirror. Pre-migration every call fails quietly and the
+/** Best-effort server mirror. The conflict target MUST name the whole unique
+ *  index, (user_id, local_id) on both tables (20260904120000): Postgres infers
+ *  an arbiter only from an exact column match, so "local_id" alone raised
+ *  42P10 on every job and nothing ever synced (audit item 2).
+ *  Pre-migration every call fails quietly and the Pre-migration every call fails quietly and the
  *  jobs stay queued for a later build. */
 export async function flushOutbox(sessionOverride?: RideSession | null): Promise<number> {
   if (flushing) return 0;
@@ -383,7 +387,7 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
             starting_version_id: s.startingVersionId,
             local_id: s.localId,
           };
-          const { data, error } = await supabase.from("ride_days").upsert(row, { onConflict: "local_id" }).select("id").single();
+          const { data, error } = await supabase.from("ride_days").upsert(row, { onConflict: "user_id,local_id" }).select("id").single();
           if (error) throw error;
           const serverId = (data as any)?.id as string;
           s.serverId = serverId;
@@ -410,7 +414,7 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
                 logged_at: moto.loggedAt,
                 local_id: moto.localId,
               },
-              { onConflict: "local_id" }
+              { onConflict: "user_id,local_id" }
             )
             .select("id")
             .single();
