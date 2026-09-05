@@ -333,15 +333,21 @@ export default function SetupSheetScreen() {
         {isRunning ? (
           <>
             <Button label="Refine after ride" onPress={onRefine} icon={<Ionicons name="sparkles-outline" size={18} color={V3.carbon} />} disabled={!v} />
-            {/* Free door into the relocated Tune flow: regenerate this bike's
-                baseline (replaces the running one, no history). */}
+            {/* Free door into the relocated Tune flow: terrain tiles (this
+                setup's terrain preselected) → drumroll → reveal, saved as the
+                NEXT version on this running setup. */}
             <Button
               label="Update my baseline"
               ghost
               onPress={() =>
-                void startGarageQuizFlow("regenerate", { bikeId: bike.id, make: bike.make ?? undefined, model: bike.model ?? undefined, year: bike.year ?? undefined }).then((first) =>
-                  router.push(first as never)
-                )
+                void startGarageQuizFlow("regenerate", {
+                  bikeId: bike.id,
+                  make: bike.make ?? undefined,
+                  model: bike.model ?? undefined,
+                  year: bike.year ?? undefined,
+                  setupId: setup.id,
+                  terrain: setup.terrain ?? v?.terrain ?? null,
+                }).then((first) => router.push(first as never))
               }
               style={{ marginTop: 10 }}
             />

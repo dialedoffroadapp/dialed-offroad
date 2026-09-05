@@ -114,6 +114,15 @@ export function terrainLabel(discipline: QuizDiscipline, id: string): string {
   return TERRAIN_OPTIONS[discipline].find((t) => t.id === id)?.label ?? id;
 }
 
+/** The tile id for a stored terrain (a version's "Hardpack" label or a tile
+ *  id), matched case-insensitively within the discipline; undefined when the
+ *  discipline has no such tile. */
+export function terrainIdFor(discipline: QuizDiscipline, value: string | null | undefined): string | undefined {
+  const v = value?.trim().toLowerCase();
+  if (!v) return undefined;
+  return TERRAIN_OPTIONS[discipline].find((t) => t.id === v || t.label.toLowerCase() === v)?.id;
+}
+
 /* ------------------------ Engine input mappings -------------------------- */
 // Every mapping below targets an input the engine already reads. Decisions
 // flagged to River in the 2026-09-02 status (see the plan's quiz section):
@@ -386,6 +395,12 @@ export type QuizAnswers = {
   flowBikeId?: string;
   flowFromVersionId?: string;
   flowFromLabel?: string;
+  /** Regenerate: the named setup it runs on (absent = the default lineage);
+   *  the reveal parents the new version onto that setup's running version. */
+  flowSetupId?: string;
+  /** The questions this flow will ask, snapshotted at start, so the progress
+   *  bar reads "1 of 1" / "2 of 3" instead of the onboarding's "of 5". */
+  flowSteps?: QuizRouteStep[];
   /** True when make/model came from the catalog (vs free text). */
   catalogMatch?: boolean;
   skill?: QuizSkillId;
@@ -442,6 +457,8 @@ export function parseQuizAnswers(raw: string | null): QuizAnswers {
       flowBikeId: optStr(p.flowBikeId),
       flowFromVersionId: optStr(p.flowFromVersionId),
       flowFromLabel: optStr(p.flowFromLabel),
+      flowSetupId: optStr(p.flowSetupId),
+      flowSteps: Array.isArray(p.flowSteps) ? (p.flowSteps.filter(isQuestionStep) as QuizRouteStep[]) : undefined,
       catalogMatch: typeof p.catalogMatch === "boolean" ? p.catalogMatch : undefined,
       skill: isSkill(p.skill) ? p.skill : undefined,
       terrainMain: optStr(p.terrainMain),
@@ -516,49 +533,75 @@ export function disciplineFromBike(make: string | null | undefined, model: strin
 
 export async function startGarageQuizFlow(
   flow: QuizFlow,
-  p: { bikeId?: string; make?: string; model?: string; year?: number; fromVersionId?: string | null; fromLabel?: string | null }
+  p: {
+    bikeId?: string;
+    make?: string;
+    model?: string;
+    year?: number;
+    fromVersionId?: string | null;
+    fromLabel?: string | null;
+    /** Regenerate: the named setup being updated (omit for the default lineage). */
+    setupId?: string | null;
+    /** Regenerate: the running setup's terrain, preselected on the tiles. */
+    terrain?: string | null;
+  }
 ): Promise<string> {
   const a = await readQuizAnswers();
   const now = new Date().toISOString();
-  await writeQuizAnswers({
+  const discipline = a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined;
+  const preselect = flow === "regenerate" ? terrainIdFor(discipline ?? "mx", p.terrain) : undefined;
+  const terrainMain = flow === "new_setup" ? undefined : preselect ?? a.terrainMain;
+  const terrainSecondary = flow === "new_setup" ? [] : (a.terrainSecondary ?? []).filter((t) => t !== terrainMain);
+  const next: QuizAnswers = {
     ...a,
-    discipline: a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined,
+    discipline,
     flow,
     flowBikeId: p.bikeId,
     flowFromVersionId: p.fromVersionId ?? undefined,
     flowFromLabel: p.fromLabel ?? undefined,
+    flowSetupId: p.setupId ?? undefined,
     make: p.make,
     model: p.model,
     year: p.year,
     bikeLocalId: p.bikeId,
     catalogMatch: undefined,
     freeText: undefined,
-    terrainMain: flow === "new_setup" ? undefined : a.terrainMain,
-    terrainSecondary: flow === "new_setup" ? [] : a.terrainSecondary,
+    terrainMain,
+    terrainSecondary,
     lastStep: undefined,
     startedAt: now,
     updatedAt: now,
-  });
-  if (flow === "add_bike") return "/quiz/bike";
-  if (flow === "new_setup") return "/quiz/terrain";
-  // regenerate: the bike is known; ask only what is missing, else build.
-  return nextQuizRoute("bike", await readQuizAnswers());
+  };
+  await writeQuizAnswers({ ...next, flowSteps: flowStepsFor(flow, next) });
+  // add_bike asks the bike; new_setup and regenerate open on the terrain
+  // tiles (regenerate with the running setup's terrain already selected).
+  return flow === "add_bike" ? "/quiz/bike" : "/quiz/terrain";
 }
 
 /** "Update my baseline" / "New tune" / Home's "Build a tune": the ONE door
  *  into a fresh baseline for a known garage bike (audit item 10). Reads the
  *  bike row so the discipline and engine input are never missing. */
 export async function startRegenerateQuizFlow(bikeId: string): Promise<string> {
-  let make: string | undefined, model: string | undefined, year: number | undefined;
+  let make: string | undefined, model: string | undefined, year: number | undefined, terrain: string | undefined;
   try {
     const { data } = await supabase.from("bikes").select("make, model, year").eq("id", bikeId).maybeSingle();
     make = (data as any)?.make ?? undefined;
     model = (data as any)?.model ?? undefined;
     year = typeof (data as any)?.year === "number" ? (data as any).year : undefined;
+    // The default lineage's running terrain, preselected on the tiles.
+    const { data: v } = await supabase
+      .from("setup_versions")
+      .select("terrain")
+      .eq("bike_id", bikeId)
+      .is("setup_id", null)
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    terrain = (v as any)?.terrain ?? undefined;
   } catch {
     // offline: the answers store may still carry the bike from the last run
   }
-  return startGarageQuizFlow("regenerate", { bikeId, make, model, year });
+  return startGarageQuizFlow("regenerate", { bikeId, make, model, year, terrain });
 }
 
 /** "Dunes" for the new-setup name ("Dunes setup"), from the main terrain tile. */
@@ -568,6 +611,33 @@ export function defaultSetupTerrainLabel(a: QuizAnswers): string | null {
 }
 
 export type QuizRouteStep = "bike" | "skill" | "terrain" | "weight" | "building" | "reveal";
+
+const QUESTION_STEPS: readonly QuizRouteStep[] = ["bike", "skill", "terrain", "weight"];
+function isQuestionStep(x: unknown): x is QuizRouteStep {
+  return typeof x === "string" && (QUESTION_STEPS as readonly string[]).includes(x);
+}
+
+/** Whether a flow still has to ask this question (rider facts persist). */
+function flowStepNeeded(step: QuizRouteStep, a: QuizAnswers): boolean {
+  return step === "skill" ? !a.skill : step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
+}
+
+/** The questions a garage flow will ask, in order: the flow's anchor question
+ *  always (bike for add_bike, terrain otherwise), then only what is missing. */
+export function flowStepsFor(flow: QuizFlow, a: QuizAnswers): QuizRouteStep[] {
+  const anchor: QuizRouteStep = flow === "add_bike" ? "bike" : "terrain";
+  const rest: QuizRouteStep[] = flow === "add_bike" ? ["skill", "terrain", "weight"] : ["skill", "weight"];
+  return [anchor, ...rest.filter((s) => flowStepNeeded(s, a))];
+}
+
+/** Progress for the shell: the onboarding's fixed five, or the flow's own
+ *  snapshotted question list ("1 of 1", "2 of 3"). */
+export function quizProgressFor(step: QuizStepId, a: QuizAnswers): { current: number; total: number } {
+  if (!a.flow) return { current: quizStepIndex(step), total: QUIZ_TOTAL_STEPS };
+  const steps = a.flowSteps?.length ? a.flowSteps : flowStepsFor(a.flow, a);
+  const idx = steps.indexOf(step as QuizRouteStep);
+  return { current: idx >= 0 ? idx + 1 : 1, total: steps.length };
+}
 
 /** Where a screen goes next. Onboarding is the fixed sequence. Garage flows
  *  ask only what is missing (rider facts persist across runs), never the
@@ -583,9 +653,10 @@ export function nextQuizRoute(from: QuizRouteStep, a: QuizAnswers): string {
       case "reveal": return "/(tabs)";
     }
   }
-  const order: QuizRouteStep[] = a.flow === "add_bike" ? ["bike", "skill", "terrain", "weight"] : a.flow === "new_setup" ? ["terrain", "skill", "weight"] : ["skill", "terrain", "weight"];
-  const needed = (step: QuizRouteStep) =>
-    step === "skill" ? !a.skill : step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
+  // add_bike asks the bike first; new_setup and regenerate start on the
+  // terrain tiles (regenerate preselects the running setup's terrain).
+  const order: QuizRouteStep[] = a.flow === "add_bike" ? ["bike", "skill", "terrain", "weight"] : ["terrain", "skill", "weight"];
+  const needed = (step: QuizRouteStep) => flowStepNeeded(step, a);
   if (from === "building") return "/quiz/reveal";
   if (from === "reveal") {
     const id = a.flowBikeId ?? a.bikeLocalId;

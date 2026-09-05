@@ -6,7 +6,7 @@
 // the custom terrain set is on the polish backlog.
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
   IconBeach,
@@ -43,7 +43,7 @@ const ICONS: Record<string, (color: string) => React.ReactNode> = {
 
 export default function QuizTerrainScreen() {
   const router = useRouter();
-  const { answers, setAnswers } = useQuiz();
+  const { answers, setAnswers, hydrated } = useQuiz();
   const discipline: QuizDiscipline = answers.discipline ?? "mx";
   const options = TERRAIN_OPTIONS[discipline];
   useQuizStepView("terrain", { discipline });
@@ -51,11 +51,22 @@ export default function QuizTerrainScreen() {
   const [main, setMain] = useState<string | null>(answers.terrainMain ?? null);
   const [secondary, setSecondary] = useState<string[]>(answers.terrainSecondary ?? []);
   const [advancing, setAdvancing] = useState(false);
+  // The provider hydrates after first render: seed the tiles from the stored
+  // answers (a regenerate preselects the running setup's terrain) unless the
+  // rider has already tapped.
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!hydrated || touched.current) return;
+    setMain(answers.terrainMain ?? null);
+    setSecondary(answers.terrainSecondary ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
 
   const stateFor = (id: string): TerrainTileState =>
     main === id ? "main" : secondary.includes(id) ? "secondary" : "none";
 
   const tap = (id: string) => {
+    touched.current = true;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     let nextMain = main;
     let nextSecondary = secondary;

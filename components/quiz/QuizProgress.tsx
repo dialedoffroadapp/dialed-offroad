@@ -27,21 +27,25 @@ function Segment({ state }: { state: SegmentState }) {
 export function QuizProgress({
   current,
   ghostNext,
+  total,
   style,
 }: {
   /** 1-based index of the question on screen. */
   current: number;
   /** True once an answer is tapped on this screen. */
   ghostNext?: boolean;
+  /** Segment count: the onboarding's five, or a garage flow's own question count. */
+  total?: number;
   style?: StyleProp<ViewStyle>;
 }) {
+  const count = Math.max(1, total ?? QUIZ_TOTAL_STEPS);
   return (
     <View
       style={[styles.row, style]}
       accessibilityRole="progressbar"
-      accessibilityLabel={`Question ${current} of ${QUIZ_TOTAL_STEPS}`}
+      accessibilityLabel={`Question ${current} of ${count}`}
     >
-      {Array.from({ length: QUIZ_TOTAL_STEPS }, (_, i) => {
+      {Array.from({ length: count }, (_, i) => {
         const n = i + 1;
         const state: SegmentState =
           n < current ? "done" : n === current ? "active" : n === current + 1 && ghostNext ? "ghost" : "idle";

@@ -8,7 +8,8 @@ import React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { quizStepIndex, type QuizStepId } from "../../lib/quizOnboarding";
+import { emptyQuizAnswers, quizProgressFor, type QuizStepId } from "../../lib/quizOnboarding";
+import { useQuiz } from "../../lib/quizContext";
 import { QuizProgress } from "./QuizProgress";
 import { displayFont, Q } from "./quizTheme";
 
@@ -42,6 +43,9 @@ export function QuizShell({
 }: Props) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const quiz = useQuiz();
+  // Garage flows ask one to three questions; the bar shows that count, not the onboarding's five.
+  const progress = quizProgressFor(step, quiz?.answers ?? emptyQuizAnswers());
   const goBack = () => {
     if (onBack) return onBack();
     if (router.canGoBack()) router.back();
@@ -63,7 +67,7 @@ export function QuizShell({
         ) : (
           <View style={styles.backBtn} />
         )}
-        <QuizProgress current={quizStepIndex(step)} ghostNext={ghostNext} style={styles.progress} />
+        <QuizProgress current={progress.current} total={progress.total} ghostNext={ghostNext} style={styles.progress} />
         <View style={styles.backBtn} />
       </View>
 

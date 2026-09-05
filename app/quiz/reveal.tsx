@@ -136,21 +136,21 @@ export default function QuizRevealScreen() {
         if (answers.flow === "add_bike" || answers.flow === "regenerate") {
           const bikeId = answers.flowBikeId ?? answers.bikeLocalId ?? null;
           // Adding a bike that is already in the garage is a REGENERATE:
-          // parent the new baseline onto the running default version.
+          // the new tune is the NEXT version on the running setup (the named
+          // setup the sheet started from, else the default lineage), parented
+          // onto that setup's running version.
+          const setupId = answers.flowSetupId && isUuid(answers.flowSetupId) ? answers.flowSetupId : null;
           const existing = bikeId && isUuid(bikeId) ? await hasBaselineForBike(bikeId) : false;
           let parentVersionId: string | null = null;
           if (existing && bikeId) {
-            const { data } = await supabase
-              .from("setup_versions")
-              .select("id")
-              .eq("bike_id", bikeId)
-              .is("setup_id", null)
+            const base = supabase.from("setup_versions").select("id").eq("bike_id", bikeId);
+            const { data } = await (setupId ? base.eq("setup_id", setupId) : base.is("setup_id", null))
               .order("version_number", { ascending: false })
               .limit(1)
               .maybeSingle();
             parentVersionId = (data as any)?.id ?? null;
           }
-          const version = await autoCreateBaselineFromPendingTune(existing ? { allowExisting: true, parentVersionId } : {});
+          const version = await autoCreateBaselineFromPendingTune(existing ? { allowExisting: true, parentVersionId, setupId } : { setupId });
           if (!version) throw new Error("baseline_not_saved");
         } else if (answers.flow === "new_setup" && answers.flowBikeId) {
           const label = defaultSetupTerrainLabel(answers);
