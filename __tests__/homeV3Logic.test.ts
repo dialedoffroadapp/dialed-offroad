@@ -53,7 +53,7 @@ describe("dialed meter", () => {
     const i = { hasBaseline: true, sagMeasured: false, ridesLogged: 0, refinements: 0, outcomesRecorded: 0 };
     const m = computeMeter(i);
     expect(m.pct).toBe(20);
-    expect(meterHeroLine(i, m.pct)).toBe("Baseline's in. Every ride from here pushes this number.");
+    expect(meterHeroLine(i, m.pct)).toBe("Baseline's in. That's the first 20%. Every ride from here pushes this number.");
   });
   test("two refinements + sag + rides ≈ the mockup's 45%", () => {
     const i = { hasBaseline: true, sagMeasured: true, ridesLogged: 3, refinements: 2, outcomesRecorded: 2 };

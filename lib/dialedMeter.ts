@@ -32,6 +32,9 @@ export type MeterCategory = {
 };
 
 export const METER_ENDOWED_PCT = 20;
+/** The endowed state's reason line, shared by Home's day-one glance card and
+ *  the quiz reveal's meter card (the plan: "endowed 20% with the reason stated"). */
+export const METER_ENDOWED_REASON = `Baseline's in. That's the first ${METER_ENDOWED_PCT}%. Every ride from here pushes this number.`;
 /** Refinements needed to fill the refined category (plan: count-based). */
 export const METER_REFINEMENTS_FULL = 5;
 /** Recorded outcomes needed to fill consistency (count-based, NOT a streak). */
@@ -97,7 +100,7 @@ export function meterCaption(categories: MeterCategory[]): string {
 /** Hero one-liner under the number. */
 export function meterHeroLine(i: MeterInputs, pct: number): string {
   if (!i.hasBaseline) return "No baseline yet. Build a tune to start.";
-  if (i.ridesLogged === 0) return "Baseline's in. Every ride from here pushes this number.";
+  if (i.ridesLogged === 0) return METER_ENDOWED_REASON;
   const rides = i.refinements === 1 ? "One ride of refinement in." : `${numberWord(i.refinements)} rides of refinement in.`;
   const sag = i.sagMeasured ? " Sag measured, not guessed." : " Measure sag to lock in the number.";
   return pct >= 20 && i.refinements > 0 ? rides + sag : "First ride logged. Refine it to move the number." ;

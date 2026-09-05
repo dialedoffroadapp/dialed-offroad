@@ -9,6 +9,8 @@
 // signup → trial → complete) are untouched, and every answer maps onto an
 // EXISTING engine input (lib/ai.ts ZeroTuneInput). No ai-tune changes.
 
+import { METER_ENDOWED_REASON } from "./dialedMeter";
+import { formatSetting, type SettingKey } from "./format";
 import { supabase } from "./supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BIKE_BRANDS, BIKE_CATALOG } from "../constants/bike-catalog";
@@ -691,11 +693,12 @@ export function tuneRowsFor(tune: TuneLike | null): TuneRow[] {
   return rows;
 }
 
+/** Rule (b): every screen shows the saved value through the ONE shared
+ *  formatter (lib/format). The quiz rows are keyed by unit, so map the unit
+ *  onto a representative setting key (air 2 dp, turns 2 dp, whole clicks/mm). */
+const UNIT_SETTING_KEY: Record<string, SettingKey> = { bar: "fork_air", turns: "shock_hsc", mm: "shock_sag", clicks: "fork_comp" };
 export function formatTuneValue(value: number | null, unit: string): string {
-  if (value === null || !Number.isFinite(value)) return "—";
-  if (unit === "bar") return value.toFixed(1);
-  if (unit === "turns") return Number.isInteger(value) ? String(value) : value.toFixed(1);
-  return String(Math.round(value));
+  return formatSetting(value, UNIT_SETTING_KEY[unit] ?? "fork_comp");
 }
 
 /* --------------------------------- Drumroll ------------------------------ */
@@ -760,7 +763,8 @@ export function drumrollChecklist(f: DrumrollFacts): string[] {
 // feature exists — no zero bars for unshipped features.
 
 export const METER_ENDOWED_PCT = 20;
-export const METER_REASON = "Baseline done. Ride it, then refine from real laps.";
+/** Rule (b): one reason line for the endowed state, owned by lib/dialedMeter. */
+export const METER_REASON = METER_ENDOWED_REASON;
 
 export type MeterCategory = {
   key: string;

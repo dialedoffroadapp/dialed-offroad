@@ -144,6 +144,8 @@ describe("engine mappings (existing inputs only)", () => {
     expect(formatTuneValue(2, "turns")).toBe("2");
     expect(formatTuneValue(12.4, "clicks")).toBe("12");
     expect(formatTuneValue(null, "mm")).toBe("—");
+    expect(formatTuneValue(10.45, "bar")).toBe("10.45");
+    expect(formatTuneValue(1.25, "turns")).toBe("1.25");
   });
 
   test("drumroll checklist: real facts in, honest generic copy otherwise", () => {
@@ -169,7 +171,7 @@ describe("engine mappings (existing inputs only)", () => {
 
   test("meter: endowed 20% with a reason, Pro rows locked, sums to 100", () => {
     expect(meterPct()).toBe(20);
-    expect(METER_REASON).toBe("Baseline done. Ride it, then refine from real laps.");
+    expect(METER_REASON).toBe("Baseline's in. That's the first 20%. Every ride from here pushes this number.");
     expect(METER_CATEGORIES.reduce((n, c) => n + c.pct, 0)).toBe(100);
     expect(METER_CATEGORIES.filter((c) => c.state === "locked_pro").map((c) => c.key)).toEqual([
       "first_refinement",
