@@ -60,7 +60,7 @@ const FORK_WHERE: Record<ForkFamily, Partial<Record<AdjusterKey, string>>> = {
   wp_aer_air: {
     fork_air: "Left fork leg, top cap. Unscrew the small plastic cap to find the Schrader valve. Nothing else is adjusted on this leg.",
     fork_comp: "Right fork leg, top cap. The center slotted screw marked COMP.",
-    fork_reb: "Right fork leg, top cap, the outer ring around the compression screw, marked REB. On AER 48 both fork clickers live on the right cap.",
+    fork_reb: "Right fork leg, bottom of the leg by the axle. The rebound screw sits in the axle lug, marked REB, and points down. On AER 48 the top of the right leg is compression only.",
   },
   wp_xact_spring: {
     fork_comp: "Top cap of each leg. The center slotted screw is compression; both legs carry one, set them the same.",

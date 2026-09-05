@@ -180,6 +180,9 @@ export async function createNamedSetup(params: {
   name: string;
   terrain: string | null;
   from: SetupVersionRow | null;
+  /** Record the lineage ("Starts from v3") WITHOUT copying that version as
+   *  the setup's first version; the quiz reveal writes its own baseline. */
+  createdFromVersionId?: string | null;
 }): Promise<{ setup: BikeSetup; firstVersion: SetupVersionRow | null; serverOk: boolean }> {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id;
@@ -189,7 +192,7 @@ export async function createNamedSetup(params: {
   try {
     const { data, error } = await supabase
       .from("bike_setups")
-      .insert({ user_id: userId, bike_id: params.bikeId, name: params.name, terrain: params.terrain, is_running: false, created_from_version_id: params.from?.id ?? null })
+      .insert({ user_id: userId, bike_id: params.bikeId, name: params.name, terrain: params.terrain, is_running: false, created_from_version_id: params.from?.id ?? params.createdFromVersionId ?? null })
       .select("id, bike_id, name, terrain, is_running, created_from_version_id, created_at")
       .single();
     if (!error && data) {
@@ -206,7 +209,7 @@ export async function createNamedSetup(params: {
       name: params.name,
       terrain: params.terrain,
       isRunning: false,
-      createdFromVersionId: params.from?.id ?? null,
+      createdFromVersionId: params.from?.id ?? params.createdFromVersionId ?? null,
       createdAt: new Date().toISOString(),
     };
   }

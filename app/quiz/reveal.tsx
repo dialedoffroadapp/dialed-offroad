@@ -21,6 +21,8 @@ import { useQuiz } from "../../lib/quizContext";
 import { bikeDisplayName, defaultSetupTerrainLabel, logQuizEvent, nextQuizRoute, resetQuizForNextRun, type TuneLike } from "../../lib/quizOnboarding";
 import { autoCreateBaselineFromPendingTune } from "../../lib/autoBaseline";
 import { createNamedSetup, defaultSetupName } from "../../lib/bikeSetups";
+import { hasBaselineForBike } from "../../lib/freeTune";
+import { isUuid } from "../../lib/uuid";
 import { supabase } from "../../lib/supabase";
 import { clearFunnelId, logEvent } from "../../lib/usage";
 import { startReverseTrial } from "../../lib/entitlement";
@@ -36,6 +38,7 @@ export default function QuizRevealScreen() {
   const [whyOpen, setWhyOpen] = useState(false);
   const [meta, setMeta] = useState<any>(null);
   const [locked, setLocked] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const viewedRef = useRef(false);
 
   useFocusEffect(
@@ -121,29 +124,74 @@ export default function QuizRevealScreen() {
   };
 
   const savedRef = useRef(false);
-  const saveFlowVersion = async () => {
-    if (savedRef.current) return;
-    savedRef.current = true;
-    try {
-      if (answers.flow === "add_bike") {
-        await autoCreateBaselineFromPendingTune();
-      } else if (answers.flow === "new_setup" && answers.flowBikeId) {
-        const label = defaultSetupTerrainLabel(answers);
-        const created = await createNamedSetup({ bikeId: answers.flowBikeId, name: defaultSetupName(label), terrain: label, from: null });
-        await autoCreateBaselineFromPendingTune({
-          setupId: created.setup.id,
-          parentVersionId: answers.flowFromVersionId ?? null,
-          allowExisting: true,
-        });
+  /** Garage flows persist the version HERE. Rule (a): a failed write shows
+   *  the rider a retry, never a silent warn (audit item 5). One in-flight
+   *  promise is shared between the focus-time save and the CTA. */
+  const savePromiseRef = useRef<Promise<boolean> | null>(null);
+  const saveFlowVersion = (): Promise<boolean> => {
+    if (savedRef.current) return Promise.resolve(true);
+    if (savePromiseRef.current) return savePromiseRef.current;
+    const run = (async () => {
+      try {
+        if (answers.flow === "add_bike") {
+          const bikeId = answers.flowBikeId ?? answers.bikeLocalId ?? null;
+          // Adding a bike that is already in the garage is a REGENERATE:
+          // parent the new baseline onto the running default version.
+          const existing = bikeId && isUuid(bikeId) ? await hasBaselineForBike(bikeId) : false;
+          let parentVersionId: string | null = null;
+          if (existing && bikeId) {
+            const { data } = await supabase
+              .from("setup_versions")
+              .select("id")
+              .eq("bike_id", bikeId)
+              .is("setup_id", null)
+              .order("version_number", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            parentVersionId = (data as any)?.id ?? null;
+          }
+          const version = await autoCreateBaselineFromPendingTune(existing ? { allowExisting: true, parentVersionId } : {});
+          if (!version) throw new Error("baseline_not_saved");
+        } else if (answers.flow === "new_setup" && answers.flowBikeId) {
+          const label = defaultSetupTerrainLabel(answers);
+          const created = await createNamedSetup({
+            bikeId: answers.flowBikeId,
+            name: defaultSetupName(label),
+            terrain: label,
+            from: null,
+            createdFromVersionId: answers.flowFromVersionId ?? null,
+          });
+          // Never write the new tune into the running lineage: without a
+          // server-side setup row (offline, migration absent) the version
+          // writer would drop the local_ id and land on the default setup.
+          if (!created.serverOk || !isUuid(created.setup.id)) throw new Error("setup_not_saved");
+          const version = await autoCreateBaselineFromPendingTune({
+            setupId: created.setup.id,
+            parentVersionId: answers.flowFromVersionId ?? null,
+            allowExisting: true,
+          });
+          if (!version) throw new Error("baseline_not_saved");
+        }
+        savedRef.current = true;
+        setSaveError(null);
+        return true;
+      } catch (e) {
+        console.warn("[quiz] flow version save failed", e);
+        setSaveError("Couldn't save this to your garage. Check your signal and try again.");
+        return false;
+      } finally {
+        savePromiseRef.current = null;
       }
-    } catch (e) {
-      console.warn("[quiz] flow version save failed", e);
-      savedRef.current = false;
-    }
+    })();
+    savePromiseRef.current = run;
+    return run;
   };
 
   const onSetIt = async () => {
-    if (answers.flow) await saveFlowVersion();
+    if (answers.flow) {
+      const ok = await saveFlowVersion();
+      if (!ok) return; // the inline error + retry CTA stays on screen
+    }
     const target = nextQuizRoute("reveal", answers);
     if (!answers.flow) await clearFunnelId();
     // Keep the rider facts for the next Garage flow; clear bike/terrain/flow.
@@ -208,8 +256,9 @@ export default function QuizRevealScreen() {
 
       {!locked ? (
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {saveError ? <Text style={styles.saveError}>{saveError}</Text> : null}
           <Pressable onPress={() => void onSetIt()} style={styles.cta} accessibilityRole="button">
-            <Text style={[styles.ctaText, displayFont("bold")]}>Set it on the bike</Text>
+            <Text style={[styles.ctaText, displayFont("bold")]}>{saveError ? "Try saving again" : "Set it on the bike"}</Text>
           </Pressable>
         </View>
       ) : null}
@@ -231,6 +280,7 @@ const styles = StyleSheet.create({
   whyLine: { color: Q.TEXT, fontSize: 15, lineHeight: 21, flex: 1 },
   meter: { marginTop: 8 },
   footer: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 20, paddingTop: 10, backgroundColor: Q.BG },
+  saveError: { color: "#F0506E", fontSize: 13, textAlign: "center", marginBottom: 8 },
   cta: { height: 56, borderRadius: 16, backgroundColor: Q.BLUE, alignItems: "center", justifyContent: "center", marginTop: 6 },
   ctaText: { color: Q.INK, fontSize: 19, letterSpacing: 0.4, textTransform: "uppercase" },
 });

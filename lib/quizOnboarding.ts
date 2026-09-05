@@ -502,6 +502,15 @@ export async function resetQuizForNextRun(): Promise<void> {
 
 /** Enter a Garage flow. Writes storage directly (the QuizProvider hydrates
  *  from it on mount), then the caller pushes the flow's first screen. */
+/** Garage flows run after onboarding, often on accounts that never took the
+ *  quiz (audit item 5). The discipline is derived from the bike so the engine
+ *  input is never missing; the rider's own Q1 answer wins when it exists. */
+export function disciplineFromBike(make: string | null | undefined, model: string | null | undefined): QuizDiscipline | null {
+  if (!make || !model) return null;
+  const k = classifyModel(make, model);
+  return k === "mx" ? "mx" : k === "offroad" ? "offroad" : null;
+}
+
 export async function startGarageQuizFlow(
   flow: QuizFlow,
   p: { bikeId?: string; make?: string; model?: string; year?: number; fromVersionId?: string | null; fromLabel?: string | null }
@@ -510,6 +519,7 @@ export async function startGarageQuizFlow(
   const now = new Date().toISOString();
   await writeQuizAnswers({
     ...a,
+    discipline: a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined,
     flow,
     flowBikeId: p.bikeId,
     flowFromVersionId: p.fromVersionId ?? undefined,

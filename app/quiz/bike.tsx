@@ -19,6 +19,7 @@ import {
 import Animated, { FadeIn, FadeOut, SlideInRight } from "react-native-reanimated";
 import { QuizChip } from "../../components/quiz/QuizChip";
 import { QuizChoiceCard } from "../../components/quiz/QuizChoiceCard";
+import { useToast } from "../../components/Toast";
 import { QuizShell } from "../../components/quiz/QuizShell";
 import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { useAnswerRhythm } from "../../components/quiz/useAnswerRhythm";
@@ -32,6 +33,7 @@ import {
   filterModels,
   groupModelsForDiscipline,
   logQuizEvent,
+  disciplineFromBike,
   modelListSubline,
   nextQuizRoute,
   QUIZ_MORE_BRANDS,
@@ -53,6 +55,7 @@ const splitYearAnswer = (id: string): { model: string; year: number } => {
 
 export default function QuizBikeScreen() {
   const router = useRouter();
+  const toast = useToast();
   const { answers, hydrated, setAnswers } = useQuiz();
   const { onboardingActive, state, setGuestBikeId, setStep } = useOnboarding();
 
@@ -144,6 +147,9 @@ export default function QuizBikeScreen() {
         year: y,
         bikeLocalId: bikeId,
         catalogMatch,
+        // Garage add-a-bike on an account that never took the quiz: derive
+        // the discipline from the bike so the build never lacks it.
+        ...(answers.discipline ? {} : { discipline: disciplineFromBike(mk, mo) ?? undefined }),
       });
 
       // State-machine transition identical to the garage sheet's Continue.
@@ -179,6 +185,7 @@ export default function QuizBikeScreen() {
       });
     },
     onAdvance: () => router.push(nextQuizRoute("bike", answers) as never),
+    onError: () => toast.show("Couldn't save your bike. Check your signal and tap the year again.", { kind: "error" }),
   });
 
   /* ------------------------------- derived -------------------------------- */

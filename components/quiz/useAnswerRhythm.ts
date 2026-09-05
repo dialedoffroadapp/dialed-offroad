@@ -15,6 +15,8 @@ type Options<T extends string> = {
   holdMs?: number;
   onCommit: (id: T) => void | Promise<void>;
   onAdvance: (id: T) => void;
+  /** Called when onCommit rejects; the screen decides how to tell the rider. */
+  onError?: (e: unknown) => void;
 };
 
 export function useAnswerRhythm<T extends string>({
@@ -22,6 +24,7 @@ export function useAnswerRhythm<T extends string>({
   holdMs = RHYTHM.hold,
   onCommit,
   onAdvance,
+  onError,
 }: Options<T>) {
   const [selected, setSelected] = useState<T | null>(initial ?? null);
   /** True from the tap until the screen loses focus: drives sibling dimming. */
@@ -30,6 +33,8 @@ export function useAnswerRhythm<T extends string>({
   const mountedRef = useRef(true);
   const commitRef = useRef(onCommit);
   const advanceRef = useRef(onAdvance);
+  const errorRef = useRef(onError);
+  errorRef.current = onError;
   commitRef.current = onCommit;
   advanceRef.current = onAdvance;
 
@@ -62,12 +67,25 @@ export function useAnswerRhythm<T extends string>({
       setAnswering(true);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
+      // A failed commit (offline bike insert, RLS, a duplicate the resolver
+      // could not settle) must NOT advance (audit item 5): the rider would
+      // believe the bike is saved. Re-arm, keep the selection, tell them.
       const commit = Promise.resolve()
         .then(() => commitRef.current(id))
-        .catch((e) => console.warn("[quiz] commit failed", e));
+        .then(() => true)
+        .catch((e) => {
+          console.warn("[quiz] commit failed", e);
+          errorRef.current?.(e);
+          return false;
+        });
       const hold = new Promise<void>((r) => setTimeout(r, holdMs));
-      void Promise.all([commit, hold]).then(() => {
+      void Promise.all([commit, hold]).then(([ok]) => {
         if (!mountedRef.current) return;
+        if (!ok) {
+          advancingRef.current = false;
+          setAnswering(false);
+          return;
+        }
         advanceRef.current(id);
       });
     },
