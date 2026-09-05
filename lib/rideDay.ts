@@ -21,7 +21,8 @@ import { EMPTY_CONDITIONS, type RideConditions } from "./rideConditions";
 import type { SettingsSnapshot, SetupVersionRow } from "./setupVersions";
 import { supabase } from "./supabase";
 import { logEvent } from "./usage";
-import { isUuid } from "./uuid";
+import { isUuid, newUuid } from "./uuid";
+import { ratingFor, severityFor } from "./rideSymptoms";
 
 export const RIDE_OPEN_KEY = "ride_day_open_v1";
 export const RIDE_DRAFT_KEY = "ride_day_draft_v1";
@@ -46,6 +47,10 @@ export type MotoLog = {
   durationMin: number | null;
   /** Optional lap count the rider typed. */
   laps: number | null;
+  /** Client-minted id of this moto's ride_feedback row (decision 3: one
+   *  feedback row per moto so Home, the outcome loop and analytics see
+   *  ride days as rides). Upserted by id, so retries never duplicate. */
+  feedbackId?: string | null;
   /** Effective values in force when the moto was ridden. */
   values: SettingsSnapshot;
   /** Local id until the track_sessions row lands. */
@@ -100,6 +105,8 @@ export type RideSession = {
   suggestionApplied: boolean;
   lastActiveAt: string;
   /** Meter % after End ride (meter-stall detection reads the last two). */
+  /** Hours this ride day added to the bike (set at settle; season stats sum it). */
+  hoursAdded?: number | null;
   meterPct?: number | null;
 };
 
@@ -312,9 +319,11 @@ export async function logMoto(
     values: rideEffective(s),
     localId: newLocalId("moto"),
     serverId: null,
+    feedbackId: newUuid(),
   };
   const next = await writeSession({ ...s, motos: [...s.motos, moto] });
   await enqueue({ kind: "moto_insert", localId: s.localId, motoLocalId: moto.localId });
+  await enqueue({ kind: "moto_feedback", localId: s.localId, motoLocalId: moto.localId });
   void flushOutbox();
   return next;
 }
@@ -327,6 +336,8 @@ export async function logMoto(
 export type OutboxJob =
   | { kind: "ride_day_upsert"; localId: string }
   | { kind: "moto_insert"; localId: string; motoLocalId: string }
+  /** One ride_feedback row per moto, upserted by its client-minted id. */
+  | { kind: "moto_feedback"; localId: string; motoLocalId: string }
   | { kind: "ride_day_end"; localId: string };
 
 export async function readOutbox(): Promise<OutboxJob[]> {
@@ -421,6 +432,23 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
           if (error) throw error;
           moto.serverId = (data as any)?.id ?? null;
           if (open && open.localId === s.localId) await writeJson(RIDE_OPEN_KEY, open);
+        } else if (job.kind === "moto_feedback") {
+          const moto = s.motos.find((m) => m.localId === job.motoLocalId);
+          // No feedback id (pre-change moto) or no real version to key on: nothing to write, drop the job.
+          if (!moto || !moto.feedbackId || !s.startingVersionId || !isUuid(s.startingVersionId)) continue;
+          const { error } = await supabase.from("ride_feedback").upsert(
+            {
+              id: moto.feedbackId,
+              user_id: userId,
+              setup_version_id: s.startingVersionId,
+              overall_rating: ratingFor(moto.sentiment),
+              symptoms: moto.symptoms.map((x) => ({ id: x.id, severity: severityFor(moto.sentiment), ...(x.qualifier ? { where: x.qualifier } : {}) })),
+              free_text: moto.note,
+              created_at: moto.loggedAt,
+            },
+            { onConflict: "id" }
+          );
+          if (error) throw error;
         }
         done += 1;
       } catch {

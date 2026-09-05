@@ -92,7 +92,7 @@ export async function settleRideDay(s: RideSession, rideHours: number): Promise<
   } catch {
     // local cache still updated inside saveBikeExtras
   }
-  const session = await writeSession({ ...s, endedAt });
+  const session = await writeSession({ ...s, endedAt, hoursAdded: rideHours });
   await enqueue({ kind: "ride_day_end", localId: s.localId });
   void flushOutbox(session);
   void endRideActivity();

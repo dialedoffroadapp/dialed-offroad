@@ -24,11 +24,10 @@ import { readOpenSession, readHistory } from "../../lib/rideDay";
 import { isEntitled, maybeStartLaunchTrial, resolveEntitlement, subscribeEntitlement, trialNearEnd, type Entitlement, FREE_ENTITLEMENT } from "../../lib/entitlement";
 import { emitLifecycleEvent } from "../../lib/lifecycle";
 import { meterStalled, stallLine } from "../../lib/meterStall";
-import { pricingHref } from "../../lib/proGate";
+import { pricingHref, showProGate } from "../../lib/proGate";
 import { HistoryWaitingCard, MeterStallCard, TrialEndingCard, TrialLine } from "./TrialCards";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { saveSeasonGoal, clearSeasonGoal } from "../../lib/seasonGoals";
-import { showProGate } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 
 // Start riding → the ride-day flow (feat/ride-day-flow). An open session
@@ -125,7 +124,7 @@ export function HomeV3() {
       loggedRef.current.add(module);
       void logEvent("home_module_viewed", { module, state, bike_id: data.bike?.id ?? null });
     }
-  }, [data]);
+  }, [data, ent.state]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -235,7 +234,7 @@ export function HomeV3() {
             </PhotoTile>
           </Row>
           <Bar pct={running ? data.meterPct : 0} dim={dayOne} />
-          <Label>{setupEyebrow(bike?.model, running ? (running.source === "baseline" && data.versions.length === 1 ? "Baseline" : "MX setup") : null, running?.version_number)}</Label>
+          <Label>{setupEyebrow(bike?.model, running ? data.runningSetupName ?? "Baseline" : null, running?.version_number)}</Label>
           {running ? (
             <Body weight={500} style={{ marginTop: 4 }}>
               {valuesSummary({

@@ -15,3 +15,20 @@ export function isUuid(v: unknown): v is string {
 export function asUuidOrNull(v: unknown): string | null {
   return isUuid(v) ? v : null;
 }
+
+/** A v4 uuid minted on the device, for rows the outbox upserts by primary
+ *  key (idempotent retries). expo-crypto when the binary has it, else a
+ *  Math.random fallback that is still a valid v4 shape. */
+export function newUuid(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const c = require("expo-crypto");
+    if (typeof c?.randomUUID === "function") return c.randomUUID();
+  } catch {
+    // fall through
+  }
+  const h = () => Math.floor(Math.random() * 16).toString(16);
+  const seg = (n: number) => Array.from({ length: n }, h).join("");
+  const y = (8 + Math.floor(Math.random() * 4)).toString(16);
+  return `${seg(8)}-${seg(4)}-4${seg(3)}-${y}${seg(3)}-${seg(12)}`;
+}

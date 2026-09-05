@@ -10,7 +10,8 @@ jest.mock("../lib/supabase", () => ({
     from: (table: string) => ({
       upsert: (row: any, opts: any) => {
         upserts.push({ table, row, opts });
-        return { select: () => ({ single: async () => ({ data: { id: table === "ride_days" ? "day-srv-1" : "moto-srv-1" }, error: null }) }) };
+        const res = { data: { id: table === "ride_days" ? "day-srv-1" : "moto-srv-1" }, error: null };
+        return Object.assign(Promise.resolve(res), { select: () => ({ single: async () => res }) });
       },
     }),
   },
@@ -39,7 +40,7 @@ const session: RideSession = {
   lastActiveAt: "2026-09-04T16:00:00.000Z",
   pending: [],
   motos: [
-    { seq: 1, loggedAt: "2026-09-04T16:30:00.000Z", sentiment: "better", symptoms: [], note: null, durationMin: 30, laps: null, values: {} as any, localId: "moto-local-1", serverId: null },
+    { seq: 1, loggedAt: "2026-09-04T16:30:00.000Z", sentiment: "better", symptoms: [{ id: "rear_kicks", qualifier: "Whoops", label: "Rear kicks" }], note: "loose out back", durationMin: 30, laps: null, values: {} as any, localId: "moto-local-1", serverId: null, feedbackId: "44444444-2222-4333-8444-555555555555" },
   ],
   suggestionShown: false,
   suggestionApplied: false,
@@ -53,8 +54,9 @@ beforeEach(async () => {
 test("ride_days and track_sessions upserts name the full (user_id, local_id) conflict target", async () => {
   await enqueue({ kind: "ride_day_upsert", localId: session.localId });
   await enqueue({ kind: "moto_insert", localId: session.localId, motoLocalId: "moto-local-1" });
+  await enqueue({ kind: "moto_feedback", localId: session.localId, motoLocalId: "moto-local-1" });
   const done = await flushOutbox(session);
-  expect(done).toBe(2);
+  expect(done).toBe(3);
   const day = upserts.find((u) => u.table === "ride_days");
   const moto = upserts.find((u) => u.table === "track_sessions");
   expect(day?.opts).toEqual({ onConflict: "user_id,local_id" });
@@ -62,4 +64,9 @@ test("ride_days and track_sessions upserts name the full (user_id, local_id) con
   expect(day?.row).toMatchObject({ user_id: session.userId, local_id: "day-local-1" });
   expect(moto?.row).toMatchObject({ user_id: session.userId, ride_day_id: "day-srv-1", local_id: "moto-local-1", duration_min: 30, laps: null });
   expect(session.serverId).toBe("day-srv-1");
+  // decision 3: one ride_feedback row per moto, upserted by its client-minted id
+  const fb = upserts.find((u) => u.table === "ride_feedback");
+  expect(fb?.opts).toEqual({ onConflict: "id" });
+  expect(fb?.row).toMatchObject({ id: "44444444-2222-4333-8444-555555555555", user_id: session.userId, setup_version_id: session.startingVersionId, overall_rating: expect.any(Number), free_text: "loose out back", created_at: "2026-09-04T16:30:00.000Z" });
+  expect(fb?.row.symptoms).toEqual([{ id: "rear_kicks", severity: expect.any(Number), where: "Whoops" }]);
 });

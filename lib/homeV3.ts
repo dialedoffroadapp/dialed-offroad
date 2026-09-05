@@ -3,6 +3,8 @@
 // mockups show derived from rows the app actually has. Every v3-only read
 // (bike extras, goal, next ride) is fail-open so the screen works before the
 // staged migration lands and offline (device cache).
+import { readHistory } from "./rideDay";
+import { readNamedSetups, readVersionSetupMap, runningSetup, setupsForBike } from "./bikeSetups";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { EMPTY_EXTRAS, readBikeExtras, type BikeExtras } from "./bikeExtras";
@@ -41,6 +43,8 @@ export type HomeV3Data = {
   photoUrl: string | null;
   versions: VersionWithFeedback[];
   running: VersionWithFeedback | null;
+  /** Name of the running setup ("Baseline", "Dunes setup"), from bike_setups. */
+  runningSetupName: string | null;
   feedback: RideFeedbackRow[];
   meterInputs: MeterInputs;
   meterPct: number;
@@ -78,6 +82,7 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
     photoUrl: null,
     versions: [],
     running: null,
+    runningSetupName: null,
     feedback: [],
     meterInputs: { hasBaseline: false, sagMeasured: false, ridesLogged: 0, refinements: 0, outcomesRecorded: 0 },
     meterPct: 0,
@@ -156,7 +161,15 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
     })(),
   ]);
   base.versions = versions;
-  base.running = versions[0] ?? null;
+  // Running = the is_running setup's newest version, exactly as Garage, the
+  // sheet and ride start define it (audit item 6); versions[0] was the newest
+  // across ALL setups and lost to a higher-numbered default once a named
+  // setup was running.
+  const [named, versionSetup] = await Promise.all([readNamedSetups(bike.id), readVersionSetupMap(bike.id)]);
+  const setups = setupsForBike(bike.id, named, versions, versionSetup);
+  const runningS = runningSetup(setups);
+  base.running = runningS?.running ?? versions[0] ?? null;
+  base.runningSetupName = runningS?.name ?? null;
   base.extras = extras;
   base.photoUrl = publicUrlForPath(extras.photoPath) ?? cachedPhoto;
 
@@ -182,10 +195,16 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
 
   const sagMeasured =
     versions.some((v) => v.sag_measured) || sessionsRes.some((s) => s.sag_measured === true);
+  // Ride days count as rides (decision 3): the archived ride days on this
+  // phone plus the server feedback rows (one per moto, upserted by id), merged
+  // without double counting.
+  const history = (await readHistory()).filter((h) => h.bike?.id === bike.id);
+  const seasonStartMs = startOfDay(new Date(year, 0, 1)).getTime();
+  const rideStats = homeRideStats(feedback, history, seasonStartMs);
   const inputs: MeterInputs = {
     hasBaseline: versions.length > 0,
     sagMeasured,
-    ridesLogged: feedback.length,
+    ridesLogged: rideStats.ridesAllTime,
     refinements: versions.filter((v) => v.source === "refinement").length,
     outcomesRecorded: feedback.filter((f) => !!f.outcome).length,
   };
@@ -196,19 +215,17 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
 
   base.story = buildStory(versions, feedbackByRidden);
   base.lastRide = lastRideRecap(feedback, versionsById);
-  base.dayOne = feedback.length === 0;
+  base.dayOne = rideStats.ridesAllTime === 0;
 
   if (base.lastRide?.unaddressedSymptom) {
     const sym = base.lastRide.unaddressedSymptom;
     base.suggestion = suggestionFor(sym, symptomWhere(feedback[0], sym));
   }
 
-  // This season: rides = feedback rows in the season; ride days = distinct
-  // local dates. Hours are rider-entered on the bike (v3 column).
-  const seasonStartMs = startOfDay(new Date(year, 0, 1)).getTime();
-  const inSeason = feedback.filter((f) => Date.parse(f.created_at) >= seasonStartMs);
-  const days = new Set(inSeason.map((f) => startOfDay(new Date(f.created_at)).getTime()));
-  base.seasonStats = { rideDays: days.size, ridesLogged: inSeason.length, hours: extras.hours };
+  // This season: rides and ride days from feedback + local history; engine
+  // hours are the ride days' hours THIS season, not the bike's lifetime meter
+  // (audit finding 27).
+  base.seasonStats = { rideDays: rideStats.rideDaysSeason, ridesLogged: rideStats.ridesSeason, hours: rideStats.hoursSeason };
 
   base.loadedAt = Date.now();
   return base;
@@ -248,4 +265,29 @@ export function useHomeV3() {
   }, []);
 
   return { data, loading, refresh, patch };
+}
+
+/** Pure: merge server feedback rows (one per debrief or per moto, keyed by
+ *  id) with archived ride days on this phone. A moto whose feedback row has
+ *  already synced is counted once (its feedbackId is the row id). */
+export function homeRideStats(
+  feedback: { id: string; created_at: string }[],
+  history: { startedAt: string; motos: { feedbackId?: string | null; loggedAt: string }[]; hoursAdded?: number | null }[],
+  seasonStartMs: number
+): { ridesAllTime: number; ridesSeason: number; rideDaysSeason: number; hoursSeason: number | null } {
+  const synced = new Set(feedback.map((f) => f.id));
+  const unsynced = history.flatMap((h) => h.motos.filter((m) => !m.feedbackId || !synced.has(m.feedbackId)));
+  const ridesAllTime = feedback.length + unsynced.length;
+  const inSeasonFeedback = feedback.filter((f) => Date.parse(f.created_at) >= seasonStartMs);
+  const inSeasonUnsynced = unsynced.filter((m) => Date.parse(m.loggedAt) >= seasonStartMs);
+  const days = new Set<number>();
+  for (const f of inSeasonFeedback) days.add(startOfDay(new Date(f.created_at)).getTime());
+  for (const h of history) if (Date.parse(h.startedAt) >= seasonStartMs) days.add(startOfDay(new Date(h.startedAt)).getTime());
+  const hours = history.filter((h) => Date.parse(h.startedAt) >= seasonStartMs).reduce((acc, h) => acc + (typeof h.hoursAdded === "number" ? h.hoursAdded : 0), 0);
+  return {
+    ridesAllTime,
+    ridesSeason: inSeasonFeedback.length + inSeasonUnsynced.length,
+    rideDaysSeason: days.size,
+    hoursSeason: history.length ? Math.round(hours * 10) / 10 : null,
+  };
 }
