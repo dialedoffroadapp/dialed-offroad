@@ -224,9 +224,10 @@ candidate in a 2h window).
   against the live DB.)*
 - **Supabase preview branch `dev-3-0` (created 2026-09-04, org on Pro):**
   ref `rxbagshvbavrqtirprdz`, persistent, cloned WITH prod data (auth users,
-  bikes, setup_versions, bike_models, migration history). ALL nine staged
-  3.0 migrations (`20260902100000`..`20260904160000`) are APPLIED THERE
-  (33 total), `ai-tune` deployed from the repo (v28). `scripts/dev-branch.sh`
+  bikes, setup_versions, bike_models, migration history). ALL twelve staged
+  3.0 migrations (`20260902100000`..`20260905120000`) are APPLIED THERE
+  (36 total; `20260905100000` suspect flags, `20260905110000` moto duration
+  and laps, `20260905120000` per-setup numbering indexes), `ai-tune` deployed from the repo (v28). `scripts/dev-branch.sh`
   is idempotent and refuses prod. Connection rules learned the hard way:
   the API-supplied branch password does not authenticate (a branch-scoped
   Management API reset was done; the password lives ONLY in
@@ -353,7 +354,7 @@ candidate in a 2h window).
   2026-09-04 on `feat/v3-integration`):** `20260902100000` (live 54 + quiz 8
   + paywall 3 = 65) then `20260904110000` (65 + Home/Garage 6 = 71). Never
   add a third re-add without carrying the full list — `20260904130000`
-  (ride day) is the current superset at 83.
+  (ride day) is the current superset at 94.
 - **Three different "trials" coexist:** the shipped onboarding `trial` step
   (paywall shown/declined, interstitial world; untouched), RevenueCat's store
   intro trial (`lib/trialStatus.ts`, legacy Home cards), and the 3.0
@@ -679,7 +680,7 @@ that change none of those skip it.)*
   `/ride/mode`; the Sessions tab leaves the bar behind the v3 flag. Two more
   STAGED migrations: `20260904120000` (tracks + `match_tracks`, ride_days,
   track_sessions, `setup_versions.ride_day_id`, `bikes.hours_updated_at`)
-  and `20260904130000` (events CHECK, now the full 83). No notification of
+  and `20260904130000` (events CHECK, now the full 94). No notification of
   any kind is tied to ride days; the only prompt is the in-app "Still
   riding?" after 12 h idle. Native lock-screen presence (Live Activity /
   foreground service) and voice are adapter stubs pending a native build.
