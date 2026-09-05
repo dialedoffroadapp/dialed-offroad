@@ -1,5 +1,5 @@
 // app/quiz/gate.tsx — the account gate (= the results_locked step's UI).
-// "YOUR TUNE IS READY / Save it to your garage to see it." Locked-row tune
+// "YOUR TUNE IS READY / Create a free account and it’s yours." Locked-row tune
 // card (no blur), Apple + Google, and email sign-up INLINE on this screen:
 // "Continue with email" expands the fields under the locked rows and the
 // primary button becomes "Create account and reveal" (no second screen, no
@@ -354,7 +354,7 @@ export default function QuizGateScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={[styles.title, displayFont("black")]}>Your tune is ready</Text>
-        <Text style={styles.subtitle}>Save it to your garage to see it.</Text>
+        <Text style={styles.subtitle}>Create a free account and it’s yours.</Text>
 
         <View style={styles.cardWrap}>
           <LockedTuneCard tune={tune} title={bikeName || undefined} />
@@ -505,7 +505,6 @@ export default function QuizGateScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Text style={[styles.footerLine, displayFont("bold")]}>Sign in and it’s saved to your garage. Free.</Text>
           <Text style={styles.terms}>
             By continuing you agree to our{" "}
             <Text style={styles.termsLink} onPress={() => router.push("/legal/terms" as never)}>
@@ -559,7 +558,6 @@ const styles = StyleSheet.create({
   emailLink: { alignItems: "center", paddingVertical: 8 },
   emailLinkText: { color: Q.STEEL, fontSize: 15, textDecorationLine: "underline" },
   footer: { marginTop: 14, alignItems: "center", gap: 8 },
-  footerLine: { color: Q.TEXT, fontSize: 14, letterSpacing: 0.3 },
   terms: { color: Q.STEEL, fontSize: 12, lineHeight: 17, textAlign: "center" },
   termsLink: { color: Q.STEEL, textDecorationLine: "underline" },
 });
