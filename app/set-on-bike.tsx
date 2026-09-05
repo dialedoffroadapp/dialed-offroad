@@ -1,21 +1,23 @@
 // app/set-on-bike.tsx — "Set it on the bike" first-run walkthrough (device
 // pass Garage findings, 2026-09-04). One card per adjuster in sheet order:
-// the number at 72pt, WHERE it is (photo slot + copy keyed by fork/shock
+// the number at 72pt, WHERE it is (a photo when one is registered for the
+// fork/shock family in lib/adjusterPhotos, else nothing, + copy keyed by
 // family), HOW to set it (count-from-closed), a Set button that advances,
-// progress segments, "Skip, I know my bike". Completing marks First Steps
-// step 2 done; skipping opens the plain sheet; returning riders (completed or
+// progress segments, a full-width ghost "Skip, I know my bike". Completing
+// marks First Steps step 2 done; skipping opens the plain sheet; returning riders (completed or
 // skipped) never see this again (Home routes them straight to the sheet).
 import { formatSetting } from "../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, Card, Eyebrow, Label, Small } from "../components/v3/primitives";
 import { headingFont, interFont, useV3Fonts, V3 } from "../components/v3/theme";
 import { ADJUSTERS, type AdjusterKey } from "../lib/adjusterCopy";
 import { forkFamilyFor, FORK_FAMILY_LABEL, locationCopy, shockFamilyFor, WALKTHROUGH_ORDER } from "../lib/adjusterLocations";
+import { adjusterPhoto } from "../lib/adjusterPhotos";
 import { runningSetup } from "../lib/bikeSetups";
 import { markSetOnBike, markWalkthroughSkipped } from "../lib/firstSteps";
 import { loadBikePage, loadBikes, loadUserAndPro } from "../lib/garageV3";
@@ -130,6 +132,7 @@ export default function SetOnBikeScreen() {
   const card = cards[i];
   const meta = ADJUSTERS[card.key];
   const copy = locationCopy(card.key, card.value, card.unit, fork, shock);
+  const photo = adjusterPhoto(card.key, fork, shock);
   const familyLabel = card.group === "Fork" ? FORK_FAMILY_LABEL[fork] : data.specs?.shock_type ?? "your shock";
   const bikeTitle = [data.bike.year, data.bike.make, data.bike.model].filter(Boolean).join(" ");
 
@@ -144,12 +147,10 @@ export default function SetOnBikeScreen() {
             <View key={c.key} style={[styles.segment, k <= i && styles.segmentOn]} />
           ))}
         </View>
-        <Pressable onPress={() => void onSkip()} hitSlop={10} accessibilityRole="button">
-          <Small style={{ color: V3.steel, textDecorationLine: "underline" }}>Skip, I know my bike</Small>
-        </Pressable>
+        <View style={{ width: 20 }} />
       </View>
 
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 120 + insets.bottom }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 184 + insets.bottom }]} showsVerticalScrollIndicator={false}>
         <Animated.View key={card.key} entering={FadeIn.duration(180)}>
           <Eyebrow>
             {i + 1} of {cards.length} · {card.group} · {bikeTitle}
@@ -162,10 +163,7 @@ export default function SetOnBikeScreen() {
 
           <Card style={{ marginTop: 18 }}>
             <Label style={{ marginBottom: 8 }}>Where it is · {familyLabel}</Label>
-            <View style={styles.photo} accessibilityLabel={`Photo placeholder ${copy.photo}`}>
-              <Ionicons name="camera-outline" size={22} color={V3.muted} />
-              <Small style={{ color: V3.muted, marginTop: 6, fontSize: 11 }}>photo coming</Small>
-            </View>
+            {photo ? <Image source={photo} style={styles.photoImg} resizeMode="cover" accessibilityLabel={`${meta.label} on ${familyLabel}`} /> : null}
             <Text style={[styles.body, interFont(400)]}>{copy.where}</Text>
           </Card>
 
@@ -181,6 +179,7 @@ export default function SetOnBikeScreen() {
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <Button label={i + 1 < cards.length ? "Set. Next" : "Set. Done"} onPress={() => void onSet()} icon={<Ionicons name="checkmark" size={18} color={V3.carbon} />} />
+        <Button label="Skip, I know my bike" ghost onPress={() => void onSkip()} style={{ marginTop: 10 }} />
       </View>
     </View>
   );
@@ -198,7 +197,7 @@ const styles = StyleSheet.create({
   valueRow: { flexDirection: "row", alignItems: "baseline", gap: 8, marginTop: 6 },
   value: { color: V3.white, fontSize: 72, lineHeight: 76, letterSpacing: -1 },
   unit: { color: V3.steel, fontSize: 18 },
-  photo: { height: 150, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  photoImg: { width: "100%", height: 180, borderRadius: 12, marginBottom: 12, backgroundColor: V3.panel },
   body: { color: V3.white, fontSize: 15, lineHeight: 22 },
   footer: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: V3.screenPadX, paddingTop: 10, backgroundColor: V3.carbon },
 });
