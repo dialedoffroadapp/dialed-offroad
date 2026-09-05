@@ -46,22 +46,13 @@ export type CurrentSetupState = {
 export const CIRCUIT_STEPS: Record<CircuitKey, { step: number; min: number; max: number; decimals: number }> = {
   fork_comp: { step: 1, min: 0, max: 40, decimals: 0 },
   fork_reb: { step: 1, min: 0, max: 40, decimals: 0 },
-  fork_air: { step: 0.1, min: 5, max: 15, decimals: 1 },
+  fork_air: { step: 0.1, min: 5, max: 15, decimals: 2 }, // engine emits two decimals; display via lib/format.ts
   shock_lsc: { step: 1, min: 0, max: 40, decimals: 0 },
   shock_hsc: { step: 0.25, min: 0, max: 4, decimals: 2 },
   shock_reb: { step: 1, min: 0, max: 40, decimals: 0 },
   shock_sag: { step: 1, min: 80, max: 130, decimals: 0 },
 };
 
-const EMPTY_SNAPSHOT: SettingsSnapshot = {
-  fork_comp: null,
-  fork_reb: null,
-  fork_air: null,
-  shock_lsc: null,
-  shock_hsc: null,
-  shock_reb: null,
-  shock_sag: null,
-};
 
 const keyFor = (bikeId: string) => `current_setup_v1:${bikeId}`;
 

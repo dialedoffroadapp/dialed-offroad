@@ -3,6 +3,7 @@
 // mode; the others re-run the deterministic rule base against the CURRENT
 // effective values and show old → new with a one-line reason. "Set it, back
 // to riding" applies pending deltas (still one settled version at End ride).
+import { formatSetting } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -21,7 +22,7 @@ import { applyDeltas, readOpenSession, rideEffective, type RideSession } from ".
 import { logEvent } from "../../lib/usage";
 
 const LABEL: Record<CircuitKey, string> = { fork_comp: "Fork comp", fork_reb: "Fork reb", fork_air: "Fork air", shock_lsc: "Shock LSC", shock_hsc: "Shock HSC", shock_reb: "Shock reb", shock_sag: "Sag" };
-const fmt = (v: number | null, k: CircuitKey) => (typeof v === "number" ? v.toFixed(CIRCUIT_STEPS[k].decimals) : "—");
+const fmt = (v: number | null, k: CircuitKey) => formatSetting(v, k);
 
 export default function RideRetuneScreen() {
   const router = useRouter();

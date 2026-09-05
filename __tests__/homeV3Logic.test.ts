@@ -80,7 +80,7 @@ describe("home copy", () => {
     expect(setupEyebrow("250 SX-F", null, 1)).toBe("250 SX-F · Baseline · v1");
   });
   test("values summary matches the mockup format", () => {
-    expect(valuesSummary({ fork_comp: 13, fork_reb: 12, shock_lsc: 11, shock_hsc: 1, shock_reb: 15, shock_sag: 105 })).toBe("Fork 13/12 · Shock 11/1.0/15 · Sag 105");
+    expect(valuesSummary({ fork_comp: 13, fork_reb: 12, shock_lsc: 11, shock_hsc: 1, shock_reb: 15, shock_sag: 105 })).toBe("Fork 13/12 · Shock 11/1/15 · Sag 105"); // shared formatter: whole turns show as integers (rule b)
     expect(valuesSummary({ fork_comp: null, shock_hsc: 1.5 })).toBe("Fork —/— · Shock —/1.5/— · Sag —");
   });
   test("goal, maintenance, next ride", () => {

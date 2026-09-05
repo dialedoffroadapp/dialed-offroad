@@ -5,6 +5,7 @@
 // progress segments, "Skip, I know my bike". Completing marks First Steps
 // step 2 done; skipping opens the plain sheet; returning riders (completed or
 // skipped) never see this again (Home routes them straight to the sheet).
+import { formatSetting } from "../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -19,29 +20,28 @@ import { runningSetup } from "../lib/bikeSetups";
 import { markSetOnBike, markWalkthroughSkipped } from "../lib/firstSteps";
 import { loadBikePage, loadBikes, loadUserAndPro } from "../lib/garageV3";
 
-type PageData = Awaited<ReturnType<typeof loadBikePage>>;
 import type { SetupVersionRow } from "../lib/setupVersions";
 import { logEvent } from "../lib/usage";
+
+type PageData = Awaited<ReturnType<typeof loadBikePage>>;
 
 const SHEET_ROUTE = "/setup-sheet";
 
 type CardDef = { key: AdjusterKey; value: string; unit: string; group: "Fork" | "Shock" };
 
-function fmt(v: number | null | undefined, digits: number): string | null {
-  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : null;
-}
-
 function cardsFor(v: SetupVersionRow, airFork: boolean): CardDef[] {
   const out: CardDef[] = [];
   for (const key of WALKTHROUGH_ORDER) {
     let value: string | null = null;
-    if (key === "fork_air") value = airFork ? fmt(v.fork_air_bar, 1) : null;
-    else if (key === "fork_comp") value = fmt(v.fork_comp_clicks, 0);
-    else if (key === "fork_reb") value = fmt(v.fork_reb_clicks, 0);
-    else if (key === "shock_sag") value = fmt(v.sag_mm, 0);
-    else if (key === "shock_lsc") value = fmt(v.shock_lsc_clicks, 0);
-    else if (key === "shock_hsc") value = fmt(v.shock_hsc_turns, 2)?.replace(/\.?0+$/, "") ?? null;
-    else if (key === "shock_reb") value = fmt(v.shock_reb_clicks, 0);
+    const raw =
+      key === "fork_air" ? (airFork ? v.fork_air_bar : null)
+      : key === "fork_comp" ? v.fork_comp_clicks
+      : key === "fork_reb" ? v.fork_reb_clicks
+      : key === "shock_sag" ? v.sag_mm
+      : key === "shock_lsc" ? v.shock_lsc_clicks
+      : key === "shock_hsc" ? v.shock_hsc_turns
+      : v.shock_reb_clicks;
+    value = typeof raw === "number" ? formatSetting(raw, key) : null;
     if (value === null) continue;
     out.push({ key, value, unit: ADJUSTERS[key].unit, group: key.startsWith("fork_") ? "Fork" : "Shock" });
   }

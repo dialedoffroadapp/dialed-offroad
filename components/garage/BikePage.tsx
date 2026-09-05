@@ -4,6 +4,7 @@
 // tiles, SETUPS list (running bordered + badged, dashed New setup = Pro),
 // SETUP STORY card with the two most-changed circuits, and the "Coming to
 // your garage" rows shown as "soon" only, never zero bars.
+import { formatSetting, formatValue } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
@@ -76,13 +77,12 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
     );
   }
 
-  const { bike, specs, extras, setups, isPro, story, versions } = data;
+  const { bike, specs, extras, setups, isPro, versions } = data;
   const running = runningSetup(setups);
   const asc = [...versions].reverse();
   const circuits = mostChangedCircuits(asc, 2);
   const forkType = specs?.fork_type ?? null;
   const title = [bike.year, bike.model].filter(Boolean).join(" ") || bike.nickname || "Your bike";
-  const bikeTitle = [bike.year, bike.make, bike.model].filter(Boolean).join(" ");
 
   // "New setup": the quiz's terrain tiles (discipline-aware), then the
   // drumroll and reveal; the setup is named from the terrain ("Dunes setup")
@@ -269,8 +269,8 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   );
 }
 
-const n = (x: number | null) => (typeof x === "number" ? String(Math.round(x)) : "—");
-const hsc = (x: number | null) => (typeof x === "number" ? (Number.isInteger(x) ? `${x}.0` : String(x)) : "—");
+const n = (x: number | null) => formatValue(x, 0);
+const hsc = (x: number | null) => formatSetting(x, "shock_hsc");
 const trim = (x: number) => (Number.isInteger(x) ? String(x) : String(x));
 
 const styles = StyleSheet.create({

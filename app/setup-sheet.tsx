@@ -5,6 +5,7 @@
 // labels, "What it does", "Why N for you", history line, tap-to-fix. One row
 // expanded at a time. A non-running setup shows deltas vs the RUNNING setup
 // (our own data) and "Run this setup".
+import { formatValue } from "../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -47,11 +48,11 @@ const SHOCK_ROWS: RowDef[] = [
   { key: "shock_spring", icon: "reload-outline", field: null, digits: 1, step: 0.5, min: 30, max: 80 },
   { key: "shock_sag", icon: "resize-outline", field: "sag_mm", digits: 0, step: 1, min: 80, max: 130 },
   { key: "shock_lsc", icon: "pulse-outline", field: "shock_lsc_clicks", digits: 0, step: 1, min: 0, max: 40, rangeKey: "shock_lsc" },
-  { key: "shock_hsc", icon: "flash-outline", field: "shock_hsc_turns", digits: 1, step: 0.25, min: 0, max: 5, rangeKey: "shock_hsc" },
+  { key: "shock_hsc", icon: "flash-outline", field: "shock_hsc_turns", digits: 2, step: 0.25, min: 0, max: 5, rangeKey: "shock_hsc" },
   { key: "shock_reb", icon: "return-up-back-outline", field: "shock_reb_clicks", digits: 0, step: 1, min: 0, max: 40, rangeKey: "shock_reb" },
 ];
 
-const fmt = (v: number | null, digits: number) => (typeof v === "number" ? (digits ? v.toFixed(digits) : String(Math.round(v))) : "—");
+const fmt = (v: number | null, digits: number) => formatValue(v, digits);
 
 export default function SetupSheetScreen() {
   useV3Fonts();
@@ -103,7 +104,7 @@ export default function SetupSheetScreen() {
   const { bike, specs, ranges, extras } = data;
   const airFork = typeof specs?.has_air_fork === "boolean" ? specs.has_air_fork : v?.fork_air_bar !== null && v?.fork_air_bar !== undefined;
   const forkSpring: RowDef = airFork
-    ? { key: "fork_air", icon: "speedometer-outline", field: "fork_air_bar", digits: 1, step: 0.1, min: 5, max: 15 }
+    ? { key: "fork_air", icon: "speedometer-outline", field: "fork_air_bar", digits: 2, step: 0.1, min: 5, max: 15 }
     : { key: "fork_spring", icon: "reload-outline", field: null, digits: 1, step: 0.1, min: 3, max: 7 };
   const rows: { title: string; icon: React.ComponentProps<typeof Ionicons>["name"]; defs: RowDef[] }[] = [
     { title: `Fork${specs?.fork_type ? ` · ${specs.fork_type}` : ""}`, icon: "arrow-down-outline", defs: [forkSpring, ...FORK_ROWS] },

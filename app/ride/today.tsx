@@ -3,6 +3,7 @@
 // 32pt numbers, changed rows old → new with a blue arrow, one sentence under
 // the headline. Tapping a changed row shows the reason. Applying creates no
 // version: the tweaks become the day's starting pending deltas.
+import { formatSetting } from "../../lib/format";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
@@ -31,7 +32,7 @@ const ROWS: { group: "Fork" | "Shock"; key: CircuitKey; label: string; unit?: st
   { group: "Shock", key: "shock_reb", label: "Rebound" },
 ];
 
-const fmt = (v: number | null, k: CircuitKey) => (typeof v === "number" ? v.toFixed(k === "fork_air" ? 1 : k === "shock_hsc" ? 1 : 0) : "—");
+const fmt = (v: number | null, k: CircuitKey) => formatSetting(v, k);
 
 export default function RideTodayScreen() {
   const router = useRouter();

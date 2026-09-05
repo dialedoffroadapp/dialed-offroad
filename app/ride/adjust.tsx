@@ -4,6 +4,7 @@
 // that saves and records the new ABSOLUTE value. "Different amount" opens a
 // stepper for that adjuster only. "Skip" moves on. Change sets come from the
 // engine (lib/rideAdjust.ts); ?manual=1 (or no signal) is the stepper list.
+import { formatSetting } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -24,7 +25,7 @@ import { logEvent } from "../../lib/usage";
 
 type Phase = "loading" | "changes" | "manual" | "error";
 
-const fmt = (v: number, k: CircuitKey) => v.toFixed(CIRCUIT_STEPS[k].decimals === 2 ? 2 : CIRCUIT_STEPS[k].decimals).replace(/\.?0+$/, (m) => (m.startsWith(".") && CIRCUIT_STEPS[k].decimals ? m.replace(/0+$/, "").replace(/\.$/, "") : ""));
+const fmt = (v: number, k: CircuitKey) => formatSetting(v, k);
 
 export default function RideAdjustScreen() {
   const router = useRouter();

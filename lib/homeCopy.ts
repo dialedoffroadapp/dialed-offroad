@@ -3,6 +3,7 @@
 // mockups' verbatim (design/mockups/01, 02); the dynamic ones follow the
 // same voice. Pure and testable. NO em dashes in user-facing copy (CLAUDE.md).
 
+import { formatSetting, formatValue } from "./format";
 const DAY = 24 * 60 * 60 * 1000;
 
 export function startOfDay(d: Date): Date {
@@ -61,9 +62,8 @@ export function valuesSummary(v: {
   shock_reb?: number | null;
   shock_sag?: number | null;
 }): string {
-  const n = (x: number | null | undefined, digits = 0) =>
-    typeof x === "number" && Number.isFinite(x) ? (digits ? x.toFixed(digits) : String(Math.round(x))) : "—";
-  const hsc = typeof v.shock_hsc === "number" ? (Number.isInteger(v.shock_hsc) ? `${v.shock_hsc}.0` : String(v.shock_hsc)) : "—";
+  const n = (x: number | null | undefined, digits = 0) => formatValue(x, digits);
+  const hsc = formatSetting(v.shock_hsc, "shock_hsc");
   return `Fork ${n(v.fork_comp)}/${n(v.fork_reb)} · Shock ${n(v.shock_lsc)}/${hsc}/${n(v.shock_reb)} · Sag ${n(v.shock_sag)}`;
 }
 

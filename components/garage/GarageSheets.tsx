@@ -1,6 +1,7 @@
 // components/garage/GarageSheets.tsx
 // Rider-input sheets for the Garage: engine hours (+ "just changed the
 // oil"), tire pressures, new named setup, add a bike, fix a number.
+import { formatValue } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import React, { useMemo, useState } from "react";
@@ -44,7 +45,7 @@ export function DecimalStepper({
           <Ionicons name="remove" size={22} color={V3.steel} />
         </Pressable>
         <Text style={[styles.stepValue, interFont(700)]}>
-          {value.toFixed(digits)}
+          {formatValue(value, digits)}
           <Text style={[styles.stepUnit, interFont(400)]}> {unit}</Text>
         </Text>
         <Pressable onPress={() => bump(step)} onLongPress={() => bump(step * 5)} accessibilityRole="button" accessibilityLabel="More" style={styles.stepBtn}>

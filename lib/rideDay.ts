@@ -9,6 +9,7 @@
 // Pending adjuster deltas reuse lib/currentSetup.ts's shapes (append-only
 // delta log over a base snapshot); End ride settles them into ONE manual
 // version on the ridden setup's lineage (plan 4.1 settle rule).
+import { roundToStep } from "./format";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   CIRCUIT_STEPS,
@@ -367,7 +368,9 @@ export async function applyDeltas(
     const cur = eff[d.circuit];
     if (typeof cur !== "number" || !d.delta) continue;
     const { min, max } = CIRCUIT_STEPS[d.circuit];
-    const clamped = Math.min(max, Math.max(min, cur + d.delta)) - cur;
+    // Stored at the circuit's step precision (audit item 8): raw float
+    // arithmetic put -0.1999999999999993 on the End ride timeline.
+    const clamped = roundToStep(Math.min(max, Math.max(min, cur + d.delta)) - cur, d.circuit);
     if (!clamped) continue;
     pending.push({ circuit: d.circuit, delta: clamped, at, kind, reason: d.reason ?? null, afterMoto: s.motos.length });
   }

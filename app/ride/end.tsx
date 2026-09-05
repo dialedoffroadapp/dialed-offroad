@@ -2,6 +2,7 @@
 // deltas into ONE manual version, adds elapsed time to bikes.hours, shows the
 // moto timeline, stats (editable ride time), the dialed delta, and offers
 // "Save as [track] baseline", "Just save", and Share.
+import { formatSetting } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState, useCallback } from "react";
@@ -189,7 +190,7 @@ export default function RideEndScreen() {
                 return (
                   <React.Fragment key={k}>
                     <Line x1={px} y1={22} x2={px} y2={62} stroke={V3.blue} strokeWidth={2} strokeDasharray="3 3" />
-                    <SvgText x={px} y={14} fontSize={10} fill={V3.blue} textAnchor="middle">{`${c.delta > 0 ? "+" : "−"}${Math.abs(c.delta)} ${CIRCUIT_LABELS[c.circuit].replace(/^(Fork|Shock) /, "").toLowerCase().replace("low speed comp", "LSC").replace("rebound", "reb")}`}</SvgText>
+                    <SvgText x={px} y={14} fontSize={10} fill={V3.blue} textAnchor="middle">{`${c.delta > 0 ? "+" : "−"}${formatSetting(Math.abs(c.delta), c.circuit)} ${CIRCUIT_LABELS[c.circuit].replace(/^(Fork|Shock) /, "").toLowerCase().replace("low speed comp", "LSC").replace("rebound", "reb")}`}</SvgText>
                   </React.Fragment>
                 );
               })}

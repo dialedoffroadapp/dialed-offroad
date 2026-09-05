@@ -4,6 +4,7 @@
 // Home / Start Riding. "saved on phone" reflects the local outbox. A session
 // idle 12+ hours gets the ONLY ride prompt there is: "Still riding?" with an
 // editable end time. No notifications of any kind.
+import { formatValue } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
@@ -28,10 +29,10 @@ import { updateRideActivity } from "../../lib/rideLiveActivity";
 import { gateIfLocked } from "../../lib/proGate";
 import { logEvent } from "../../lib/usage";
 
-const fmt = (v: number | null, d = 0) => (typeof v === "number" ? v.toFixed(d) : "—");
+const fmt = (v: number | null, digits = 0) => formatValue(v, digits);
 
 export function runningLine(v: ReturnType<typeof rideEffective>): string {
-  return `F ${fmt(v.fork_comp)} / ${fmt(v.fork_reb)} · S ${fmt(v.shock_lsc)} / ${fmt(v.shock_hsc, 1)} / ${fmt(v.shock_reb)}`;
+  return `F ${fmt(v.fork_comp)} / ${fmt(v.fork_reb)} · S ${fmt(v.shock_lsc)} / ${fmt(v.shock_hsc, 2)} / ${fmt(v.shock_reb)}`;
 }
 
 export default function RideModeScreen() {
