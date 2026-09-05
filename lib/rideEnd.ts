@@ -8,10 +8,9 @@ import { primarySurface } from "./rideConditions";
 import { readBikeExtras, saveBikeExtras } from "./bikeExtras";
 import { createManualVersion, createNamedSetup, readNamedSetups } from "./bikeSetups";
 import { computeMeter, type MeterInputs } from "./dialedMeter";
-import { archiveSession, elapsedMs, enqueue, flushOutbox, readHistory, rideEffective, writeSession, type RideSession } from "./rideDay";
+import { archiveSession, elapsedMs, enqueue, flushOutbox, loadStartingVersion, readHistory, rideEffective, settlePatch, settleSessionVersion, writeSession, type RideSession } from "./rideDay";
 import { endRideActivity } from "./rideLiveActivity";
-import type { SettingsSnapshot, SetupVersionRow } from "./setupVersions";
-import { supabase } from "./supabase";
+import type { SetupVersionRow } from "./setupVersions";
 import { resolveEntitlement, trialNearEnd } from "./entitlement";
 import { emitLifecycleEvent } from "./lifecycle";
 import { setSubscriberAttributes } from "./purchases";
@@ -23,6 +22,8 @@ export type SettleResult = {
   changedCircuits: number;
   hoursAdded: number;
   serverOk: boolean;
+  /** The settle is waiting in the outbox (offline at End ride). */
+  queued: boolean;
 };
 
 export function hoursFromMs(ms: number): number {
@@ -30,59 +31,28 @@ export function hoursFromMs(ms: number): number {
 }
 
 /** Which circuits differ between the starting base and the effective values. */
-export function settledDelta(s: RideSession): Partial<Record<keyof SettingsSnapshot, number>> {
-  const eff = rideEffective(s);
-  const out: Partial<Record<keyof SettingsSnapshot, number>> = {};
-  for (const k of Object.keys(eff) as (keyof SettingsSnapshot)[]) {
-    const a = s.base[k];
-    const b = eff[k];
-    if (typeof a === "number" && typeof b === "number" && a !== b) out[k] = Math.round((b - a) * 100) / 100;
-  }
-  return out;
-}
-
-async function loadStartingVersion(s: RideSession): Promise<SetupVersionRow | null> {
-  if (!s.startingVersionId) return null;
-  try {
-    const { data } = await supabase.from("setup_versions").select("*").eq("id", s.startingVersionId).maybeSingle();
-    return (data as unknown as SetupVersionRow) ?? null;
-  } catch {
-    return null;
-  }
-}
+export const settledDelta = settlePatch;
 
 /** Settle + hours. Idempotent per session (endedAt set once). */
 export async function settleRideDay(s: RideSession, rideHours: number): Promise<{ session: RideSession; result: SettleResult }> {
   const endedAt = s.endedAt ?? new Date().toISOString();
-  const delta = settledDelta(s);
-  const changed = Object.keys(delta).length;
+  const changed = Object.keys(settlePatch(s)).length;
   let version: SetupVersionRow | null = null;
   let serverOk = false;
-  if (changed > 0 && isUuid(s.bike.id)) {
+  let queued = false;
+  let settledVersionId: string | null = s.settledVersionId ?? null;
+  if (changed > 0 && isUuid(s.bike.id) && !settledVersionId) {
     try {
-      const from = await loadStartingVersion(s);
-      const eff = rideEffective(s);
-      version = await createManualVersion({
-        bikeId: s.bike.id,
-        setupId: s.setupId && isUuid(s.setupId) ? s.setupId : null,
-        from,
-        parentId: s.startingVersionId,
-        patch: {
-          fork_comp_clicks: eff.fork_comp,
-          fork_reb_clicks: eff.fork_reb,
-          fork_air_bar: eff.fork_air,
-          shock_lsc_clicks: eff.shock_lsc,
-          shock_hsc_turns: eff.shock_hsc,
-          shock_reb_clicks: eff.shock_reb,
-          sag_mm: eff.shock_sag,
-        },
-        terrain: primarySurface(s.conditions) ?? from?.terrain ?? null,
-        note: `Ride day settled${s.trackName ? ` at ${s.trackName}` : ""}: ${s.motos.length} ${s.motos.length === 1 ? "moto" : "motos"}, ${changed} ${changed === 1 ? "change" : "changes"}`,
-        ...(s.serverId ? { extra: { ride_day_id: s.serverId } } : {}),
-      });
-      serverOk = true;
+      version = await settleSessionVersion(s);
+      settledVersionId = version?.id ?? null;
+      serverOk = !!version;
     } catch (e) {
-      console.warn("[ride] settle failed (kept local)", e);
+      // Rule (a): never warn-and-continue. Queue the settle so the day's
+      // version lands when the device is back online; End ride's "syncs
+      // after the next update" line is true only on this path.
+      console.warn("[ride] settle failed, queued for the outbox", e);
+      await enqueue({ kind: "settle_version", localId: s.localId });
+      queued = true;
     }
   }
   // Hours: elapsed (editable) onto the bike.
@@ -92,11 +62,11 @@ export async function settleRideDay(s: RideSession, rideHours: number): Promise<
   } catch {
     // local cache still updated inside saveBikeExtras
   }
-  const session = await writeSession({ ...s, endedAt, hoursAdded: rideHours });
+  const session = await writeSession({ ...s, endedAt, hoursAdded: rideHours, settledVersionId, settlePending: queued });
   await enqueue({ kind: "ride_day_end", localId: s.localId });
   void flushOutbox(session);
   void endRideActivity();
-  return { session, result: { version, changedCircuits: changed, hoursAdded: rideHours, serverOk } };
+  return { session, result: { version, changedCircuits: changed, hoursAdded: rideHours, serverOk, queued } };
 }
 
 /** Meter before/after the day (rides + outcomes move it; the settled manual

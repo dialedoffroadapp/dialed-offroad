@@ -12,7 +12,7 @@ import { Eyebrow, Label, Small } from "../../components/v3/primitives";
 import { V3 } from "../../components/v3/theme";
 import { Cta, Hint, PickCard, RideH1, RideScreenBg } from "../../components/ride/ridePrimitives";
 import { conditionsComplete, conditionsSummary, primarySurface } from "../../lib/rideConditions";
-import { readDraft, readOpenSession, writeDraft, type RideDraft } from "../../lib/rideDay";
+import { readDraft, readEndedUnarchived, readOpenSession, writeDraft, type RideDraft } from "../../lib/rideDay";
 import { bikeLine, bikeSetupLine, defaultDraft, loadBikeChoices, type BikeChoice } from "../../lib/rideStart";
 import { supabase } from "../../lib/supabase";
 
@@ -31,6 +31,10 @@ export default function RideStartScreen() {
         const open = await readOpenSession();
         if (open) {
           router.replace("/ride/mode" as never);
+          return;
+        }
+        if (await readEndedUnarchived()) {
+          router.replace("/ride/end" as never);
           return;
         }
         const { data: auth } = await supabase.auth.getUser();

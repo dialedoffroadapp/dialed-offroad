@@ -17,9 +17,11 @@ jest.mock("../lib/supabase", () => ({
   },
 }));
 jest.mock("../lib/usage", () => ({ logEvent: jest.fn() }));
+const createManualVersion = jest.fn(async (_params: any) => ({ id: "v-settled", version_number: 3 }));
+jest.mock("../lib/bikeSetups", () => ({ createManualVersion: (p: any) => createManualVersion(p) }));
 
 /* eslint-disable import/first */
-import { enqueue, flushOutbox, type RideSession } from "../lib/rideDay";
+import { enqueue, flushOutbox, settlePatch, type RideSession } from "../lib/rideDay";
 
 const session: RideSession = {
   localId: "day-local-1",
@@ -69,4 +71,24 @@ test("ride_days and track_sessions upserts name the full (user_id, local_id) con
   expect(fb?.opts).toEqual({ onConflict: "id" });
   expect(fb?.row).toMatchObject({ id: "44444444-2222-4333-8444-555555555555", user_id: session.userId, setup_version_id: session.startingVersionId, overall_rating: expect.any(Number), free_text: "loose out back", created_at: "2026-09-04T16:30:00.000Z" });
   expect(fb?.row.symptoms).toEqual([{ id: "rear_kicks", severity: expect.any(Number), where: "Whoops" }]);
+});
+
+test("settle_version job: the day settles into ONE manual version from the outbox, idempotently", async () => {
+  const ended: RideSession = {
+    ...session,
+    localId: "day-local-2",
+    endedAt: "2026-09-04T19:00:00.000Z",
+    pending: [{ circuit: "fork_comp", delta: -2, at: "2026-09-04T17:00:00.000Z", kind: "adjust", reason: "Harsh", afterMoto: 1 }],
+  } as any;
+  expect(settlePatch(ended)).toEqual({ fork_comp: -2 });
+  await enqueue({ kind: "settle_version", localId: ended.localId });
+  expect(await flushOutbox(ended)).toBe(1);
+  expect(createManualVersion).toHaveBeenCalledTimes(1);
+  const call = createManualVersion.mock.calls[0][0] as any;
+  expect(call).toMatchObject({ bikeId: ended.bike.id, parentId: ended.startingVersionId, patch: { fork_comp_clicks: 10 } });
+  expect(ended.settledVersionId).toBe("v-settled");
+  // a second flush of the same session writes nothing
+  await enqueue({ kind: "settle_version", localId: ended.localId });
+  await flushOutbox(ended);
+  expect(createManualVersion).toHaveBeenCalledTimes(1);
 });

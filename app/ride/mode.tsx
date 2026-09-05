@@ -7,7 +7,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View, BackHandler } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomSheet } from "../../components/v3/BottomSheet";
 import { Chip, Eyebrow, Label, Small } from "../../components/v3/primitives";
@@ -59,6 +59,13 @@ export default function RideModeScreen() {
       return undefined;
     }, [load])
   );
+
+  // Hardware back never leaves ride mode (a persistent takeover); End ride is
+  // the only way out. gestureEnabled:false covers iOS only.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15000);

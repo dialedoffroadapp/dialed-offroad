@@ -4,8 +4,8 @@
 // "Save as [track] baseline", "Just save", and Share.
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import React, { useEffect, useState, useCallback } from "react";
+import { ActivityIndicator, BackHandler, Pressable, ScrollView, StyleSheet, View, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Text as SvgText } from "react-native-svg";
 import { useShareSetup } from "../../components/ShareSetupCard";
@@ -13,17 +13,15 @@ import { useToast } from "../../components/Toast";
 import { DecimalStepper } from "../../components/garage/GarageSheets";
 import { BottomSheet } from "../../components/v3/BottomSheet";
 import { Bar, Body, Card, Eyebrow, Label, Row, Small } from "../../components/v3/primitives";
-import { headingFont, V3 } from "../../components/v3/theme";
+import { headingFont, V3, interFont } from "../../components/v3/theme";
 import { Cta, Ghost, RideH1, RideScreenBg, Stat } from "../../components/ride/ridePrimitives";
 import { nextOilAt, oilIntervalFor, readBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
 import { loadBikePage, loadUserAndPro } from "../../lib/garageV3";
 import { shortDate } from "../../lib/homeCopy";
-import { elapsedMs, formatElapsed, readOpenSession, rideEffective, type RideSession } from "../../lib/rideDay";
+import { elapsedMs, formatElapsed, readSessionForEnd, rideEffective, type RideSession } from "../../lib/rideDay";
 import { finishRideDay, hoursFromMs, meterDelta, saveTrackBaseline, settleRideDay, type SettleResult } from "../../lib/rideEnd";
 import { CIRCUIT_LABELS } from "../../lib/rideAdjust";
 import type { MeterInputs } from "../../lib/dialedMeter";
-import { Text } from "react-native";
-import { interFont } from "../../components/v3/theme";
 
 const SENT_COLOR = { better: V3.blue, same: V3.steel, worse: "#E8253F" } as const;
 
@@ -42,11 +40,13 @@ export default function RideEndScreen() {
   const [editHours, setEditHours] = useState(false);
   const [settled, setSettled] = useState<SettleResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [settleError, setSettleError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      const open = await readOpenSession();
-      const closed = open ?? null;
+      // Read the session whether or not endedAt is already set (the
+      // forgotten-session prompt sets it before routing here).
+      const closed = await readSessionForEnd();
       if (!closed) return router.replace("/(tabs)" as never);
       setS(closed);
       setHours(hoursFromMs(elapsedMs(closed)));
@@ -65,16 +65,49 @@ export default function RideEndScreen() {
   }, [router]);
 
   // Settle once on arrival (idempotent: endedAt is set once).
-  useEffect(() => {
-    if (!s || settled || busy) return;
+  const runSettle = useCallback(async (session: RideSession) => {
     setBusy(true);
-    void settleRideDay(s, hours).then(({ session, result }) => {
-      setS(session);
+    setSettleError(null);
+    try {
+      const { session: next, result } = await settleRideDay(session, hours);
+      setS(next);
       setSettled(result);
+      // Hours changed during the settle: re-read so the stat and the ride-time
+      // editor start from the post-settle number (audit finding 22).
+      setExtras(await readBikeExtras(next.bike.id));
+    } catch (e: any) {
+      setSettleError(e?.message ?? "Couldn't settle the day.");
+    } finally {
       setBusy(false);
-    });
+    }
+  }, [hours]);
+
+  useEffect(() => {
+    if (!s || settled || busy || settleError) return;
+    void runSettle(s);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s?.localId]);
+
+  // Android hardware back: never drop a day mid-settle; after settle, leave
+  // the way "Just save" does not (the session stays for End ride next time).
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!settled || busy) return true;
+      router.replace("/(tabs)" as never);
+      return true;
+    });
+    return () => sub.remove();
+  }, [settled, busy, router]);
+
+  if (s && settleError && !settled) {
+    return (
+      <View style={[RideScreenBg({ out: true }), styles.center]}>
+        <Small style={{ textAlign: "center", marginBottom: 16, paddingHorizontal: 24 }}>{settleError} Your motos and changes are still on this phone.</Small>
+        <Cta label="Try again" onPress={() => void runSettle(s)} style={{ alignSelf: "stretch", marginHorizontal: 24 }} />
+        <Ghost thin label="Leave for now" onPress={() => router.replace("/(tabs)" as never)} style={{ marginTop: 10 }} />
+      </View>
+    );
+  }
 
   if (!s || !extras || !settled) {
     return (
@@ -99,8 +132,10 @@ export default function RideEndScreen() {
   const savedLine = settled.version
     ? `Saved as ${s.setupName} v${settled.version.version_number}${oilDue ? ` · oil is due, you're past ${nextOilAt(extras)}` : ""}`
     : settled.changedCircuits === 0
-      ? `No changes today. ${s.setupName} stays at v${s.startingVersionNumber ?? "—"}.`
-      : "Changes saved on this phone. They sync after the next update.";
+      ? `No changes today. ${s.setupName} stays ${typeof s.startingVersionNumber === "number" ? `at v${s.startingVersionNumber}` : "where it was"}.`
+      : settled.queued
+        ? "Changes saved on this phone. They sync after the next update."
+        : "Changes saved on this phone.";
 
   const done = async (how: "baseline" | "just_save") => {
     if (busy) return;

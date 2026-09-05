@@ -23,6 +23,8 @@ import { supabase } from "./supabase";
 import { logEvent } from "./usage";
 import { isUuid, newUuid } from "./uuid";
 import { ratingFor, severityFor } from "./rideSymptoms";
+import { createManualVersion } from "./bikeSetups";
+import { primarySurface } from "./rideConditions";
 
 export const RIDE_OPEN_KEY = "ride_day_open_v1";
 export const RIDE_DRAFT_KEY = "ride_day_draft_v1";
@@ -107,6 +109,10 @@ export type RideSession = {
   /** Meter % after End ride (meter-stall detection reads the last two). */
   /** Hours this ride day added to the bike (set at settle; season stats sum it). */
   hoursAdded?: number | null;
+  /** The manual version the day settled into (set on success, locally or by the outbox). */
+  settledVersionId?: string | null;
+  /** The settle failed on device (offline) and a settle_version job is queued. */
+  settlePending?: boolean;
   meterPct?: number | null;
 };
 
@@ -173,6 +179,94 @@ export async function readLastRide(): Promise<LastRide | null> {
 export async function readOpenSession(): Promise<RideSession | null> {
   const s = await readJson<RideSession>(RIDE_OPEN_KEY);
   return s && !s.endedAt ? s : null;
+}
+
+/** End ride's reader: the session in the open slot whether or not endedAt is
+ *  set. A session closed by the "Still riding?" prompt has endedAt already;
+ *  readOpenSession() hid it and End ride bounced to Home (audit item 7). */
+export async function readSessionForEnd(): Promise<RideSession | null> {
+  return readJson<RideSession>(RIDE_OPEN_KEY);
+}
+
+/** A session that ended but was never settled and archived (app killed on
+ *  End ride, Android back, the forgotten-session prompt). Home and Start
+ *  route it back to End ride instead of starting over it. */
+export async function readEndedUnarchived(): Promise<RideSession | null> {
+  const s = await readJson<RideSession>(RIDE_OPEN_KEY);
+  return s && s.endedAt ? s : null;
+}
+
+/** Patch the open session by re-reading it first (the flush used to write a
+ *  stale copy back over deltas appended meanwhile). Only the fields in the
+ *  patch change; lastActiveAt is untouched. */
+export async function patchOpenSession(localId: string, patch: (cur: RideSession) => RideSession): Promise<RideSession | null> {
+  const cur = await readJson<RideSession>(RIDE_OPEN_KEY);
+  if (!cur || cur.localId !== localId) return null;
+  const next = patch(cur);
+  await writeJson(RIDE_OPEN_KEY, next);
+  return next;
+}
+
+export async function patchHistorySession(localId: string, patch: (cur: RideSession) => RideSession): Promise<void> {
+  const history = (await readJson<RideSession[]>(RIDE_HISTORY_KEY)) ?? [];
+  const i = history.findIndex((h) => h.localId === localId);
+  if (i < 0) return;
+  history[i] = patch(history[i]);
+  await writeJson(RIDE_HISTORY_KEY, history);
+}
+
+/** The day's settled change set: which circuits differ between the starting
+ *  base and the effective values (moved here from rideEnd so the outbox can
+ *  settle without a circular import). */
+export function settlePatch(s: RideSession): Partial<Record<keyof SettingsSnapshot, number>> {
+  const eff = rideEffective(s);
+  const out: Partial<Record<keyof SettingsSnapshot, number>> = {};
+  for (const k of Object.keys(eff) as (keyof SettingsSnapshot)[]) {
+    const a = s.base[k];
+    const b = eff[k];
+    if (typeof a === "number" && typeof b === "number" && a !== b) out[k] = Math.round((b - a) * 100) / 100;
+  }
+  return out;
+}
+
+export async function loadStartingVersion(s: RideSession): Promise<SetupVersionRow | null> {
+  if (!s.startingVersionId) return null;
+  try {
+    const { data } = await supabase.from("setup_versions").select("*").eq("id", s.startingVersionId).maybeSingle();
+    return (data as unknown as SetupVersionRow) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Settle a session into ONE manual version (the settle rule). Used on
+ *  device at End ride and by the outbox's settle_version job when the device
+ *  was offline. Idempotent: a session with settledVersionId is left alone. */
+export async function settleSessionVersion(s: RideSession): Promise<SetupVersionRow | null> {
+  if (s.settledVersionId) return null;
+  const patch = settlePatch(s);
+  const changed = Object.keys(patch).length;
+  if (changed === 0 || !isUuid(s.bike.id)) return null;
+  const from = await loadStartingVersion(s);
+  const eff = rideEffective(s);
+  return createManualVersion({
+    bikeId: s.bike.id,
+    setupId: s.setupId && isUuid(s.setupId) ? s.setupId : null,
+    from,
+    parentId: s.startingVersionId,
+    patch: {
+      fork_comp_clicks: eff.fork_comp,
+      fork_reb_clicks: eff.fork_reb,
+      fork_air_bar: eff.fork_air,
+      shock_lsc_clicks: eff.shock_lsc,
+      shock_hsc_turns: eff.shock_hsc,
+      shock_reb_clicks: eff.shock_reb,
+      sag_mm: eff.shock_sag,
+    },
+    terrain: primarySurface(s.conditions) ?? from?.terrain ?? null,
+    note: `Ride day settled${s.trackName ? ` at ${s.trackName}` : ""}: ${s.motos.length} ${s.motos.length === 1 ? "moto" : "motos"}, ${changed} ${changed === 1 ? "change" : "changes"}`,
+    ...(s.serverId ? { extra: { ride_day_id: s.serverId } } : {}),
+  } as any);
 }
 
 export async function writeSession(s: RideSession): Promise<RideSession> {
@@ -338,6 +432,8 @@ export type OutboxJob =
   | { kind: "moto_insert"; localId: string; motoLocalId: string }
   /** One ride_feedback row per moto, upserted by its client-minted id. */
   | { kind: "moto_feedback"; localId: string; motoLocalId: string }
+  /** The day's ONE manual version, when the device was offline at End ride. */
+  | { kind: "settle_version"; localId: string }
   | { kind: "ride_day_end"; localId: string };
 
 export async function readOutbox(): Promise<OutboxJob[]> {
@@ -402,7 +498,8 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
           if (error) throw error;
           const serverId = (data as any)?.id as string;
           s.serverId = serverId;
-          if (open && open.localId === s.localId) await writeJson(RIDE_OPEN_KEY, { ...open, serverId });
+          if (open && open.localId === s.localId) await patchOpenSession(s.localId, (cur) => ({ ...cur, serverId }));
+          else await patchHistorySession(s.localId, (cur) => ({ ...cur, serverId }));
         } else if (job.kind === "moto_insert") {
           if (!s.serverId) throw new Error("ride day not synced yet");
           const moto = s.motos.find((m) => m.localId === job.motoLocalId);
@@ -430,8 +527,23 @@ export async function flushOutbox(sessionOverride?: RideSession | null): Promise
             .select("id")
             .single();
           if (error) throw error;
-          moto.serverId = (data as any)?.id ?? null;
-          if (open && open.localId === s.localId) await writeJson(RIDE_OPEN_KEY, open);
+          const motoServerId = ((data as any)?.id as string | null) ?? null;
+          moto.serverId = motoServerId;
+          const stamp = (cur: RideSession): RideSession => ({ ...cur, motos: cur.motos.map((m) => (m.localId === moto.localId ? { ...m, serverId: motoServerId } : m)) });
+          if (open && open.localId === s.localId) await patchOpenSession(s.localId, stamp);
+          else await patchHistorySession(s.localId, stamp);
+        } else if (job.kind === "settle_version") {
+          if (s.settledVersionId) {
+            done += 1;
+            continue;
+          }
+          const version = await settleSessionVersion(s);
+          const vid = version?.id ?? null;
+          s.settledVersionId = vid;
+          s.settlePending = false;
+          const stamp = (cur: RideSession): RideSession => ({ ...cur, settledVersionId: vid, settlePending: false });
+          if (open && open.localId === s.localId) await patchOpenSession(s.localId, stamp);
+          else await patchHistorySession(s.localId, stamp);
         } else if (job.kind === "moto_feedback") {
           const moto = s.motos.find((m) => m.localId === job.motoLocalId);
           // No feedback id (pre-change moto) or no real version to key on: nothing to write, drop the job.

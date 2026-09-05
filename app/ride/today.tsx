@@ -112,7 +112,9 @@ export default function RideTodayScreen() {
       let s = await startSession(draft, auth?.user?.id ?? null);
       s = { ...s, suggestionShown: rules.deltas.length > 0 || tires.changed, suggestionApplied: rules.deltas.length > 0 || tires.changed };
       if (rules.deltas.length) s = await applyDeltas(s, rules.deltas, "conditions");
-      if (tires.changed && (typeof tires.front === "number" || typeof tires.rear === "number")) {
+      // Decision 5: a rule-base DEFAULT is shown, never written to the bike;
+      // only a rider-saved value (plus today's delta) persists.
+      if (tires.changed && tires.source === "saved" && (typeof tires.front === "number" || typeof tires.rear === "number")) {
         await saveBikeExtras(draft.bike!.id, { tireFrontPsi: tires.front, tireRearPsi: tires.rear });
       }
       void startRideActivity({ startedAt: s.startedAt, track: s.trackName });
