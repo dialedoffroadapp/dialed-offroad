@@ -12,11 +12,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../Toast";
 import { Bar, Big, Card, ComingRow, Eyebrow, H1, Label, PhotoTile, Row, SetupRow, Small, Tile } from "../v3/primitives";
 import { useV3Fonts, V3 } from "../v3/theme";
-import { HoursSheet, NewSetupSheet, TiresSheet } from "./GarageSheets";
+import { HoursSheet, RenameSetupSheet, TiresSheet } from "./GarageSheets";
 import { mostChangedCircuits, GRAPH_LABELS, VersionGraph } from "./VersionGraph";
 import { nextOilAt, oilIntervalFor, saveBikeExtras } from "../../lib/bikeExtras";
 import { pickAndUploadBikePhoto } from "../../lib/bikePhoto";
-import { createNamedSetup, runningSetup } from "../../lib/bikeSetups";
+import { runningSetup, renameSetup } from "../../lib/bikeSetups";
+import { startGarageQuizFlow } from "../../lib/quizOnboarding";
 import { meterCaption } from "../../lib/dialedMeter";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../../lib/garageV3";
 import { shortDate } from "../../lib/homeCopy";
@@ -36,8 +37,8 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   const [missing, setMissing] = useState(false);
   const [hoursOpen, setHoursOpen] = useState(false);
   const [tiresOpen, setTiresOpen] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -83,6 +84,21 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   const title = [bike.year, bike.model].filter(Boolean).join(" ") || bike.nickname || "Your bike";
   const bikeTitle = [bike.year, bike.make, bike.model].filter(Boolean).join(" ");
 
+  // "New setup": the quiz's terrain tiles (discipline-aware), then the
+  // drumroll and reveal; the setup is named from the terrain ("Dunes setup")
+  // and renameable here (long-press the row). Keeps "starts from [running]".
+  const onNewSetup = async () => {
+    const run = running?.running ?? null;
+    const first = await startGarageQuizFlow("new_setup", {
+      bikeId: bike.id,
+      make: bike.make ?? undefined,
+      model: bike.model ?? undefined,
+      year: bike.year ?? undefined,
+      fromVersionId: run?.id ?? null,
+      fromLabel: running && run ? `${running.name} v${run.version_number}` : null,
+    });
+    router.push(first as never);
+  };
   const gatePro = (source: string, trigger: "setup_history" | "second_setup" = "setup_history"): boolean => {
     if (isPro) return true;
     void logEvent("history_gate_hit", { bike_id: bike.id, version_count: versions.length, source, paywall_trigger_action: trigger });
@@ -170,10 +186,11 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
                 if (locked && !gatePro("named_setup", "second_setup")) return;
                 router.push({ pathname: SETUP_SHEET_ROUTE, params: { bikeId: bike.id, setupId: s.id ?? "default" } } as never);
               }}
+              onLongPress={s.id ? () => setRenaming({ id: s.id as string, name: s.name }) : undefined}
             />
           );
         })}
-        <Card variant="dashed" style={{ paddingVertical: 12, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6 }} onPress={() => gatePro("second_setup", "second_setup") && setNewOpen(true)} accessibilityLabel="New setup, Pro">
+        <Card variant="dashed" style={{ paddingVertical: 12, alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 6 }} onPress={() => gatePro("second_setup", "second_setup") && void onNewSetup()} accessibilityLabel="New setup, Pro">
           <Ionicons name="add" size={16} color={V3.blue} />
           <Small style={{ fontSize: 13 }}>New setup</Small>
           {!isPro ? <Ionicons name="lock-closed" size={12} color={V3.steel} /> : null}
@@ -227,27 +244,18 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
           setData({ ...data, extras: next });
         }}
       />
-      <NewSetupSheet
-        key={`n-${newOpen}`}
-        open={newOpen}
-        onClose={() => setNewOpen(false)}
-        fromVersionLabel={running?.running ? `${running.name} v${running.running.version_number}` : null}
-        onCreate={async (p) => {
-          setNewOpen(false);
-          const res = await createNamedSetup({ bikeId: bike.id, name: p.name, terrain: p.terrain, from: running?.running ?? null });
-          toast.show(res.serverOk ? `${p.name} created. Build its tune.` : `${p.name} saved on this phone. Syncs after the next update.`, { kind: res.serverOk ? "success" : "info" });
+      <RenameSetupSheet
+        key={`r-${renaming?.id ?? "none"}`}
+        open={!!renaming}
+        initialName={renaming?.name ?? ""}
+        onClose={() => setRenaming(null)}
+        onRename={async (name) => {
+          const target = renaming;
+          setRenaming(null);
+          if (!target) return;
+          const ok = await renameSetup(bike.id, target.id, name);
+          toast.show(ok ? "Renamed" : "Renamed on this phone. Syncs after the next update.", { kind: ok ? "success" : "info" });
           void load();
-          // Door into the relocated Tune flow: bike + setup + terrain pre-filled.
-          // A local_* setup id (offline) is dropped by the version writer, so the
-          // baseline lands on the default setup until sync; acceptable.
-          router.push({
-            pathname: TUNE_ROUTE,
-            params: {
-              bikeId: bike.id,
-              setupId: res.setup.id,
-              ...(p.terrain ? { prefill: encodeURIComponent(JSON.stringify({ terrain: p.terrain })) } : {}),
-            },
-          } as never);
         }}
       />
       {photoBusy ? (
