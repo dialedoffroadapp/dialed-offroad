@@ -188,8 +188,9 @@ export async function generateTune(
   input: ZeroTuneInput,
   sagBounds: SagBounds = DEFAULT_SAG,
   // Spec-verified fork type (bike_models.has_air_fork). When boolean it is
-  // authoritative on the edge — the rider toggle and the model-name heuristic
-  // only decide for unmatched bikes.
+  // authoritative on the edge; the rider's explicit toggle decides for
+  // unmatched bikes. There is no name-based guess any more (decision 1,
+  // 2026-09-05): an unmatched bike with the toggle off is coil.
   hasAirFork?: boolean
 ): Promise<ZeroTuneResult> {
   // Pre-auth attribution (Workstream C): signed-out callers send the device's

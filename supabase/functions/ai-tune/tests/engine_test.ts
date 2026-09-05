@@ -572,3 +572,38 @@ Deno.test("12. a failed tune_calls insert aborts the call: 503, no tune served (
   );
   assertEquals(r2.status, 503);
 });
+
+/* ---------------- Test 13: fork type is catalog flag or rider toggle, never the name ---------------- */
+// Decision 1 (2026-09-05). Runs the anon baseline through the fallback path
+// (no OPENAI_API_KEY in the test env), which is where the retired name
+// heuristic lived.
+
+Deno.test("13. fork type: catalog flag > rider toggle; a KTM SX name alone is coil", async () => {
+  const h = makeHandler(deps({ getUserId: () => Promise.resolve(null) }));
+  const call = async (input: Record<string, unknown>) => {
+    const resp = await h(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, ...input } }, ""));
+    assertEquals(resp.status, 200);
+    return await resp.json();
+  };
+
+  // Unmatched "KTM 250 SX-F", no toggle: the old heuristic said air; now coil.
+  const named = await call({ make: "KTM", model: "250 SX-F", year: 2023 });
+  assertEquals(named.fork.air_pressure_bar, undefined);
+  assertEquals(named.detected.has_air_fork, false);
+
+  // A mini with the toggle off is coil (the 1.5-bar class).
+  const mini = await call({ make: "KTM", model: "50 SX", year: 2025 });
+  assertEquals(mini.fork.air_pressure_bar, undefined);
+
+  // The rider's explicit toggle still counts for an unmatched bike.
+  const toggled = await call({ make: "KTM", model: "250 SX-F", year: 2023, wants_air_fork: true });
+  assert(typeof toggled.fork.air_pressure_bar === "number", "toggle should yield air");
+  assertEquals(toggled.detected.has_air_fork, true);
+
+  // The catalog flag beats the toggle both ways.
+  const catalogAir = await call({ make: "Yamaha", model: "YZ250F", year: 2024, wants_air_fork: false, guardrails: { ...GUARDRAILS, has_air_fork: true } });
+  assert(typeof catalogAir.fork.air_pressure_bar === "number", "catalog air should yield air");
+  const catalogCoil = await call({ make: "KTM", model: "250 SX-F", year: 2023, wants_air_fork: true, guardrails: { ...GUARDRAILS, has_air_fork: false } });
+  assertEquals(catalogCoil.fork.air_pressure_bar, undefined);
+  assertEquals(catalogCoil.detected.has_air_fork, false);
+});

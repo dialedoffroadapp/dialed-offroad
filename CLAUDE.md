@@ -302,9 +302,13 @@ candidate in a 2h window).
   undefined value — `JSON.stringify` drops it and you get the malformed
   `{"context": null}` rows already seen in prod.
 - **Verified `bike_models.has_air_fork` is authoritative for fork type** —
-  end-to-end (client override, guardrails, edge `safeShape`/fallback/prompt).
-  The `isAERFork` name heuristic and the rider toggle decide only for unmatched
-  bikes. Same pattern for sag: per-model bounds/target from `lib/sagBounds.ts`
+  end-to-end (client override, guardrails, edge `resolveAirFork`/fallback/prompt).
+  For unmatched bikes ONLY the rider's explicit toggle decides; the name-based
+  `isAERFork` heuristic was REMOVED 2026-09-05 (decision 1: it air-forked
+  minis and shipped 1.5-bar tunes) and the LLM is told never to guess. A
+  baseline on a bike that is neither catalog-air nor toggle-air ships with no
+  air value even if the model invented one. Migration `20260906100000`
+  (STAGED) nulls the five mini versions that carried 1.5 to 1.8 bar. Same pattern for sag: per-model bounds/target from `lib/sagBounds.ts`
   ride guardrails; client and edge clamp to the SAME window.
 
 ## Landmines

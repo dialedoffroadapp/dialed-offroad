@@ -183,10 +183,15 @@ function clampFloat(n: number, lo: number, hi: number): number {
   return clamp(n, lo, hi);
 }
 
-function isAERFork(make?: string, model?: string) {
-  const s = `${make ?? ""} ${model ?? ""}`.toLowerCase();
-  // Heuristic: KTM/Husqvarna/GASGAS MX models (XACT AER)
-  return /(ktm|husqvarna|gasgas)/.test(s) && /(sx|fc|mc)/.test(s);
+/** Fork type (decision 1, 2026-09-05): the verified catalog flag when the
+ *  client sent one, else the rider's explicit toggle. No name guessing: the
+ *  retired heuristic called every KTM/Husqvarna/GasGas with SX, FC or MC in
+ *  its name an air fork, minis included, and shipped 1.5-bar tunes on 50s
+ *  and 85s. Unmatched bikes are coil unless the rider says otherwise. */
+export function resolveAirFork(z: ZeroInput["input"]): boolean {
+  const spec = z.guardrails?.has_air_fork;
+  if (typeof spec === "boolean") return spec;
+  return z.wants_air_fork === true;
 }
 
 /* ---------------------- Baseline helpers (discipline/weight/etc.) ---------------------- */
@@ -582,10 +587,13 @@ function buildSystemPrompt(z: ZeroInput["input"]): string {
             ? "- This bike is confirmed to have a WP AER/XACT-style air fork — include fork.air_pressure_bar and set detected.has_air_fork to true."
             : "- This bike is confirmed to have a COIL fork — do NOT include fork.air_pressure_bar and do not mark it as an air fork.",
         ]
-      : [
-          "- If the bike is likely to have WP AER/XACT air forks OR the user indicates they have an air fork, you may include fork.air_pressure_bar.",
-          "- If you are not confident it's an air fork and the user did not say it is, omit air_pressure_bar.",
-        ]),
+      : z.wants_air_fork === true
+        ? [
+            "- The rider states this bike runs an air fork: include fork.air_pressure_bar and set detected.has_air_fork to true.",
+          ]
+        : [
+            "- Treat this bike as a COIL fork: do NOT include fork.air_pressure_bar and do not mark it as an air fork. Never guess an air fork from the model name.",
+          ]),
     "- Never suggest internal revalving, oil changes, or hardware modifications; only clicker changes, sag target, and (if applicable) air pressure guidance.",
     "",
     "Tuning priorities:",
@@ -817,14 +825,9 @@ function buildPersonalBaselineNotes(
 function buildFallback(z: ZeroInput["input"]): Partial<ZeroResult> {
   const discipline = inferDiscipline(z);
 
-  // Spec-verified fork type (guardrails) is authoritative; the user toggle
-  // and the model-name heuristic only decide for unmatched bikes.
+  // Catalog flag, else the rider's toggle. Never the model name.
   const specAER = z.guardrails?.has_air_fork;
-  const heuristicAER = isAERFork(z.make, z.model);
-  const hasAER =
-    typeof specAER === "boolean"
-      ? specAER
-      : z.wants_air_fork === true || heuristicAER;
+  const hasAER = resolveAirFork(z);
 
   const forkClicks = baselineForkClicks(z, discipline);
   const shockClicks = baselineShock(z, discipline);
@@ -845,7 +848,7 @@ function buildFallback(z: ZeroInput["input"]): Partial<ZeroResult> {
     },
     detected: {
       has_air_fork: hasAER,
-      fork_family: hasAER ? "WP XACT AER 48 (heuristic)" : undefined,
+      fork_family: hasAER ? (typeof specAER === "boolean" ? "Air fork (catalog)" : "Air fork (rider-set)") : undefined,
     },
     notes: [],
   };
@@ -2153,6 +2156,14 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
             ...(partial.notes ?? []),
             "OPENAI_API_KEY not set — using safe baseline.",
           ];
+        }
+
+        // Fork type is decided by the catalog flag or the rider's toggle, never
+        // by the model (decision 1): a coil bike ships with no air value even
+        // when the LLM invented one.
+        if (!resolveAirFork(z)) {
+          if (partial.fork) delete partial.fork.air_pressure_bar;
+          partial.detected = { ...(partial.detected ?? {}), has_air_fork: false };
         }
 
         // Enforce guardrails & shape
