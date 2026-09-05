@@ -145,13 +145,62 @@ function RootInner() {
   // NOT appear after onboarding has been completed (or the intro has been
   // seen) — otherwise it re-shows on every cold start because pathname "/"
   // matches both the boot resolver AND the (tabs)/index Home tab.
-  const shouldShowOnboardingOverlay =
+  /** The intro's finish sequence (state machine intro → garage_locked, the
+   *  intro event, the first route). Shared by the legacy slides and the quiz
+   *  world's silent skip: under the quiz flag the slides no longer render,
+   *  because the quiz IS the first-run experience (River, 2026-09-04). */
+  const finishIntro = async (skipped: boolean) => {
+    // Persist state before navigating so cold-start resume lands correctly.
+    // (onboardingActive derives from this committed step, so Garage sees
+    // it as true on its first render — no explicit activation needed.)
+    await markIntroSeen();
+    await setStep("garage_locked");
+    // Fire-and-forget so it never delays the intro→garage transition;
+    // guests are session-less here, so it queues and flushes at signup
+    // (the same path onboarding_tune_generated already relies on).
+    void (async () => {
+      const funnelId = await getOrCreateFunnelId();
+      await logEvent(
+        "onboarding_intro_completed",
+        {
+          skipped,
+          funnel_id: funnelId,
+          onboarding_step: state.onboardingStep,
+          signed_in: false,
+          source_route: "/",
+        },
+        { allowAnonymous: true, queueIfAnonymous: true }
+      );
+    })();
+    // Navigate first, then remove the overlay — both are synchronous
+    // calls after the awaits so React 18 batches them in one render.
+    // This means the overlay never disappears before the new screen
+    // is committed, eliminating the blank "/" flash.
+    // Quiz onboarding (feat/quiz-onboarding): same state-machine step,
+    // different UI for it — the quiz owns garage_locked + tune.
+    router.replace(
+      (QUIZ_ONBOARDING_ENABLED ? "/quiz" : "/(tabs)/garage") as never
+    );
+    setShowOnboardingOverlay(false);
+  };
+
+  const introPending =
     hydrated &&
     !state.onboardingComplete &&
     !state.hasSeenIntro &&
     showOnboardingOverlay &&
     pathname === "/" &&
     !isRecoveryRoute;
+  // Legacy slides render only in the pre-quiz world.
+  const shouldShowOnboardingOverlay = introPending && !QUIZ_ONBOARDING_ENABLED;
+  // Quiz world: skip the slides but keep the state machine honest.
+  const introSkipRef = React.useRef(false);
+  useEffect(() => {
+    if (!QUIZ_ONBOARDING_ENABLED || !introPending || introSkipRef.current) return;
+    introSkipRef.current = true;
+    void finishIntro(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [introPending]);
 
   // ——— Trial prompt modal for existing signed-in non-pro users ———
   const [showTrialModal, setShowTrialModal] = useState(false);
@@ -363,39 +412,7 @@ function RootInner() {
       {shouldShowOnboardingOverlay && (
         <View style={StyleSheet.absoluteFillObject} pointerEvents="auto">
           <Onboarding
-            onFinish={async () => {
-              // Persist state before navigating so cold-start resume lands correctly.
-              // (onboardingActive derives from this committed step, so Garage sees
-              // it as true on its first render — no explicit activation needed.)
-              await markIntroSeen();
-              await setStep("garage_locked");
-              // Fire-and-forget so it never delays the intro→garage transition;
-              // guests are session-less here, so it queues and flushes at signup
-              // (the same path onboarding_tune_generated already relies on).
-              void (async () => {
-                const funnelId = await getOrCreateFunnelId();
-                await logEvent(
-                  "onboarding_intro_completed",
-                  {
-                    funnel_id: funnelId,
-                    onboarding_step: state.onboardingStep,
-                    signed_in: false,
-                    source_route: "/",
-                  },
-                  { allowAnonymous: true, queueIfAnonymous: true }
-                );
-              })();
-              // Navigate first, then remove the overlay — both are synchronous
-              // calls after the awaits so React 18 batches them in one render.
-              // This means the overlay never disappears before the new screen
-              // is committed, eliminating the blank "/" flash.
-              // Quiz onboarding (feat/quiz-onboarding): same state-machine step,
-              // different UI for it — the quiz owns garage_locked + tune.
-              router.replace(
-                (QUIZ_ONBOARDING_ENABLED ? "/quiz" : "/(tabs)/garage") as never
-              );
-              setShowOnboardingOverlay(false);
-            }}
+            onFinish={() => finishIntro(false)}
           />
         </View>
       )}
