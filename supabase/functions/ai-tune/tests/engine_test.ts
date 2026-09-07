@@ -695,3 +695,52 @@ Deno.test("21. rider.issues is capped before storage and prompting; notes are st
   const shaped = safeShape({ fork: { comp_clicks: 12, reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, notes: ["ok", "visit www.evil.example now", 7] } as any, GUARDRAILS);
   assertEquals(shaped.notes, ["ok", "visit now"]);
 });
+
+/* ---------------- Test 22: recordOutput carries duration, engine_source and token usage (decision 13) ---------------- */
+
+Deno.test("22. recordOutput meta: duration_ms, engine_source per path, usage only when a model request ran", async () => {
+  const seen: any[] = [];
+  const h = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      recordCall: () => Promise.resolve(41),
+      recordOutput: (_id, _out, meta) => {
+        seen.push(meta);
+        return Promise.resolve();
+      },
+    })
+  );
+  assertEquals((await h(fakeReq({ mode: "zero_baseline_v1", input: BASELINE }, ""))).status, 200);
+  assertEquals(seen[0].engine_source, "formula"); // no key in the test env
+  assert(typeof seen[0].duration_ms === "number" && seen[0].duration_ms >= 0);
+  assertEquals(seen[0].prompt_tokens, null); // no model request was made
+
+  // tune2: deterministic; a parse dep that reports usage through the meter is summed.
+  const h2 = makeHandler(
+    deps({
+      recordCall: () => Promise.resolve(42),
+      recordOutput: (_id, _out, meta) => {
+        seen.push(meta);
+        return Promise.resolve();
+      },
+      parseFreeText: (_text, meter) => {
+        if (meter) {
+          meter.requests += 1;
+          meter.prompt_tokens += 120;
+          meter.completion_tokens += 30;
+        }
+        return Promise.resolve({ symptoms: [], protected: [] });
+      },
+    })
+  );
+  const r2 = await h2(
+    fakeReq({
+      mode: "tune2_v1",
+      input: { ...BASELINE, previous: PREV_AIR, feedback: { overall_rating: 6, free_text: "loose out back", symptoms: [{ id: "headshake", severity: 5 }] } },
+    })
+  );
+  assertEquals(r2.status, 200);
+  assertEquals(seen[1].engine_source, "deterministic");
+  assertEquals(seen[1].prompt_tokens, 120);
+  assertEquals(seen[1].completion_tokens, 30);
+});

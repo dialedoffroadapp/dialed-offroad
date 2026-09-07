@@ -696,8 +696,25 @@ function buildUserPrompt(z: ZeroInput["input"]): string {
 
 /* ---------------------------- OpenAI call (baseline refinement only) ---------------------------- */
 
+/** Per-request token accounting (decision 13): every model request on the
+ *  call adds its usage here; recordOutput stores the sums. */
+export type UsageMeter = { prompt_tokens: number; completion_tokens: number; requests: number };
+export function newUsageMeter(): UsageMeter {
+  return { prompt_tokens: 0, completion_tokens: 0, requests: 0 };
+}
+function addUsage(meter: UsageMeter | undefined, json: any): void {
+  if (!meter) return;
+  meter.requests += 1;
+  const u = json?.usage;
+  if (u && typeof u === "object") {
+    meter.prompt_tokens += Number(u.prompt_tokens) || 0;
+    meter.completion_tokens += Number(u.completion_tokens) || 0;
+  }
+}
+
 async function callOpenAI(
-  z: ZeroInput["input"]
+  z: ZeroInput["input"],
+  meter?: UsageMeter
 ): Promise<Partial<ZeroResult>> {
   const system = buildSystemPrompt(z);
   const user = buildUserPrompt(z);
@@ -756,6 +773,7 @@ async function callOpenAI(
   }
 
   const json = await resp.json();
+  addUsage(meter, json);
   const content: string =
     json?.choices?.[0]?.message?.content ??
     json?.choices?.[0]?.message ??
@@ -1014,7 +1032,8 @@ const PARSE_SYSTEM_PROMPT = [
  */
 export async function callParseFeedback(
   freeText: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  meter?: UsageMeter
 ): Promise<unknown | null> {
   if (!OPENAI_API_KEY) return null;
 
@@ -1046,6 +1065,7 @@ export async function callParseFeedback(
     }
 
     const json = await resp.json();
+    addUsage(meter, json);
     const content: string = json?.choices?.[0]?.message?.content ?? "{}";
     return JSON.parse(String(content));
   } catch (e) {
@@ -1734,10 +1754,12 @@ export type HandlerDeps = {
     bikeModelId?: string | null;
   }) => Promise<number | null | void>;
   /** Attach the generated tune to the tune_calls row after a successful
-   *  generation. Optional (test fakes omit it); must never throw. */
-  recordOutput?: (callId: number, output: unknown) => Promise<void>;
-  /** Parse free-text feedback (Change 2). null = skip (fail-open). */
-  parseFreeText: (text: string) => Promise<unknown | null>;
+   *  generation, with the call's metadata (decision 13). Optional (test
+   *  fakes omit it); must never throw. */
+  recordOutput?: (callId: number, output: unknown, meta: OutputMeta) => Promise<void>;
+  /** Parse free-text feedback (Change 2). null = skip (fail-open). The meter
+   *  collects the parse request's token usage when one is made. */
+  parseFreeText: (text: string, meter?: UsageMeter) => Promise<unknown | null>;
   /** Does this bike_models id exist? (decision 2, 2026-09-05). false =
    *  reject the request before any insert; null = lookup infra failure, the
    *  id is dropped (never stored) and the call proceeds. */
@@ -1748,6 +1770,15 @@ export type HandlerDeps = {
   /** Exact inverse of a consumed server claim, after a generation throw. */
   refundClaim: (userId: string) => Promise<void>;
 };
+
+export type OutputMeta = {
+  duration_ms: number;
+  engine_source: EngineSourceTag;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+};
+/** Who decided the numbers, recorded on tune_calls (decision 13). */
+export type EngineSourceTag = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic";
 
 export type ClaimOutcome = {
   ok: boolean;
@@ -1878,11 +1909,17 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
-  recordOutput: async (callId, output) => {
+  recordOutput: async (callId, output, meta) => {
     try {
       const { error } = await getServiceClient()
         .from("tune_calls")
-        .update({ output })
+        .update({
+          output,
+          duration_ms: meta.duration_ms,
+          engine_source: meta.engine_source,
+          prompt_tokens: meta.prompt_tokens,
+          completion_tokens: meta.completion_tokens,
+        })
         .eq("id", callId);
       if (error) throw error;
     } catch (e) {
@@ -1891,7 +1928,7 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
-  parseFreeText: (text) => callParseFeedback(text),
+  parseFreeText: (text, meter) => callParseFeedback(text, fetch, meter),
 };
 
 /* ---------------- Baseline gate: the per-bike rule (decision 3, 2026-09-05) ---------------- */
@@ -2008,6 +2045,14 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       return new Response("ok", { headers: CORS_HEADERS });
     }
 
+    const startedAt = performance.now();
+    const meter = newUsageMeter();
+    const outputMeta = (engineSource: EngineSourceTag): OutputMeta => ({
+      duration_ms: Math.round(performance.now() - startedAt),
+      engine_source: engineSource,
+      prompt_tokens: meter.requests ? meter.prompt_tokens : null,
+      completion_tokens: meter.requests ? meter.completion_tokens : null,
+    });
     try {
       const body = (await req.json().catch(() => null)) as ZeroInput | null;
       if (!body || !body.input) {
@@ -2115,7 +2160,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           null;
         if (freeText.length > 0) {
           // Fail-open even if the parse dep itself throws.
-          const rawParsed = await deps.parseFreeText(freeText).catch((e) => {
+          const rawParsed = await deps.parseFreeText(freeText, meter).catch((e) => {
             const msg = e instanceof Error ? e.message : String(e);
             console.warn("free-text parse dep failed (fail-open):", msg.slice(0, 160));
             return null;
@@ -2147,7 +2192,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         const partial = buildTuneTwo(tune2Input);
         const result = safeShape(partial, tune2Input.guardrails);
 
-        if (callId !== null) await deps.recordOutput?.(callId, result);
+        if (callId !== null) await deps.recordOutput?.(callId, result, outputMeta("deterministic"));
         return jsonResponse(result, 200);
       }
 
@@ -2157,10 +2202,15 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
 
         // Build initial baseline (fallback). If OpenAI is available, refine.
         let partial: Partial<ZeroResult> = buildFallback(z);
+        let engineSource: EngineSourceTag = "formula";
 
         if (OPENAI_API_KEY) {
           try {
-            const ai = await callOpenAI(z);
+            const ai = await callOpenAI(z, meter);
+            // {} means the model's text was not JSON (callOpenAI swallows the
+            // parse): the formula's numbers ship. Recorded, not yet surfaced
+            // in the response (the contract v3 PR adds engine_source there).
+            engineSource = ai && typeof ai === "object" && ("fork" in ai || "shock" in ai) ? "llm" : "fallback_parse";
             // merge AI fields over baseline
             partial = {
               ...partial,
@@ -2172,6 +2222,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
             };
           } catch (e) {
             // keep baseline but include note
+            engineSource = "fallback_error";
             const msg = (e as Error).message ?? String(e);
             partial.notes = [
               ...(partial.notes ?? []),
@@ -2196,7 +2247,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // Enforce guardrails & shape
         const result = safeShape(partial, z.guardrails);
 
-        if (callId !== null) await deps.recordOutput?.(callId, result);
+        if (callId !== null) await deps.recordOutput?.(callId, result, outputMeta(engineSource));
         return jsonResponse(result, 200);
       } catch (genErr) {
         // The server claimed the credit before generation — generation
