@@ -47,6 +47,10 @@ type ZeroInput = {
     elev_ft?: number;
     rider: {
       weight_lbs?: number;
+      // Contract v3 (decision 11): first-class discipline replaces the keyword
+      // scan when present (offroad = the enduro math). The quiz supplies it;
+      // the Tune tab and the ride day infer it from the bike.
+      discipline?: "mx" | "offroad";
       skill: "beginner" | "intermediate" | "pro";
       style: "short_motos" | "long_enduro";
       goals: string[];
@@ -250,6 +254,7 @@ type Tune2Input = {
   track?: string;
   rider?: {
     weight_lbs?: number;
+    discipline?: "mx" | "offroad";
     skill?: "beginner" | "intermediate" | "pro";
     style?: "short_motos" | "long_enduro";
     goals?: string[];
@@ -325,8 +330,11 @@ function intensityFactor(z: ZeroInput["input"]): number {
   return clampFloat(f, -1.5, 1.5);
 }
 
-// MX vs Enduro vs Mixed, inferred from terrain/track/issues/style
+// MX vs Enduro vs Mixed: the rider's stated discipline when sent (contract
+// v3), else inferred from terrain/track/issues/style.
 function inferDiscipline(z: ZeroInput["input"]): Discipline {
+  if (z.rider?.discipline === "mx") return "mx";
+  if (z.rider?.discipline === "offroad") return "enduro";
   const terrain = (z.terrain || "").toLowerCase();
   const track = (z.track || "").toLowerCase();
   const issues = (z.rider.issues || "").toLowerCase();
@@ -835,8 +843,12 @@ function buildUserPrompt(z: ZeroInput["input"]): string {
       ? "Rider explicitly indicated an air fork (AER) is in use or desired."
       : "Rider did not explicitly request an air fork.";
 
+  const disciplineLine =
+    z.rider?.discipline === "mx" ? "Discipline: motocross" : z.rider?.discipline === "offroad" ? "Discipline: off-road / enduro" : null;
+
   const lines = [
     `Bike: ${bikeLine}`,
+    ...(disciplineLine ? [disciplineLine] : []),
     `Terrain: ${z.terrain ?? ""}${z.track ? ` @ ${z.track}` : ""}`,
     `Environment: Temp ${tempStr}, Elevation ${elevStr}`,
     `Rider: ${weight}, skill=${z.rider.skill}, style=${z.rider.style}`,

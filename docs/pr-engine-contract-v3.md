@@ -19,6 +19,20 @@ The Tune Two edge grows a conditions input and runs the ride-day rule base itsel
 | 6d | Honest previous values | `PreviousTune` with nullable circuits, `sanitizePrevious`, `add()` skips unknown circuits and names them, `safeShapeSparse` keeps null | test 19 | none | `snapshotToTune` sends nulls; `Tune2Result`; `completeTune` for the legacy debrief | low |
 | 6e | Shape hardening | air clamp 7 to 14 (guardrail-driven), NaN guard, `engine_source` on baseline and refine | tests 16, 20 | none | `AIR_MIN_BAR` / `AIR_MAX_BAR` in guardrails and `normalizeResult` | low |
 
+## Decision 11 additions (2026-09-07)
+
+| Change | Engine | Tests | Client | Risk |
+|---|---|---|---|---|
+| `rider.discipline` first-class ("mx" / "offroad") | `inferDiscipline` uses it when present (offroad = the enduro math), else the keyword scan; the prompt states it | test 23 | the quiz sends the rider's answer; the Tune tab and the ride day infer it from the bike via the new pure `lib/discipline.ts` (`classifyModel` moved out of the quiz module) | low |
+| Refinements get the per-model guardrails | none (safeShapeSparse already honors the sag window and the fork-type rule) | covered by 16 and the fork-type rule | `generateTuneTwo` resolves `fetchModelSpecs` itself: sag window + verified fork type, fail-open to `DEFAULT_SAG` and the previous tune's own air presence | low |
+| Client stops sending the air defaults | none: without `aer_pressure_bar_default` / `_per_10lb` the discipline-specific base and slope are live (10.6 / 0.22 MX, 10.0 / 0.18 enduro, 10.2 / 0.20 mixed) | test 23 | `defaultGuardrails` drops the two keys; a legacy client that still sends them still gets 10.6 / 0.2 | medium: formula-path air on off-road bikes shifts down by up to 0.6 bar; the LLM path is unaffected |
+| Conditions as a contributions stage before symptoms | done (6a) | 17, parity | | |
+| Tires stay out of the engine | `tire_psi_delta` is the conditions rule's echo only | 17 | the app's tire plan stays client-side | nil |
+
+## Decision 12: the symptom table draft
+
+`docs/symptom-table-draft.md` is generated from the engine by `scripts/engine-tools/symptom_table.ts`: every v3 id at severities 3 / 6 / 9 and every qualifier pair, each marked inherited (mirrors a byte-frozen legacy row) or NEW. River corrects the table; the PR then implements the corrected table. Until then the PR implements the draft as shown.
+
 ## Rows that need River's sign-off (marked SIGN-OFF in `buildTuneTwo`)
 
 | Id or route | Move authored | Rationale to confirm |
@@ -42,7 +56,7 @@ The Tune Two edge grows a conditions input and runs the ride-day rule base itsel
 
 ## Evidence
 
-- Deno: 27 tests, 0 failures. Regression fixtures checked: 336 (HSC moved in 32). Parity cases: 576.
+- Deno: 30 tests, 0 failures. Regression fixtures checked: 336 (HSC moved in 32). Parity cases: 576.
 - Jest: 41 suites, 288 tests. Typecheck at the 20-error baseline. Lint clean on every touched file.
 
 ## Follow-ups the PR does not do

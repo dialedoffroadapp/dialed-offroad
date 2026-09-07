@@ -69,6 +69,7 @@ import { lightTheme } from "../../constants/theme";
 import { useTheme } from "../../lib/theme";
 import type { UsageEvent } from "../../lib/usage";
 import { isUuid } from "../../lib/uuid";
+import { disciplineFromBike } from "../../lib/discipline";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
 /* --------------------------------- Types ---------------------------------- */
@@ -845,6 +846,9 @@ export default function TuneScreen() {
         elev_ft: elevFt,
         rider: {
           weight_lbs: weight ? Number(weight) : undefined,
+          // Contract v3 (decision 11): inferred from the bike; the engine falls
+          // back to its keyword scan when the bike is unknown.
+          discipline: disciplineFromBike(make.trim() || undefined, model.trim() || undefined) ?? undefined,
           skill,
           style: rideStyle,
           goals,

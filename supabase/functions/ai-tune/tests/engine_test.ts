@@ -917,3 +917,31 @@ Deno.test("22. recordOutput meta: duration_ms, engine_source per path, usage onl
   assertEquals(seen[1].prompt_tokens, 120);
   assertEquals(seen[1].completion_tokens, 30);
 });
+
+/* ---------------- Test 23: rider.discipline is first-class; the air math is discipline-specific (decision 11) ---------------- */
+
+Deno.test("23. discipline: stated beats the keyword scan; without the client's air defaults the discipline air math is live", async () => {
+  const h = makeHandler(deps({ getUserId: () => Promise.resolve(null) }));
+  const call = async (input: Record<string, unknown>) => {
+    const resp = await h(fakeReq({ mode: "zero_baseline_v1", input }, ""));
+    assertEquals(resp.status, 200);
+    return await resp.json();
+  };
+  // Same bike, same terrain word ("hardpack" has no discipline keyword), 185 lb
+  // intermediate: MX and off-road diverge on the fork base (14 vs 16 clicks).
+  const common = { terrain: "hardpack", has_zeroed_clickers: true, guardrails: GUARDRAILS, wants_air_fork: true };
+  const mx = await call({ ...common, rider: { weight_lbs: 185, discipline: "mx", skill: "intermediate", style: "short_motos", goals: [] } });
+  const off = await call({ ...common, rider: { weight_lbs: 185, discipline: "offroad", skill: "intermediate", style: "long_enduro", goals: [] } });
+  assertEquals(mx.fork.comp_clicks, 14);
+  assertEquals(off.fork.comp_clicks, 16);
+  // Air: no aer_pressure_bar_default / _per_10lb sent, so MX runs 10.6 + intensity
+  // 0.5 x 0.12 = 10.66 and enduro 10.0 + (-0.2) x 0.06 = 9.99.
+  assertEquals(mx.fork.air_pressure_bar, 10.66);
+  assertEquals(off.fork.air_pressure_bar, 9.99);
+  // The client's old defaults, when a legacy client still sends them, still win.
+  const legacy = await call({ ...common, guardrails: { ...GUARDRAILS, aer_pressure_bar_default: 10.6, aer_pressure_bar_per_10lb: 0.2 }, rider: { weight_lbs: 185, discipline: "offroad", skill: "intermediate", style: "long_enduro", goals: [] } });
+  assertEquals(legacy.fork.air_pressure_bar, 10.59);
+  // No discipline: the keyword scan decides as before.
+  const scan = await call({ ...common, terrain: "mx track, hardpack", rider: { weight_lbs: 185, skill: "intermediate", style: "short_motos", goals: [] } });
+  assertEquals(scan.fork.comp_clicks, 14);
+});

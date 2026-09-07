@@ -9,6 +9,7 @@
 // the engine's frozen contract is untouched.
 import { generateTuneTwo, type Tune2Conditions, type Tune2Context, type Tune2Previous, type Tune2Result, type Tune2SymptomId } from "./ai";
 import { CIRCUIT_STEPS, type CircuitKey } from "./currentSetup";
+import { disciplineFromBike } from "./discipline";
 import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
 import type { RideSession } from "./rideDay";
 import { ratingFor, severityFor, type SymptomLevel } from "./rideSymptoms";
@@ -145,6 +146,7 @@ export async function fetchAdjustResult(
     track: s.trackName ?? undefined,
     temp_f: tempBandToF(s.conditions.temp),
     wants_air_fork: s.hasAirFork,
+    rider: { discipline: disciplineFromBike(s.bike.make, s.bike.model) ?? undefined },
   };
   const text = typeof freeText === "string" && freeText.trim() ? freeText.trim().slice(0, 800) : undefined;
   const result = await generateTuneTwo({

@@ -9,6 +9,7 @@
 // and the rules run locally only when the call fails.
 import { generateTuneTwo, type Tune2Context } from "./ai";
 import type { CircuitKey } from "./currentSetup";
+import { disciplineFromBike } from "./discipline";
 import { retuneRules, todaysSetupRules, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
 import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
 import type { RideBike } from "./rideDay";
@@ -60,6 +61,7 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
       track: p.trackName ?? undefined,
       temp_f: tempBandToF(p.conditions.temp),
       wants_air_fork: p.hasAirFork,
+      rider: { discipline: disciplineFromBike(p.bike.make, p.bike.model) ?? undefined },
     };
     const result = await generateTuneTwo({
       previous: snapshotToTune(p.effective, p.hasAirFork),

@@ -269,8 +269,14 @@ candidate in a 2h window).
   `settings_delta` keys
   (`fork_comp/fork_reb/fork_air/shock_lsc/shock_hsc/shock_reb/shock_sag`).
 - **The engine's `fork.air_pressure_bar` is FINAL and is what `setup_versions` stores.**
-  It already carries the rider-weight adjustment (`defaultGuardrails`:
-  10.6 bar at 185 lb, 0.2 bar per 10 lb). Display code must show the saved
+  It already carries the rider-weight adjustment. **Contract v3 (decision 11,
+  2026-09-07): the client no longer sends `aer_pressure_bar_default` /
+  `_per_10lb`, so the engine's discipline-specific air math is live** (10.6
+  bar at 185 lb and 0.22 per 10 lb for MX, 10.0 / 0.18 enduro, 10.2 / 0.20
+  mixed, each with its own clamp window); a legacy client that still sends
+  10.6 / 0.2 still gets 10.6 / 0.2. The display-only estimate for rows with
+  no air value (`lib/airDisplay.ts` on the hotfix branch) still assumes
+  10.6 / 0.2 and should be aligned when it lands here. Display code must show the saved
   value verbatim; the weight estimate exists ONLY for rows with no air
   value. `deriveAirBar` in `app/tune-results.tsx` and `app/tune-two-results.tsx`
   re-applied the delta on top of the engine value until 2026-09-04 (reveal
@@ -297,6 +303,16 @@ candidate in a 2h window).
   baseline always emits quarter turns) and the refine response carries
   `engine_source`; the regression harness masks exactly those two things and
   checks moved HSC lands on a quarter turn within one of v1's move.
+- **Contract v3, decision 11 (2026-09-07):** `rider.discipline` ("mx" |
+  "offroad") is a first-class baseline input that replaces the engine's
+  keyword scan when present (offroad = the enduro math); the quiz sends the
+  rider's answer, the Tune tab and the ride day infer it from the bike via
+  `lib/discipline.ts` (pure; `classifyModel` moved there from the quiz
+  module). Refinements now receive the per-model guardrails the baseline
+  gets (`generateTuneTwo` resolves `fetchModelSpecs` itself: sag window +
+  verified fork type, fail-open to `DEFAULT_SAG` and the previous tune's own
+  air presence). Tires stay OUT of the engine: `tire_psi_delta` is the
+  conditions rule's echo, nothing more.
 - **Contract v3 wire additions (2026-09-05):** tune2 `input.conditions`
   (`Tune2Conditions`: surfaces / state / temp_band / watered / retune tile +
   prior tweaks) runs the ride-day rule base SERVER-side as a contributions

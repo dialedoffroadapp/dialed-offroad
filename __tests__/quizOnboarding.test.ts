@@ -92,6 +92,7 @@ describe("engine mappings (existing inputs only)", () => {
       year: 2025,
       terrain: "Hardpack",
       rider: {
+        discipline: "mx",
         weight_lbs: 175,
         skill: "intermediate",
         style: "short_motos",

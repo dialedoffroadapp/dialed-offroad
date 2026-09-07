@@ -4,8 +4,9 @@
 
 import { FunctionsHttpError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import { SpringCheck } from "./modelSpecs";
-import { DEFAULT_SAG, SagBounds } from "./sagBounds";
+import type { RiderDiscipline } from "./discipline";
+import { fetchModelSpecs, SpringCheck } from "./modelSpecs";
+import { DEFAULT_SAG, resolveSagBounds, SagBounds } from "./sagBounds";
 import { getOrCreateAnonTuneId } from "./tuneAttribution";
 import { getTuneLocation } from "./tuneLocation";
 import { isUuid } from "./uuid";
@@ -61,6 +62,10 @@ export type ZeroTuneInput = {
   // rider context
   rider: {
     weight_lbs?: number;
+    /** Contract v3 (decision 11): first-class, replaces the engine's keyword
+     *  scan when present. The quiz supplies it; the Tune tab infers it from
+     *  the bike (lib/discipline). */
+    discipline?: RiderDiscipline;
     skill: "beginner" | "intermediate" | "pro";
     style: "short_motos" | "long_enduro";
     goals: string[]; // e.g., ["stability","comfort"]
@@ -265,6 +270,7 @@ export type Tune2Context = {
   elev_ft?: number;
   rider?: {
     weight_lbs?: number;
+    discipline?: RiderDiscipline;
     skill?: "beginner" | "intermediate" | "pro";
     style?: "short_motos" | "long_enduro";
     goals?: string[];
@@ -327,6 +333,7 @@ export async function generateTune(
         weight_lbs: isFiniteNumber(input.rider.weight_lbs)
           ? input.rider.weight_lbs
           : undefined,
+        discipline: input.rider.discipline ?? undefined,
         skill: input.rider.skill,
         style: input.rider.style,
         // keep prompt tight but still let the rider stack a few goals
@@ -380,6 +387,25 @@ export async function generateTuneTwo(params: {
   // A conditions ask never runs the adaptive step (the edge also refuses).
   const lastOutcome = bikeId && feedback.source !== "conditions" ? await fetchLastOutcome(bikeId, setupId ?? null) : undefined;
 
+  // Contract v3 (decision 11): refinements get the per-model guardrails the
+  // baseline gets, so the sag window and the verified fork type hold on the
+  // way out. Fail-open: an unmatched bike falls back to DEFAULT_SAG and the
+  // fork type the previous tune already shows.
+  const specs = await fetchModelSpecs({
+    id: bikeId ?? null,
+    model_id: context?.model_id ?? null,
+    make: context?.make ?? null,
+    model: context?.model ?? null,
+    year: context?.year ?? null,
+  }).catch(() => null);
+  const sagBounds = resolveSagBounds(specs);
+  const hasAirFork =
+    typeof specs?.has_air_fork === "boolean"
+      ? specs.has_air_fork
+      : typeof previous.fork.air_pressure_bar === "number"
+        ? true
+        : undefined;
+
   // Clamp feedback into the 1–10 scale. Callers (tune-feedback) have already
   // converted their 1–5 UI inputs to 1–10 — do NOT rescale here.
   const normalizedFeedback: Tune2Feedback = {
@@ -429,6 +455,7 @@ export async function generateTuneTwo(params: {
         weight_lbs: isFiniteNumber(context?.rider?.weight_lbs)
           ? context?.rider?.weight_lbs
           : undefined,
+        discipline: context?.rider?.discipline ?? undefined,
         skill: context?.rider?.skill ?? "intermediate",
         style: context?.rider?.style ?? "short_motos",
         goals: (context?.rider?.goals || []).slice(0, 8),
@@ -443,7 +470,7 @@ export async function generateTuneTwo(params: {
       // by generation. Omitted (not null) when unavailable.
       location: location ?? undefined,
 
-      guardrails: defaultGuardrails(),
+      guardrails: defaultGuardrails(sagBounds, hasAirFork),
 
       // Tune Two specific
       previous,
@@ -458,7 +485,7 @@ export async function generateTuneTwo(params: {
   const { data, error } = await supabase.functions.invoke("ai-tune", { body: payload });
   if (error) throw new Error(await edgeErrorMessage(error, "AI Tune Two failed"));
 
-  return normalizeTune2Result(data as Partial<Tune2Result>);
+  return normalizeTune2Result(data as Partial<Tune2Result>, sagBounds);
 }
 
 /** A complete tune from a refinement whose previous tune was complete: any
@@ -575,9 +602,12 @@ function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
     sag_min_mm: sag.min,
     sag_max_mm: sag.max,
     sag_target_mm: sag.target,
-    // Air fork defaults the backend can scale by weight if applicable:
-    aer_pressure_bar_default: 10.6, // ≈154 psi baseline for ~185 lb
-    aer_pressure_bar_per_10lb: 0.2, // ~+/-0.2 bar per 10 lb delta
+    // Contract v3 (decision 11): the client no longer sends
+    // aer_pressure_bar_default / _per_10lb (10.6 / 0.2). Without them the
+    // engine's discipline-specific air math is live: 10.6 / 0.22 per 10 lb
+    // for MX, 10.0 / 0.18 for enduro, 10.2 / 0.20 mixed, each with its own
+    // clamp window. The display-only weight estimate for rows with NO air
+    // value (the v2.4.1 hotfix's displayAirBar on main) still uses 10.6 / 0.2.
     // Fork air window (contract v3): the edge clamps to it; so does normalizeResult.
     air_min_bar: AIR_MIN_BAR,
     air_max_bar: AIR_MAX_BAR,
@@ -697,7 +727,7 @@ function normalizeResult(
  * (the engine could not move what the setup never recorded); numbers get
  * the same clamps as a baseline. Never invents a value.
  */
-function normalizeTune2Result(result: Partial<Tune2Result>): Tune2Result {
+function normalizeTune2Result(result: Partial<Tune2Result>, bounds: SagBounds = DEFAULT_SAG): Tune2Result {
   const num = (v: unknown): number | null => {
     if (v === null || v === undefined) return null;
     const n = Number(v);
@@ -721,7 +751,7 @@ function normalizeTune2Result(result: Partial<Tune2Result>): Tune2Result {
       lsc_clicks: clicks(result?.shock?.lsc_clicks),
       hsc_turns: hsc === null ? null : Number(clamp(hsc, 0, 3).toFixed(2)),
       reb_clicks: clicks(result?.shock?.reb_clicks),
-      sag_mm: sag === null ? null : Math.round(sag),
+      sag_mm: sag === null ? null : clamp(Math.round(sag), bounds.min, bounds.max),
     },
     detected: {
       has_air_fork: typeof air === "number" || !!result?.detected?.has_air_fork,
