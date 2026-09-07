@@ -1645,6 +1645,7 @@ export default function TuneScreen() {
                 value={issues}
                 onChangeText={setIssues}
                 multiline
+                maxLength={300}
               />
 
             </>

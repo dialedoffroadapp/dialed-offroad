@@ -19,12 +19,15 @@ import {
   callParseFeedback,
   conditionsRuleDeltas,
   LEGACY_TO_V3,
+  capIssues,
+  ISSUES_MAX_CHARS,
   makeHandler,
   mergeFeedback,
   quarterTurns,
   safeShape,
   safeShapeSparse,
   sanitizeConditions,
+  sanitizeNotes,
   sanitizeParsedFeedback,
   sanitizePrevious,
   V3_SYMPTOM_IDS,
@@ -834,4 +837,83 @@ Deno.test("20. handler: engine_source, setup_id captured, a conditions ask never
   const base = await (await anon(fakeReq({ mode: "zero_baseline_v1", input: BASELINE }, ""))).json();
   assertEquals(base.engine_source, "formula");
   assertEquals(base.shock.hsc_turns, quarterTurns(base.shock.hsc_turns));
+});
+
+/* ---------------- Test 21: issues cap and note sanitizing (decision 13) ---------------- */
+
+Deno.test("21. rider.issues is capped before storage and prompting; notes are strings, no URLs, 200 chars, 12 max", async () => {
+  const long = "x".repeat(ISSUES_MAX_CHARS + 50);
+  let recorded: any = null;
+  const h = makeHandler(deps({ getUserId: () => Promise.resolve(null), recordCall: (r) => { recorded = r; return Promise.resolve(); } }));
+  const resp = await h(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, rider: { ...BASELINE.rider, issues: long } } }, ""));
+  assertEquals(resp.status, 200);
+  assertEquals(recorded.input.rider.issues.length, ISSUES_MAX_CHARS);
+  const i: any = { rider: { issues: 42 } };
+  capIssues(i);
+  assertEquals(i.rider.issues, undefined);
+
+  const notes = sanitizeNotes([
+    "Set sag to 105 mm. See https://example.com/setup?x=1 for the chart.",
+    42,
+    "   ",
+    "y".repeat(400),
+    ...Array.from({ length: 15 }, (_, k) => `note ${k}`),
+  ]);
+  assertEquals(notes.length, 12);
+  assertEquals(notes[0], "Set sag to 105 mm. See for the chart.");
+  assertEquals(notes[1].length, 200);
+  assert(notes[1].endsWith("…"));
+  assert(!notes.some((n) => /https?:\/\//.test(n)));
+  // The shape applies it to what the model returned.
+  const shaped = safeShape({ fork: { comp_clicks: 12, reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, notes: ["ok", "visit www.evil.example now", 7] } as any, GUARDRAILS);
+  assertEquals(shaped.notes, ["ok", "visit now"]);
+});
+
+/* ---------------- Test 22: recordOutput carries duration, engine_source and token usage (decision 13) ---------------- */
+
+Deno.test("22. recordOutput meta: duration_ms, engine_source per path, usage only when a model request ran", async () => {
+  const seen: any[] = [];
+  const h = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      recordCall: () => Promise.resolve(41),
+      recordOutput: (_id, _out, meta) => {
+        seen.push(meta);
+        return Promise.resolve();
+      },
+    })
+  );
+  assertEquals((await h(fakeReq({ mode: "zero_baseline_v1", input: BASELINE }, ""))).status, 200);
+  assertEquals(seen[0].engine_source, "formula"); // no key in the test env
+  assert(typeof seen[0].duration_ms === "number" && seen[0].duration_ms >= 0);
+  assertEquals(seen[0].prompt_tokens, null); // no model request was made
+
+  // tune2: deterministic; a parse dep that reports usage through the meter is summed.
+  const h2 = makeHandler(
+    deps({
+      recordCall: () => Promise.resolve(42),
+      recordOutput: (_id, _out, meta) => {
+        seen.push(meta);
+        return Promise.resolve();
+      },
+      parseFreeText: (_text, meter) => {
+        if (meter) {
+          meter.requests += 1;
+          meter.prompt_tokens += 120;
+          meter.completion_tokens += 30;
+        }
+        return Promise.resolve({ symptoms: [], protected: [] });
+      },
+    })
+  );
+  const r2 = await h2(
+    fakeReq({
+      mode: "tune2_v1",
+      input: { ...BASELINE, previous: PREV_AIR, feedback: { overall_rating: 6, free_text: "loose out back", symptoms: [{ id: "headshake", severity: 5 }] } },
+    })
+  );
+  assertEquals(r2.status, 200);
+  assertEquals(seen[1].engine_source, "deterministic");
+  assertEquals(seen[1].prompt_tokens, 120);
+  assertEquals(seen[1].completion_tokens, 30);
 });

@@ -559,6 +559,43 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline) {
   return { lsc_clicks, reb_clicks, hsc_turns };
 }
 
+/* ------------------------- Output sanitizing (decision 13, 2026-09-07) ------------------------- */
+
+export const ISSUES_MAX_CHARS = 300;
+export const NOTE_MAX_CHARS = 200;
+export const NOTES_MAX = 12;
+const URL_RE = /\b(?:https?:\/\/|www\.)\S+/gi;
+
+/** Notes are model output shown verbatim to the rider: strings only, no
+ *  URLs, at most NOTE_MAX_CHARS each, at most NOTES_MAX. Empty after
+ *  cleaning = dropped. */
+export function sanitizeNotes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const n of raw) {
+    if (typeof n !== "string") continue;
+    const cleaned = n.replace(URL_RE, "").replace(/\s{2,}/g, " ").trim();
+    if (!cleaned) continue;
+    out.push(cleaned.length > NOTE_MAX_CHARS ? cleaned.slice(0, NOTE_MAX_CHARS - 1).trimEnd() + "…" : cleaned);
+    if (out.length >= NOTES_MAX) break;
+  }
+  return out;
+}
+
+/** rider.issues is free text that reaches the model prompt verbatim: cap it
+ *  BEFORE it is stored or prompted. Mutates body.input in place. */
+export function capIssues(input: { rider?: { issues?: unknown } } | undefined): void {
+  const rider = input?.rider;
+  if (!rider) return;
+  if (typeof rider.issues !== "string") {
+    if (rider.issues !== undefined) delete rider.issues;
+    return;
+  }
+  const trimmed = rider.issues.trim().slice(0, ISSUES_MAX_CHARS);
+  if (trimmed) rider.issues = trimmed;
+  else delete rider.issues;
+}
+
 /* ------------------------- Guardrail shaping ------------------------- */
 
 /** Quarter-turn quantization for HSC (decision 4, 2026-09-05): the hardware
@@ -667,7 +704,7 @@ export function safeShape(
       has_air_fork: !!partial.detected?.has_air_fork,
       fork_family: partial.detected?.fork_family,
     },
-    notes: Array.isArray(partial.notes) ? partial.notes.filter((n) => typeof n === "string").slice(0, 12) : [],
+    notes: sanitizeNotes(partial.notes),
   };
   applyForkTypeRule(out, g);
   // Pass through a client-computed spring_check if one ever rides in (whitelist
@@ -691,7 +728,7 @@ export function safeShapeSparse(
       has_air_fork: !!partial.detected?.has_air_fork,
       fork_family: partial.detected?.fork_family,
     },
-    notes: Array.isArray(partial.notes) ? partial.notes.filter((n) => typeof n === "string").slice(0, 12) : [],
+    notes: sanitizeNotes(partial.notes),
     engine_source: "deterministic",
   };
   applyForkTypeRule(out, g);
@@ -820,8 +857,25 @@ function buildUserPrompt(z: ZeroInput["input"]): string {
 
 /* ---------------------------- OpenAI call (baseline refinement only) ---------------------------- */
 
+/** Per-request token accounting (decision 13): every model request on the
+ *  call adds its usage here; recordOutput stores the sums. */
+export type UsageMeter = { prompt_tokens: number; completion_tokens: number; requests: number };
+export function newUsageMeter(): UsageMeter {
+  return { prompt_tokens: 0, completion_tokens: 0, requests: 0 };
+}
+function addUsage(meter: UsageMeter | undefined, json: any): void {
+  if (!meter) return;
+  meter.requests += 1;
+  const u = json?.usage;
+  if (u && typeof u === "object") {
+    meter.prompt_tokens += Number(u.prompt_tokens) || 0;
+    meter.completion_tokens += Number(u.completion_tokens) || 0;
+  }
+}
+
 async function callOpenAI(
-  z: ZeroInput["input"]
+  z: ZeroInput["input"],
+  meter?: UsageMeter
 ): Promise<Partial<ZeroResult>> {
   const system = buildSystemPrompt(z);
   const user = buildUserPrompt(z);
@@ -880,6 +934,7 @@ async function callOpenAI(
   }
 
   const json = await resp.json();
+  addUsage(meter, json);
   const content: string =
     json?.choices?.[0]?.message?.content ??
     json?.choices?.[0]?.message ??
@@ -1204,7 +1259,8 @@ const PARSE_SYSTEM_PROMPT = [
  */
 export async function callParseFeedback(
   freeText: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  meter?: UsageMeter
 ): Promise<unknown | null> {
   if (!OPENAI_API_KEY) return null;
 
@@ -1236,6 +1292,7 @@ export async function callParseFeedback(
     }
 
     const json = await resp.json();
+    addUsage(meter, json);
     const content: string = json?.choices?.[0]?.message?.content ?? "{}";
     return JSON.parse(String(content));
   } catch (e) {
@@ -2211,10 +2268,12 @@ export type HandlerDeps = {
     bikeModelId?: string | null;
   }) => Promise<number | null | void>;
   /** Attach the generated tune to the tune_calls row after a successful
-   *  generation. Optional (test fakes omit it); must never throw. */
-  recordOutput?: (callId: number, output: unknown) => Promise<void>;
-  /** Parse free-text feedback (Change 2). null = skip (fail-open). */
-  parseFreeText: (text: string) => Promise<unknown | null>;
+   *  generation, with the call's metadata (decision 13). Optional (test
+   *  fakes omit it); must never throw. */
+  recordOutput?: (callId: number, output: unknown, meta: OutputMeta) => Promise<void>;
+  /** Parse free-text feedback (Change 2). null = skip (fail-open). The meter
+   *  collects the parse request's token usage when one is made. */
+  parseFreeText: (text: string, meter?: UsageMeter) => Promise<unknown | null>;
   /** Does this bike_models id exist? (decision 2, 2026-09-05). false =
    *  reject the request before any insert; null = lookup infra failure, the
    *  id is dropped (never stored) and the call proceeds. */
@@ -2225,6 +2284,16 @@ export type HandlerDeps = {
   /** Exact inverse of a consumed server claim, after a generation throw. */
   refundClaim: (userId: string) => Promise<void>;
 };
+
+export type OutputMeta = {
+  duration_ms: number;
+  engine_source: EngineSourceTag;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+};
+/** Who decided the numbers, recorded on tune_calls (decision 13) and, since
+ *  contract v3, returned on every response as engine_source. */
+export type EngineSourceTag = EngineSource;
 
 export type ClaimOutcome = {
   ok: boolean;
@@ -2355,11 +2424,17 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
-  recordOutput: async (callId, output) => {
+  recordOutput: async (callId, output, meta) => {
     try {
       const { error } = await getServiceClient()
         .from("tune_calls")
-        .update({ output })
+        .update({
+          output,
+          duration_ms: meta.duration_ms,
+          engine_source: meta.engine_source,
+          prompt_tokens: meta.prompt_tokens,
+          completion_tokens: meta.completion_tokens,
+        })
         .eq("id", callId);
       if (error) throw error;
     } catch (e) {
@@ -2368,7 +2443,7 @@ export const defaultDeps: HandlerDeps = {
     }
   },
 
-  parseFreeText: (text) => callParseFeedback(text),
+  parseFreeText: (text, meter) => callParseFeedback(text, fetch, meter),
 };
 
 /* ---------------- Baseline gate: the per-bike rule (decision 3, 2026-09-05) ---------------- */
@@ -2485,13 +2560,23 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       return new Response("ok", { headers: CORS_HEADERS });
     }
 
+    const startedAt = performance.now();
+    const meter = newUsageMeter();
+    const outputMeta = (engineSource: EngineSourceTag): OutputMeta => ({
+      duration_ms: Math.round(performance.now() - startedAt),
+      engine_source: engineSource,
+      prompt_tokens: meter.requests ? meter.prompt_tokens : null,
+      completion_tokens: meter.requests ? meter.completion_tokens : null,
+    });
     try {
       const body = (await req.json().catch(() => null)) as ZeroInput | null;
       if (!body || !body.input) {
         return jsonResponse({ error: "Bad request" }, 400);
       }
-      // Before recordCall stores body.input: malformed location never lands.
+      // Before recordCall stores body.input: malformed location never lands,
+      // and rider.issues is capped at ISSUES_MAX_CHARS (it reaches the prompt).
       sanitizeLocation(body);
+      capIssues(body.input);
 
       const mode = body.mode ?? "zero_baseline_v1";
 
@@ -2590,7 +2675,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           null;
         if (freeText.length > 0) {
           // Fail-open even if the parse dep itself throws.
-          const rawParsed = await deps.parseFreeText(freeText).catch((e) => {
+          const rawParsed = await deps.parseFreeText(freeText, meter).catch((e) => {
             const msg = e instanceof Error ? e.message : String(e);
             console.warn("free-text parse dep failed (fail-open):", msg.slice(0, 160));
             return null;
@@ -2629,7 +2714,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         const partial = buildTuneTwo(tune2Input);
         const result = safeShapeSparse(partial, tune2Input.guardrails);
 
-        if (callId !== null) await deps.recordOutput?.(callId, result);
+        if (callId !== null) await deps.recordOutput?.(callId, result, outputMeta("deterministic"));
         return jsonResponse(result, 200);
       }
 
@@ -2643,9 +2728,10 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
 
         if (OPENAI_API_KEY) {
           try {
-            const ai = await callOpenAI(z);
+            const ai = await callOpenAI(z, meter);
             // {} means the model's text was not JSON (callOpenAI swallows the
-            // parse): the formula's numbers ship, and the response says so.
+            // parse): the formula's numbers ship. Recorded, not yet surfaced
+            // in the response (the contract v3 PR adds engine_source there).
             engineSource = ai && typeof ai === "object" && ("fork" in ai || "shock" in ai) ? "llm" : "fallback_parse";
             // merge AI fields over baseline
             partial = {
@@ -2685,7 +2771,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // Enforce guardrails & shape
         const result = safeShape(partial, z.guardrails);
 
-        if (callId !== null) await deps.recordOutput?.(callId, result);
+        if (callId !== null) await deps.recordOutput?.(callId, result, outputMeta(engineSource));
         return jsonResponse(result, 200);
       } catch (genErr) {
         // The server claimed the credit before generation — generation
