@@ -1335,7 +1335,7 @@ export default function TuneResultScreen() {
           <Ionicons name="information-circle-outline" size={14} color={C.MUTED} />
           <Text style={S.modeHelperText}>
             {mode === "balanced"
-              ? "Factory-balanced for most conditions."
+              ? "Balanced for most conditions."
               : mode === "comfort"
               ? "Softer: better for rough, physical terrain."
               : "Stiffer: better for speed and precision."}
@@ -1480,7 +1480,7 @@ export default function TuneResultScreen() {
               target={sagProvenance.target}
               min={sagProvenance.min}
               max={sagProvenance.max}
-              caption={`${sagProvenance.target} mm: factory target for your ${
+              caption={`${sagProvenance.target} mm: typical target for your ${
                 bikeTitle !== "Custom Bike" ? bikeTitle : "bike"
               }`}
               C={C}
@@ -1820,7 +1820,7 @@ function SpringCheckCard({
         : "";
     const rangeStr =
       typeof wMin === "number" && typeof wMax === "number"
-        ? `: factory range ${wMin}–${wMax} lb`
+        ? `: typical range ${wMin}–${wMax} lb`
         : "";
     return (
       <View style={[S.card, S.lift, { borderColor: GREEN + "44" }]}>
@@ -1853,9 +1853,9 @@ function SpringCheckCard({
     if (typeof wMin === "number" && typeof wMax === "number" && w != null) {
       const outBy = Math.round(w > wMax ? w - wMax : wMin - w);
       const side = w > wMax ? "over" : "under";
-      body = `${w} lb is ${outBy} lb ${side} the factory range (${wMin}–${wMax} lb). Stock rates still work. Expect to ride the ${dir} end of the clickers.`;
+      body = `${w} lb is ${outBy} lb ${side} the typical range (${wMin}–${wMax} lb). Stock rates still work. Expect to ride the ${dir} end of the clickers.`;
     } else {
-      body = `Your weight is just outside the factory spring range. Stock rates still work. Expect to ride the ${dir} end of the clickers.`;
+      body = `Your weight is just outside the typical spring range. Stock rates still work. Expect to ride the ${dir} end of the clickers.`;
     }
   } else {
     icon = "warning-outline";

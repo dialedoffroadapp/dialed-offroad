@@ -241,7 +241,7 @@ export default function QuizRevealScreen() {
                   ))
                 ) : (
                   <Text style={styles.whyLine}>
-                    Built from your weight, your riding, and this bike&apos;s stock settings. Ride it, then tell us what it did.
+                    Built from your weight, your riding, and what we know about this bike. Ride it, then tell us what it did.
                   </Text>
                 )}
               </Animated.View>

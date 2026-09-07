@@ -149,7 +149,7 @@ export default function TuneResultsPreviewScreen() {
           <Ionicons name="information-circle-outline" size={14} color={C.MUTED} />
           <Text style={S.modeHelperText}>
             {mode === "balanced"
-              ? "Factory-balanced for most conditions."
+              ? "Balanced for most conditions."
               : mode === "comfort"
               ? "Softer: better for rough, physical terrain."
               : "Stiffer: better for speed and precision."}
