@@ -17,9 +17,12 @@ import {
 import {
   buildTuneTwo,
   callParseFeedback,
+  capIssues,
+  ISSUES_MAX_CHARS,
   makeHandler,
   mergeFeedback,
   safeShape,
+  sanitizeNotes,
   sanitizeParsedFeedback,
   type HandlerDeps,
 } from "../index.ts";
@@ -661,4 +664,34 @@ Deno.test("14. per-bike rule: regenerate cap → 429 unrecorded; no_trial → 40
   // The rule is independent of the hourly limit: the limit still fires first.
   const limited = makeHandler(deps({ countRecentCalls: () => Promise.resolve(20), claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }) }));
   assertEquals((await limited(fakeReq(body))).status, 429);
+});
+
+/* ---------------- Test 21: issues cap and note sanitizing (decision 13) ---------------- */
+
+Deno.test("21. rider.issues is capped before storage and prompting; notes are strings, no URLs, 200 chars, 12 max", async () => {
+  const long = "x".repeat(ISSUES_MAX_CHARS + 50);
+  let recorded: any = null;
+  const h = makeHandler(deps({ getUserId: () => Promise.resolve(null), recordCall: (r) => { recorded = r; return Promise.resolve(); } }));
+  const resp = await h(fakeReq({ mode: "zero_baseline_v1", input: { ...BASELINE, rider: { ...BASELINE.rider, issues: long } } }, ""));
+  assertEquals(resp.status, 200);
+  assertEquals(recorded.input.rider.issues.length, ISSUES_MAX_CHARS);
+  const i: any = { rider: { issues: 42 } };
+  capIssues(i);
+  assertEquals(i.rider.issues, undefined);
+
+  const notes = sanitizeNotes([
+    "Set sag to 105 mm. See https://example.com/setup?x=1 for the chart.",
+    42,
+    "   ",
+    "y".repeat(400),
+    ...Array.from({ length: 15 }, (_, k) => `note ${k}`),
+  ]);
+  assertEquals(notes.length, 12);
+  assertEquals(notes[0], "Set sag to 105 mm. See for the chart.");
+  assertEquals(notes[1].length, 200);
+  assert(notes[1].endsWith("…"));
+  assert(!notes.some((n) => /https?:\/\//.test(n)));
+  // The shape applies it to what the model returned.
+  const shaped = safeShape({ fork: { comp_clicks: 12, reb_clicks: 12 }, shock: { lsc_clicks: 12, hsc_turns: 1.5, reb_clicks: 14, sag_mm: 105 }, notes: ["ok", "visit www.evil.example now", 7] } as any, GUARDRAILS);
+  assertEquals(shaped.notes, ["ok", "visit now"]);
 });

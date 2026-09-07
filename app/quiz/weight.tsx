@@ -159,7 +159,7 @@ export default function QuizWeightScreen() {
               placeholder="Stiffer springs, a heavy pack, a bad knee..."
               placeholderTextColor={Q.STEEL}
               multiline
-              maxLength={800}
+              maxLength={300}
               autoFocus
               style={styles.freeInput}
             />

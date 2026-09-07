@@ -460,6 +460,43 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline) {
   return { lsc_clicks, reb_clicks, hsc_turns };
 }
 
+/* ------------------------- Output sanitizing (decision 13, 2026-09-07) ------------------------- */
+
+export const ISSUES_MAX_CHARS = 300;
+export const NOTE_MAX_CHARS = 200;
+export const NOTES_MAX = 12;
+const URL_RE = /\b(?:https?:\/\/|www\.)\S+/gi;
+
+/** Notes are model output shown verbatim to the rider: strings only, no
+ *  URLs, at most NOTE_MAX_CHARS each, at most NOTES_MAX. Empty after
+ *  cleaning = dropped. */
+export function sanitizeNotes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const n of raw) {
+    if (typeof n !== "string") continue;
+    const cleaned = n.replace(URL_RE, "").replace(/\s{2,}/g, " ").trim();
+    if (!cleaned) continue;
+    out.push(cleaned.length > NOTE_MAX_CHARS ? cleaned.slice(0, NOTE_MAX_CHARS - 1).trimEnd() + "…" : cleaned);
+    if (out.length >= NOTES_MAX) break;
+  }
+  return out;
+}
+
+/** rider.issues is free text that reaches the model prompt verbatim: cap it
+ *  BEFORE it is stored or prompted. Mutates body.input in place. */
+export function capIssues(input: { rider?: { issues?: unknown } } | undefined): void {
+  const rider = input?.rider;
+  if (!rider) return;
+  if (typeof rider.issues !== "string") {
+    if (rider.issues !== undefined) delete rider.issues;
+    return;
+  }
+  const trimmed = rider.issues.trim().slice(0, ISSUES_MAX_CHARS);
+  if (trimmed) rider.issues = trimmed;
+  else delete rider.issues;
+}
+
 /* ------------------------- Guardrail shaping ------------------------- */
 
 export function safeShape(
@@ -516,7 +553,7 @@ export function safeShape(
       has_air_fork: !!partial.detected?.has_air_fork,
       fork_family: partial.detected?.fork_family,
     },
-    notes: Array.isArray(partial.notes) ? partial.notes.slice(0, 12) : [],
+    notes: sanitizeNotes(partial.notes),
   };
 
   if (typeof partial.fork?.air_pressure_bar === "number") {
@@ -1976,8 +2013,10 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       if (!body || !body.input) {
         return jsonResponse({ error: "Bad request" }, 400);
       }
-      // Before recordCall stores body.input: malformed location never lands.
+      // Before recordCall stores body.input: malformed location never lands,
+      // and rider.issues is capped at ISSUES_MAX_CHARS (it reaches the prompt).
       sanitizeLocation(body);
+      capIssues(body.input);
 
       const mode = body.mode ?? "zero_baseline_v1";
 
