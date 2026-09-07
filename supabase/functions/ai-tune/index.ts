@@ -980,6 +980,7 @@ function buildExplainPrompts(z: ZeroInput["input"], tune: Partial<ZeroResult>, d
   const system = [
     "You are a world-class off-road suspension tuner for modern MX and enduro bikes.",
     "The rider's tune has ALREADY been decided by a deterministic engine. You explain it; you never change it and never propose different numbers.",
+    "Click convention: clicks count OUT from fully closed. Adding clicks (+) is SOFTER compression or FASTER rebound; removing clicks (-) is FIRMER compression or SLOWER rebound. More bar of fork air is firmer. A diving or bottoming front wants FEWER compression clicks, never more.",
     'Return ONLY strict JSON: {"notes": string[]} with 3 to 8 short track-side notes (each under 160 characters):',
     "- why these settings fit this rider (weight, skill, style, discipline, terrain, goals, issues), in plain language,",
     "- what to feel for on the first ride,",
