@@ -20,6 +20,7 @@ import {
   conditionsRuleDeltas,
   LEGACY_TO_V3,
   capIssues,
+  formulaBaseline,
   ISSUES_MAX_CHARS,
   makeHandler,
   mergeFeedback,
@@ -95,6 +96,8 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     modelExists: () => Promise.resolve(true),
     claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }),
     refundClaim: () => Promise.resolve(),
+    baselineEngine: () => Promise.resolve("llm" as const),
+    explain: () => Promise.resolve(null),
     ...overrides,
   };
 }
@@ -944,4 +947,51 @@ Deno.test("23. discipline: stated beats the keyword scan; without the client's a
   // No discipline: the keyword scan decides as before.
   const scan = await call({ ...common, terrain: "mx track, hardpack", rider: { weight_lbs: 185, skill: "intermediate", style: "short_motos", goals: [] } });
   assertEquals(scan.fork.comp_clicks, 14);
+});
+
+/* ---------------- Test 24: deterministic-first baselines behind app_config.baseline_engine (decision 1) ---------------- */
+
+Deno.test("24. deterministic mode: the formula's numbers ship, the model only explains, and explain failure keeps the formula's notes", async () => {
+  const input = { ...BASELINE, rider: { weight_lbs: 205, discipline: "mx", skill: "pro", style: "short_motos", goals: ["jump support"] }, wants_air_fork: true };
+  const formula = formulaBaseline(input as any);
+  const metas: any[] = [];
+  const h = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      baselineEngine: () => Promise.resolve("deterministic" as const),
+      explain: (_z, tune) => Promise.resolve([`Explained: fork comp ${(tune.fork as any).comp_clicks} for a pro on jumps.`, "Feel for hold-up on the faces."]),
+      recordCall: () => Promise.resolve(7),
+      recordOutput: (_id, _out, meta) => {
+        metas.push(meta);
+        return Promise.resolve();
+      },
+    })
+  );
+  const body = await (await h(fakeReq({ mode: "zero_baseline_v1", input }, ""))).json();
+  assertEquals(body.fork.comp_clicks, formula.partial.fork!.comp_clicks);
+  assertEquals(body.shock.lsc_clicks, formula.partial.shock!.lsc_clicks);
+  assertEquals(body.fork.air_pressure_bar, formula.partial.fork!.air_pressure_bar);
+  assertEquals(body.engine_source, "deterministic");
+  assertEquals(body.notes_source, "llm");
+  assert(body.notes[0].startsWith("Explained: fork comp"));
+  assertEquals(metas[0].engine_source, "deterministic");
+
+  // Explain fails: numbers unchanged, the formula's own notes, notes_source formula.
+  const h2 = makeHandler(deps({ getUserId: () => Promise.resolve(null), baselineEngine: () => Promise.resolve("deterministic" as const), explain: () => Promise.reject(new Error("timeout")) }));
+  const b2 = await (await h2(fakeReq({ mode: "zero_baseline_v1", input }, ""))).json();
+  assertEquals(b2.fork.comp_clicks, formula.partial.fork!.comp_clicks);
+  assertEquals(b2.notes_source, "formula");
+  assert(b2.notes[0].startsWith("Baseline zero-based tune for"));
+
+  // An unreadable flag is the shipped path.
+  const h3 = makeHandler(deps({ getUserId: () => Promise.resolve(null), baselineEngine: () => Promise.resolve(null) }));
+  const b3 = await (await h3(fakeReq({ mode: "zero_baseline_v1", input }, ""))).json();
+  assertEquals(b3.engine_source, "formula"); // no key in the test env: llm mode without a key is the formula
+  assertEquals(b3.notes_source, "formula");
+
+  // Clamp detection: a 260 lb pro on an air fork lands on the MX air ceiling (11.8 bar).
+  const heavy = formulaBaseline({ ...input, rider: { ...input.rider, weight_lbs: 260 } } as any);
+  assertEquals(heavy.clampHits, ["fork_air"]);
+  assertEquals(heavy.partial.fork!.air_pressure_bar, 11.8);
+  assertEquals(formula.clampHits, []); // 205 lb pro: inside every window
 });

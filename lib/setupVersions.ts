@@ -56,6 +56,10 @@ export type RecommendedContext = {
   rider_weight_lbs: number | null;
   spring_check: { status: string; direction?: string } | null;
   engine: string;
+  /** Who decided the numbers (contract v3): "deterministic" | "llm" |
+   *  "fallback_parse" | "fallback_error" | "formula". Copy that says "for
+   *  your weight" is gated on "deterministic" (decision 4, 2026-09-07). */
+  engine_source?: string | null;
 };
 
 // recommended_settings jsonb: canonical shape is { settings, context }, but prod

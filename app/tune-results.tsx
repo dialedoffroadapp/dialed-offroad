@@ -993,6 +993,7 @@ export default function TuneResultScreen() {
                     direction: base.spring_check.direction,
                   }
                 : null,
+              engine_source: metaObj?.spec?.engine_source ?? base?.engine_source ?? null,
               engine: "zero_baseline_v1",
             },
           });
@@ -1081,6 +1082,7 @@ export default function TuneResultScreen() {
                   direction: base.spring_check.direction,
                 }
               : null,
+            engine_source: metaObj?.spec?.engine_source ?? base?.engine_source ?? null,
             engine: "zero_baseline_v1",
           },
         });

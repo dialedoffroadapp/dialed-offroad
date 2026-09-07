@@ -19,6 +19,16 @@ The Tune Two edge grows a conditions input and runs the ride-day rule base itsel
 | 6d | Honest previous values | `PreviousTune` with nullable circuits, `sanitizePrevious`, `add()` skips unknown circuits and names them, `safeShapeSparse` keeps null | test 19 | none | `snapshotToTune` sends nulls; `Tune2Result`; `completeTune` for the legacy debrief | low |
 | 6e | Shape hardening | air clamp 7 to 14 (guardrail-driven), NaN guard, `engine_source` on baseline and refine | tests 16, 20 | none | `AIR_MIN_BAR` / `AIR_MAX_BAR` in guardrails and `normalizeResult` | low |
 
+## Shadow-report decisions (2026-09-07)
+
+| # | Decision | In this PR |
+|---|---|---|
+| 1 | Deterministic-first baselines behind `app_config.baseline_engine` (staged seed "llm"; the dev branch is flipped to "deterministic"; prod stays "llm" until River flips it) | `formulaBaseline` + `formulaClampHits`, `callExplain` (explanation-only model call, fail-open), `baselineEngine` / `explain` deps, `notes_source` on the response, Deno test 24. The shadow comparison is now `scripts/engine-tools/shadow_compare.ts`, a tracked regression script |
+| 2 | Shadow report extended before the flip | the formula's per-circuit distribution by weight band and by skill, and every input that lands on a formula clamp, in the same report |
+| 3 | The eleven verified-coil air versions | staged migration `20260907120000` on the integration branch (merged here) |
+| 4 | "for your weight" only when `engine_source` is deterministic | every baseline writer persists `recommended_settings.context.engine_source`; `whyForYou` and the reveal's why line gate on it; Jest test |
+| 5 | Symptom rows held as draft | `// DRAFT` marker on the v3 rows; the corrected `docs/symptom-table-draft.md` drives the final table |
+
 ## Decision 11 additions (2026-09-07)
 
 | Change | Engine | Tests | Client | Risk |

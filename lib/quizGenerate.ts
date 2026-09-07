@@ -168,6 +168,7 @@ export async function generateQuizTune(params: {
           sag_bounds: [sagBounds.min, sagBounds.max],
           fork_type: modelSpecs?.fork_type ?? null,
           shock_type: modelSpecs?.shock_type ?? null,
+          engine_source: tune.engine_source ?? null,
         },
         // Quiz provenance (display + analysis only; readers ignore it).
         quiz: {

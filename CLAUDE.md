@@ -303,6 +303,28 @@ candidate in a 2h window).
   baseline always emits quarter turns) and the refine response carries
   `engine_source`; the regression harness masks exactly those two things and
   checks moved HSC lands on a quarter turn within one of v1's move.
+- **Deterministic-first baselines (decision 1, 2026-09-07, contract PR):**
+  `app_config.baseline_engine` ("llm" | "deterministic", staged seed
+  `20260907130000` = "llm"; the dev-3-0 branch is flipped to
+  "deterministic"; prod stays "llm" until River flips it). In deterministic
+  mode the formula (`formulaBaseline`) owns the numbers and the model only
+  writes the notes through `callExplain` (explanation-only prompt, JSON, 5 s,
+  fail-open to the formula's notes); responses carry `engine_source`
+  ("deterministic") and `notes_source` ("llm" | "formula"). The edge reads
+  the flag per request with a 60 s cache and falls back to "llm".
+  `scripts/engine-tools/shadow_compare.ts` (+ `pull_captured.sh`) is the
+  PERMANENT baseline regression script: formula vs shipped LLM, the formula's
+  distribution by weight band and skill, and every input on a formula clamp
+  (`formulaClampHits`); its `results/` dir is gitignored (rider free text).
+- **Copy rule (decision 4, 2026-09-07):** the setup sheet's "Why N for you"
+  and the reveal's why line may say "for your weight" / "At N lbs" ONLY when
+  the version's `recommended_settings.context.engine_source` (persisted by
+  every baseline writer from the tune's `engine_source`) is "deterministic";
+  otherwise "For this bike" / "Built from your riding". `WhyContext.engineSource`.
+- **Symptom rows are DRAFT (decision 5, 2026-09-07):** the 14 v3 rows in
+  `buildTuneTwo` are held as draft until the corrected
+  `docs/symptom-table-draft.md` lands (River reviews it with Claude next
+  session); regenerate the draft with `scripts/engine-tools/symptom_table.ts`.
 - **Contract v3, decision 11 (2026-09-07):** `rider.discipline` ("mx" |
   "offroad") is a first-class baseline input that replaces the engine's
   keyword scan when present (offroad = the enduro math); the quiz sends the

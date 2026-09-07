@@ -1,3 +1,4 @@
+// @ts-nocheck — Deno script (engine tooling), not part of the app build
 // scripts/engine-tools/symptom_table.ts
 // Decision 12 (2026-09-07): generate docs/symptom-table-draft.md from the
 // engine itself: the proposed move for each of the 14 v3 symptom ids at three

@@ -112,6 +112,9 @@ type ZeroResult = {
   // but safeShape passes it through if present so it's never silently dropped.
   spring_check?: unknown;
   engine_source?: EngineSource;
+  /** Who wrote the notes (decision 1, 2026-09-07): in deterministic mode the
+   *  formula owns the numbers and the model only explains them. */
+  notes_source?: "llm" | "formula";
   /** Tire pressure change from the conditions stage (psi, both ends). */
   tire_psi_delta?: number;
 };
@@ -134,6 +137,7 @@ type Tune2Result = {
   notes: string[];
   spring_check?: unknown;
   engine_source?: EngineSource;
+  notes_source?: "llm" | "formula";
   tire_psi_delta?: number;
 };
 
@@ -719,6 +723,7 @@ export function safeShape(
   // reconstruction otherwise drops unknown fields).
   if (partial.spring_check !== undefined) out.spring_check = partial.spring_check;
   if (partial.engine_source) out.engine_source = partial.engine_source;
+  if (partial.notes_source) out.notes_source = partial.notes_source;
   if (typeof partial.tire_psi_delta === "number") out.tire_psi_delta = partial.tire_psi_delta;
   return out;
 }
@@ -966,6 +971,78 @@ async function callOpenAI(
   }
 }
 
+/* ------------------- Explanation-only model call (decision 1, 2026-09-07) ------------------- */
+// Deterministic mode: the formula owns the numbers; the model explains them
+// (the ai-explain shape, in-path for now). Fail-open: any failure keeps the
+// formula's own notes. JSON mode, 5 s abort.
+
+function buildExplainPrompts(z: ZeroInput["input"], tune: Partial<ZeroResult>, discipline: Discipline): { system: string; user: string } {
+  const system = [
+    "You are a world-class off-road suspension tuner for modern MX and enduro bikes.",
+    "The rider's tune has ALREADY been decided by a deterministic engine. You explain it; you never change it and never propose different numbers.",
+    'Return ONLY strict JSON: {"notes": string[]} with 3 to 8 short track-side notes (each under 160 characters):',
+    "- why these settings fit this rider (weight, skill, style, discipline, terrain, goals, issues), in plain language,",
+    "- what to feel for on the first ride,",
+    "- at most one 'If X then +N fork comp' style test per circuit, using small moves of 1 to 2 clicks or 0.1 bar.",
+    "Never suggest revalving, oil changes, springs, or hardware. No URLs. No markdown.",
+  ].join("\n");
+  const f = tune.fork ?? ({} as any);
+  const s = tune.shock ?? ({} as any);
+  const air = typeof f.air_pressure_bar === "number" ? `, fork air ${f.air_pressure_bar} bar` : "";
+  const user = [
+    `Bike: ${[z.year, z.make, z.model].filter(Boolean).join(" ") || "Unknown bike"}`,
+    `Discipline: ${discipline === "mx" ? "motocross" : discipline === "enduro" ? "off-road / enduro" : "mixed"}`,
+    `Terrain: ${z.terrain ?? ""}${z.track ? ` @ ${z.track}` : ""}`,
+    `Rider: ${z.rider.weight_lbs ? `${z.rider.weight_lbs} lb` : "weight not given"}, skill=${z.rider.skill}, style=${z.rider.style}`,
+    `Goals: ${(z.rider.goals || []).join(", ") || "none given"}`,
+    `Issues: ${z.rider.issues || "none described"}`,
+    `Tune (final, clicks out from closed): fork compression ${f.comp_clicks}, fork rebound ${f.reb_clicks}${air}; shock low-speed ${s.lsc_clicks}, high-speed ${s.hsc_turns} turns, rebound ${s.reb_clicks}, sag ${s.sag_mm} mm.`,
+    "Explain this tune to the rider. Respond ONLY with the JSON object.",
+  ].join("\n");
+  return { system, user };
+}
+
+export async function callExplain(
+  z: ZeroInput["input"],
+  tune: Partial<ZeroResult>,
+  discipline: Discipline,
+  meter?: UsageMeter,
+  fetcher: typeof fetch = fetch
+): Promise<string[] | null> {
+  if (!OPENAI_API_KEY) return null;
+  const { system, user } = buildExplainPrompts(z, tune, discipline);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const resp = await fetcher("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        temperature: 0.3,
+        max_tokens: 400,
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (!resp.ok) throw new Error(`OpenAI HTTP ${resp.status}`);
+    const json = await resp.json();
+    addUsage(meter, json);
+    const parsed = JSON.parse(String(json?.choices?.[0]?.message?.content ?? "{}"));
+    const notes = sanitizeNotes(parsed?.notes);
+    return notes.length ? notes : null;
+  } catch (e) {
+    console.warn("explain skipped (fail-open):", (e instanceof Error ? e.message : String(e)).slice(0, 160));
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ----------------------- Baseline personal notes helper ----------------------- */
 
 function buildPersonalBaselineNotes(
@@ -1053,6 +1130,41 @@ function buildPersonalBaselineNotes(
 }
 
 /* --------------------------- Baseline / fallback (mode: zero_baseline_v1) --------------------------- */
+
+/** The formula's clamp bounds per circuit (baselineForkClicks / baselineShock /
+ *  baselineSagMm / baselineAirBar). A value that lands exactly on one is
+ *  reported as a clamp hit (decision 2, 2026-09-07). */
+export function formulaClampHits(
+  z: ZeroInput["input"],
+  discipline: Discipline,
+  tune: { fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number }; shock: { lsc_clicks: number; reb_clicks: number; hsc_turns: number; sag_mm: number } }
+): string[] {
+  const hits: string[] = [];
+  const at = (v: number | undefined, lo: number, hi: number) => typeof v === "number" && (Math.abs(v - lo) < 1e-9 || Math.abs(v - hi) < 1e-9);
+  if (at(tune.fork.comp_clicks, 6, 24)) hits.push("fork_comp");
+  if (at(tune.fork.reb_clicks, 6, 24)) hits.push("fork_reb");
+  if (at(tune.shock.lsc_clicks, 6, 20)) hits.push("shock_lsc");
+  if (at(tune.shock.reb_clicks, 8, 22)) hits.push("shock_reb");
+  if (at(tune.shock.hsc_turns, 0.75, 2.0)) hits.push("shock_hsc");
+  const g = z.guardrails;
+  if (g && typeof g.sag_target_mm === "number") {
+    if (at(tune.shock.sag_mm, g.sag_min_mm ?? 95, g.sag_max_mm ?? 112) && tune.shock.sag_mm !== g.sag_target_mm) hits.push("shock_sag");
+  } else if (at(tune.shock.sag_mm, 98, 112)) hits.push("shock_sag");
+  const airLo = discipline === "mx" ? 9.8 : discipline === "enduro" ? 9.0 : 9.4;
+  const airHi = discipline === "mx" ? 11.8 : discipline === "enduro" ? 11.2 : 11.5;
+  if (at(tune.fork.air_pressure_bar, airLo, airHi)) hits.push("fork_air");
+  return hits;
+}
+
+/** The deterministic baseline (decision 1, 2026-09-07): the numbers the
+ *  formula produces for this input, with the discipline it used and the
+ *  circuits that landed on a clamp. The handler's deterministic mode ships
+ *  these numbers; the LLM path merges the model's numbers over them. */
+export function formulaBaseline(z: ZeroInput["input"]): { partial: Partial<ZeroResult>; discipline: Discipline; clampHits: string[] } {
+  const partial = buildFallback(z);
+  const discipline = inferDiscipline(z);
+  return { partial, discipline, clampHits: formulaClampHits(z, discipline, partial as any) };
+}
 
 function buildFallback(z: ZeroInput["input"]): Partial<ZeroResult> {
   const discipline = inferDiscipline(z);
@@ -1906,9 +2018,10 @@ export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
       }
 
       /* ------------------------------ v3 taxonomy ------------------------------ */
-      // Rows marked SIGN-OFF are tuning authorship (2026-09-05) awaiting
-      // River's per-row confirmation; the direction follows the legacy row
-      // closest in meaning.
+      // DRAFT (decision 5, 2026-09-07): every row below is held as draft
+      // until the corrected docs/symptom-table-draft.md lands. Rows marked
+      // SIGN-OFF are tuning authorship (2026-09-05) awaiting River's per-row
+      // confirmation; the direction follows the legacy row closest in meaning.
       case "harsh_small_bumps": {
         applyHarsh(s, "Harsh on small bumps", "harsh_small_bumps");
         break;
@@ -2290,12 +2403,21 @@ export type HandlerDeps = {
    *  reject the request before any insert; null = lookup infra failure, the
    *  id is dropped (never stored) and the call proceeds. */
   modelExists: (modelId: string) => Promise<boolean | null>;
+  /** app_config.baseline_engine (decision 1, 2026-09-07): "deterministic" =
+   *  the formula's numbers with model-written notes; "llm" = the shipped
+   *  path. null = unreadable (the handler falls back to "llm"). */
+  baselineEngine: () => Promise<BaselineEngine | null>;
+  /** Explanation-only model call for deterministic mode; null = keep the
+   *  formula's notes. */
+  explain: (z: ZeroInput["input"], tune: Partial<ZeroResult>, discipline: Discipline, meter?: UsageMeter) => Promise<string[] | null>;
   /** The per-bike baseline rule (decision 3, 2026-09-05): server_claim_baseline.
    *  null = infra failure (fail-open with a loud log, the function's precedent). */
   claimBaseline: (userId: string, bikeId: string | null) => Promise<ClaimOutcome | null>;
   /** Exact inverse of a consumed server claim, after a generation throw. */
   refundClaim: (userId: string) => Promise<void>;
 };
+
+export type BaselineEngine = "llm" | "deterministic";
 
 export type OutputMeta = {
   duration_ms: number;
@@ -2326,6 +2448,8 @@ function getAnonClient() {
   }
   return _anonClient;
 }
+
+let _engineCache: { value: BaselineEngine; at: number } | null = null;
 
 // deno-lint-ignore no-explicit-any
 let _serviceClient: any = null;
@@ -2411,6 +2535,22 @@ export const defaultDeps: HandlerDeps = {
       return null;
     }
   },
+
+  baselineEngine: async () => {
+    const now = Date.now();
+    if (_engineCache && now - _engineCache.at < 60_000) return _engineCache.value;
+    const { data, error } = await getServiceClient().from("app_config").select("value").eq("key", "baseline_engine").maybeSingle();
+    if (error) {
+      console.warn("app_config.baseline_engine read failed (llm):", String(error.message ?? error).slice(0, 160));
+      return null;
+    }
+    const raw = (data as any)?.value;
+    const value: BaselineEngine = raw === "deterministic" ? "deterministic" : "llm";
+    _engineCache = { value, at: now };
+    return value;
+  },
+
+  explain: (z, tune, discipline, meter) => callExplain(z, tune, discipline, meter),
 
   claimBaseline: async (userId, bikeId) => {
     const { data, error } = await getServiceClient().rpc("server_claim_baseline", {
@@ -2734,17 +2874,31 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       try {
         const z = body.input;
 
-        // Build initial baseline (fallback). If OpenAI is available, refine.
-        let partial: Partial<ZeroResult> = buildFallback(z);
+        // Decision 1 (2026-09-07): app_config.baseline_engine picks the path.
+        // deterministic = the formula owns the numbers and the model only
+        // explains them (fail-open to the formula's notes); llm = the shipped
+        // merge of the model's numbers over the formula.
+        const engineMode: BaselineEngine = (await deps.baselineEngine().catch(() => null)) ?? "llm";
+        const formula = formulaBaseline(z);
+        let partial: Partial<ZeroResult> = formula.partial;
         let engineSource: EngineSource = "formula";
+        let notesSource: "llm" | "formula" = "formula";
 
-        if (OPENAI_API_KEY) {
+        if (engineMode === "deterministic") {
+          engineSource = "deterministic";
+          const explained = await deps.explain(z, formula.partial, formula.discipline, meter).catch(() => null);
+          if (explained && explained.length) {
+            partial = { ...partial, notes: explained };
+            notesSource = "llm";
+          }
+        } else if (OPENAI_API_KEY) {
           try {
             const ai = await callOpenAI(z, meter);
             // {} means the model's text was not JSON (callOpenAI swallows the
             // parse): the formula's numbers ship. Recorded, not yet surfaced
             // in the response (the contract v3 PR adds engine_source there).
             engineSource = ai && typeof ai === "object" && ("fork" in ai || "shock" in ai) ? "llm" : "fallback_parse";
+            notesSource = Array.isArray((ai as any)?.notes) && (ai as any).notes.length ? "llm" : "formula";
             // merge AI fields over baseline
             partial = {
               ...partial,
@@ -2771,6 +2925,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         }
 
         partial.engine_source = engineSource;
+        partial.notes_source = notesSource;
 
         // Fork type is decided by the catalog flag or the rider's toggle, never
         // by the model (decision 1): a coil bike ships with no air value even

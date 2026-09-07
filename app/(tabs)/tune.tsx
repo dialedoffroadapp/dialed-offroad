@@ -991,6 +991,8 @@ export default function TuneScreen() {
             // picks its fields explicitly (app/tune-results.tsx).
             fork_type: modelSpecs?.fork_type ?? null,
             shock_type: modelSpecs?.shock_type ?? null,
+            // Who decided the numbers (decision 4): gates "for your weight" copy.
+            engine_source: s.engine_source ?? null,
           },
           onboarding: isOnboarding ? true : false,
           guest: !user?.id,

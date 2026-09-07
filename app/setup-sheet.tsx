@@ -293,6 +293,7 @@ export default function SetupSheetScreen() {
                               riderWeightLbs: (v?.context as any)?.rider?.weight_lbs ?? (v?.recommended_settings as any)?.context?.rider_weight_lbs ?? null,
                               terrain: v?.terrain ?? null,
                               skill: (v?.context as any)?.rider?.skill ?? null,
+                              engineSource: (v?.recommended_settings as any)?.context?.engine_source ?? null,
                               history,
                             })}
                           </Text>

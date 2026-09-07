@@ -51,3 +51,6 @@ app-example
 # Supabase preview-branch env (scripts/dev-branch.sh) and the prod backup it suggests
 .env.branch
 .env.prod
+
+# Engine regression inputs: captured tune_calls rows carry rider free text and coarse locations.
+scripts/engine-tools/results/

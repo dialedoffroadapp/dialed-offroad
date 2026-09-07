@@ -208,6 +208,7 @@ export async function autoCreateBaselineFromPendingTune(opts: AutoBaselineOption
             }
           : null,
         engine: "zero_baseline_v1",
+        engine_source: spec?.engine_source ?? tune.engine_source ?? null,
       },
     });
 

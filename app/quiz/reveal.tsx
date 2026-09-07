@@ -241,7 +241,9 @@ export default function QuizRevealScreen() {
                   ))
                 ) : (
                   <Text style={styles.whyLine}>
-                    Built from your weight, your riding, and what we know about this bike. Ride it, then tell us what it did.
+                    {(tune as any)?.engine_source === "deterministic"
+                      ? "Built from your weight, your riding, and what we know about this bike. Ride it, then tell us what it did."
+                      : "Built from your riding and what we know about this bike. Ride it, then tell us what it did."}
                   </Text>
                 )}
               </Animated.View>

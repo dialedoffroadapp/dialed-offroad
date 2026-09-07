@@ -10,6 +10,7 @@ import { completeTune, SYMPTOM_PHRASES, type Tune2Result, type ZeroTuneResult } 
 import { diffChanges, snapshotToTune, wireConditions } from "../lib/rideAdjust";
 import { ALL_SYMPTOMS, LEGACY_TO_V3, qualifierLabel, symptomLabel } from "../lib/rideSymptoms";
 import { classifyTuneNotes, reasonFromNotes, NOTE_HINTS } from "../lib/tuneNotes";
+import { whyForYou } from "../lib/adjusterCopy";
 
 test("snapshotToTune never invents a value: nulls stay null and air goes out only when the bike has one", () => {
   const sparse = snapshotToTune({ fork_comp: 14, fork_reb: null, fork_air: 10.4, shock_lsc: 11, shock_hsc: null, shock_reb: 15, shock_sag: null }, false);
@@ -61,4 +62,12 @@ test("tuneNotes: conditions notes get their own bucket and mine a reason", () =>
   expect(c.routine).toEqual([notes[4]]);
   expect(reasonFromNotes(notes, NOTE_HINTS.fork_comp)).toBe("Conditions: choppy hardpack");
   expect(reasonFromNotes(notes, NOTE_HINTS.shock_reb)).toBe("Rear kicks");
+});
+
+test("decision 4: \"for your weight\" copy only when the version's engine_source is deterministic", () => {
+  const ctx = { riderWeightLbs: 172, terrain: "Hardpack", skill: "intermediate" };
+  expect(whyForYou("fork_comp", 12, { ...ctx, engineSource: "deterministic" })).toMatch(/^At 172 lbs on hardpack/);
+  expect(whyForYou("fork_comp", 12, { ...ctx, engineSource: "llm" })).toMatch(/^For this bike on hardpack/);
+  expect(whyForYou("fork_comp", 12, { ...ctx })).toMatch(/^For this bike/);
+  expect(whyForYou("fork_comp", 12, { ...ctx, engineSource: "llm" })).not.toMatch(/172|weight/);
 });

@@ -84,6 +84,10 @@ export const ADJUSTERS: Record<AdjusterKey, AdjusterMeta> = {
 };
 
 export type WhyContext = {
+  /** recommended_settings.context.engine_source of the version. "for your
+   *  weight" copy is allowed ONLY when this is "deterministic" (decision 4,
+   *  2026-09-07): the shipped LLM path barely reacts to weight. */
+  engineSource?: string | null;
   riderWeightLbs?: number | null;
   terrain?: string | null;
   skill?: string | null; // engine skill or quiz skill id
@@ -102,7 +106,12 @@ const SKILL_PHRASE: Record<string, string> = {
 
 /** "Why 12 for you" body. Template now; ai-explain output later. */
 export function whyForYou(key: AdjusterKey, value: number | null, ctx: WhyContext): string {
-  const w = typeof ctx.riderWeightLbs === "number" ? `At ${Math.round(ctx.riderWeightLbs)} lbs` : "For your weight";
+  const deterministic = ctx.engineSource === "deterministic";
+  const w = deterministic
+    ? typeof ctx.riderWeightLbs === "number"
+      ? `At ${Math.round(ctx.riderWeightLbs)} lbs`
+      : "For your weight"
+    : "For this bike";
   const t = ctx.terrain ? ` on ${ctx.terrain.toLowerCase()}` : "";
   const s = ctx.skill && SKILL_PHRASE[ctx.skill] ? ` ${SKILL_PHRASE[ctx.skill]}` : "";
   const lead: Record<AdjusterKey, string> = {

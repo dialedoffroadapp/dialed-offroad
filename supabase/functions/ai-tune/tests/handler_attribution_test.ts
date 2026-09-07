@@ -18,6 +18,8 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     modelExists: () => Promise.resolve(true),
     claimBaseline: () => Promise.resolve({ ok: true, reason: "pro" }),
     refundClaim: () => Promise.resolve(),
+    baselineEngine: () => Promise.resolve("llm" as const),
+    explain: () => Promise.resolve(null),
     ...overrides,
   };
 }
