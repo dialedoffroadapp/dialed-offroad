@@ -55,6 +55,9 @@ export function todaysSetupRules(c: RideConditions, base: SettingsSnapshot, setu
     themes.push("dirt");
   } else if (surface === "hardpack" && c.state === "rutted") {
     // Second report (2026-09-07, sub-task 4a): the research SUPPORTS this rule; no change.
+    // Tally: faster rebound 4 (Keefer Inc, PulpMX, MXA hardpack traction guidance, Vital MX
+    // rider threads) to slower rebound plus more LSC 2 (Teknik offroad guide, MXA rut-hold-up
+    // note). It flips only when the fork packs or deflects out of the rut: add shock LSC then.
     push({ circuit: "fork_reb", delta: +1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts." });
     themes.push("dirt");
   } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
@@ -118,6 +121,8 @@ export function retuneRules(
   let title = "";
   let note: string | null = null;
   if (tile === "watered") {
+    // Tally (sub-task 4b): keep it soft plus faster rebound 4 (Vital MX end-of-day thread,
+    // Keefer Inc, PulpMX, Click Suspension) to firm back up 2 (Teknik, some MXA hold-up advice).
     title = "Retuned for wet dirt";
     if (ctx.bottoming === true) {
       if (has(effective, "fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Wet dirt but it bottomed: a click firmer fork comp. Compression stays soft otherwise." });
@@ -128,6 +133,8 @@ export function retuneRules(
     tirePsiDelta = -0.5;
     note = "Fresh water means grip. Hold compression soft.";
   } else if (tile === "roughed") {
+    // Tally (sub-task 4c): soften 4 (Vital MX rough-track threads, Keefer Inc, PulpMX, Click
+    // Suspension) to firm 3 (Teknik, MXA hold-up advice, Troll Training), the closest of the three.
     title = "Retuned for a rough track";
     const firmer = ctx.discipline === "offroad" || ctx.bottoming === true || ctx.skill === "pro";
     if (has(effective, "fork_comp")) {

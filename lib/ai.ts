@@ -471,7 +471,13 @@ async function fetchLastOutcome(
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-export type ShockGuard = { unit?: "clicks" | "turns" | null; hasHsc?: boolean | null };
+export type ShockGuard = {
+  unit?: "clicks" | "turns" | null;
+  hasHsc?: boolean | null;
+  /** The catalog's stock LSC and rebound in TURNS on a turns shock (RM-Z450: MXA); the engine anchors its baseline on them. */
+  stockLscTurns?: number | null;
+  stockRebTurns?: number | null;
+};
 
 function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean, stockAirBar?: number | null, shock?: ShockGuard | null) {
   return {
@@ -479,6 +485,8 @@ function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean, s
     // answers LSC and rebound in quarter turns and leaves hsc_turns null.
     ...(shock?.unit === "turns" ? { shock_adjust_unit: "turns" as const } : {}),
     ...(shock?.hasHsc === false ? { has_shock_hsc: false } : {}),
+    ...(shock?.unit === "turns" && typeof shock.stockLscTurns === "number" ? { shock_stock_lsc_turns: shock.stockLscTurns } : {}),
+    ...(shock?.unit === "turns" && typeof shock.stockRebTurns === "number" ? { shock_stock_reb_turns: shock.stockRebTurns } : {}),
     clicks_min: 0,
     clicks_max: 30,
     hsc_turns_min: 0,
