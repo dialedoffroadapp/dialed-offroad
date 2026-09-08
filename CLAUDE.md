@@ -910,6 +910,48 @@ that change none of those skip it.)*
   `tire_defaults.json` are tagged tuner, "Dialed pick within the published
   range"; `bike_id` on refine payloads is uuid only.
 
+- **Second suspension reference (2026-09-07, River's prompt
+  `claude-code-prompt-2026-09-07-suspension-reference.md`; resolution
+  `docs/suspension-reference-resolution-2026-09-07.md`; gaps
+  `docs/catalog-gaps.md`; integration `236503b`, contract engine commit +
+  merge, edge on dev-3-0). The report file itself
+  (`suspension-reference-2026-09-07.md`) was NOT in Downloads: the tuner 1a
+  rows, the not-found list and the 4a tally are owed from it.** Migration
+  `20260907210000` (applied on dev-3-0, staged): `stock_clicker_tag`
+  (factory | tuner | inferred; inferred is NEVER surfaced as stock, and
+  `v_bikes_with_stock` reads it as null), KTM 125/150 SX + TC 125 AER/XACT
+  2017+ factory clickers, Sherco rows split at 2022 with the SEF-R KYB
+  2022+ values on the Factory rows (flagged), KTM 250 SX and GasGas MC
+  inferred from KTM; `click_range_source/tag/note`, the seed 30 maxima
+  NULLED on every row, tuner maxima on KYB SSS (22) and Showa 49 coil (20),
+  WP maxima as inferred notes only, `click_range_verified` false everywhere
+  (no factory maximum found, bars stay hidden); BFRC columns
+  `shock_adjust_unit` (clicks | turns) and `has_shock_hsc` (RM-Z450 2018+
+  = turns, no HSC, shock_type "Showa BFRC linkage"); `catalog_constants`
+  spring bands per model year + the Keefer 2 psi note; `app_config`
+  `weight_slope_cap_clicks` 3, `skill_offset_comp_per_step` -2,
+  `skill_offset_reb_per_step` -1. **Engine (contract):** guardrails
+  `shock_adjust_unit` / `has_shock_hsc` (LSC and rebound in quarter turns,
+  `hsc_turns` null, both modes); the weight slope's click contribution
+  capped and a per-class skill offset (`rider.class` novice | c | b | a,
+  additive optional; quiz sends fast = b) behind the three config keys via
+  the `engineTuning` dep; the shadow script re-run
+  (`results/shadow-2026-09-08.md`). **Rules:** rutted hardpack kept
+  (supported); watered no longer takes back the morning softening (choppy
+  frees fork rebound + shock LSC, bottoming firms); roughed softens fork
+  comp for MX and keeps the firmer click off-road / after bottoming / for a
+  pro; `RetuneContext` (state, bottoming, skill, discipline) on the client
+  wrapper, the core and `Tune2Conditions.retune`, parity grid extended.
+  **Client:** `lib/stockCopy.ts` ("factory stock" vs "tuner-published
+  stock"; inferred = missing, `stock_missing` + `stock_tag` on
+  `quiz_reveal_viewed`); `lib/adjusterLocations.ts` rewritten to the
+  report's rows (kyb_sss corrected, showa_coil / showa_sff2 /
+  showa_sff_air_tac / showa_bfrc, ohlins, sachs, KYB shock; kyb_psf2 stays
+  DRAFT; Honda cluster side year-conditional; Teknik cited) with a
+  per-family jest test; BFRC in Current Setup, the sheet and the
+  walkthrough (`circuitStep` / `circuitUnit`, `formatSetting(v, key,
+  unit)`, HSC row hidden); a tune's `hsc_turns` may be null.
+
 ## Sprint focus (in order)
 
 1. Results page
