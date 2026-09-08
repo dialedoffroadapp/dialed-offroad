@@ -23,9 +23,9 @@ Rows the next research pass should target. Kept current by hand after each catal
 
 ## Catalog rows the report contradicts (flagged, not changed)
 
-- Kawasaki KX250: the report puts the KX250 on KYB SSS from 2020; the catalog's 2017 to 2020 row runs on Showa SFF through 2020 and its 2021+ row says Showa 48 coil. The 15/15 SFF figures were written to the 2017 to 2020 row (the family matches for 2017 to 2019); the 2020 boundary and the 2021+ fork family need a catalog correction.
+- Kawasaki KX250: verify from a 2020 and a 2021 KX250 owner's manual whether the fork moved to KYB SSS for 2020 (the report says so on one magazine line; the catalog's 2017 to 2020 row runs on Showa SFF through 2020 and its 2021+ row says Showa 48 coil). Not corrected from the report alone (River, 2026-09-08). The 15/15 stays on the 2017 to 2020 row, noted as confirmed for 2017 to 2019 only. Weekly gap sweep item.
 - Suzuki RM-Z250 2019+: the report's row reads Showa SFF coil / Showa BFRC (inferred); the catalog says KYB 49 coil / KYB linkage. Conflict logged, nothing written (River's follow-up).
-- WP linkage shock maxima (LSC about 17 to 20, HSC about 2 turns, rebound about 20; Slavens, Vital MX, tuner) and WP PDS (HSC about 1.75 turns; Slavens) are in the report but were not in the prompt's list of families to write; available for a later pass.
+- WP linkage and PDS shock maxima: WRITTEN as tuner by migration `20260907240000` (River, 2026-09-08): linkage LSC 18 (midpoint of about 17 to 20), HSC 2 turns, rebound 20; PDS HSC 1.75 turns; Slavens and Vital MX as the source, the range in the note. `click_range_verified` stays false so nothing shows; a factory confirmation is a flag flip.
 
 ## Rows without stock clickers after 20260907220000 (84)
 
@@ -139,4 +139,4 @@ Rows the next research pass should target. Kept current by hand after each catal
 
 ## Click range maxima
 
-No factory maximum was found for any family; `click_range_verified` is false on every row and the range bars stay hidden. Tuner maxima are stored on KYB SSS (22, JBI) and Showa 49 coil (20, MXA) rows with their tag; Honda Showa shocks carry HSC 3 turns (MXA). WP AER 48 (about 25), WP XACT 2023+ (about 30) and WP XPLOR (about 30) are inferred and live in `click_range_note` only. Showa SFF-2 and SFF-Air TAC: clicks, totals not stated. A manual page or a physical count per family promotes a row to factory.
+No factory maximum was found for any family; `click_range_verified` is false on every row and the range bars stay hidden. Tuner maxima are stored on KYB SSS (22, JBI) and Showa 49 coil (20, MXA) rows with their tag; Honda Showa shocks carry HSC 3 turns (MXA); WP linkage shocks carry LSC 18, HSC 2 turns, rebound 20 and WP PDS shocks HSC 1.75 turns (Slavens, Vital MX). WP AER 48 (about 25), WP XACT 2023+ (about 30) and WP XPLOR (about 30) are inferred and live in `click_range_note` only. Showa SFF-2 and SFF-Air TAC: clicks, totals not stated. A manual page or a physical count per family promotes a row to factory.
