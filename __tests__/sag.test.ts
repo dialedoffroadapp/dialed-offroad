@@ -93,6 +93,10 @@ test("save: no version = a row with no version link; bad numbers and a failed wr
   expect(calls.map((c) => c.op)).toEqual(["insert"]);
   expect(calls[0].payload).toMatchObject({ version_id: null });
   await expect(saveSagMeasurement({ bikeId: BIKE, versionId: null, a: 500, b: 577, c: 506, bounds: BOUNDS })).rejects.toThrow(/do not add up/);
+  // B is optional at save (finding 1): riding only, static stored as 0.
+  calls.length = 0;
+  await saveSagMeasurement({ bikeId: BIKE, versionId: null, a: 615, b: null, c: 510, bounds: BOUNDS });
+  expect(calls[0].payload).toMatchObject({ riding_mm: 105, static_mm: 0, b_mm: 615 });
   insertError = { message: "relation sag_measurements does not exist" };
   await expect(saveSagMeasurement({ bikeId: BIKE, versionId: null, a: 610, b: 577, c: 506, bounds: BOUNDS })).rejects.toThrow(/Couldn't save the measurement/);
 });

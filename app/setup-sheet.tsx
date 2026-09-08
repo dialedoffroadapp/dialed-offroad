@@ -62,10 +62,11 @@ export default function SetupSheetScreen() {
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
-  const { bikeId, setupId, freeRefineUsed } = useLocalSearchParams<{ bikeId?: string; setupId?: string; freeRefineUsed?: string }>();
+  const { bikeId, setupId, freeRefineUsed, expand } = useLocalSearchParams<{ bikeId?: string; setupId?: string; freeRefineUsed?: string; expand?: string }>();
   const { shareView, share, available: canShare } = useShareSetup();
   const [data, setData] = useState<BikePageData | null>(null);
-  const [expanded, setExpanded] = useState<AdjusterKey | null>(null);
+  // The sag page links here with ?expand=fork_air or fork_spring (finding 1).
+  const [expanded, setExpanded] = useState<AdjusterKey | null>(typeof expand === "string" && expand in ADJUSTERS ? (expand as AdjusterKey) : null);
   const [fix, setFix] = useState<RowDef | null>(null);
   const [busy, setBusy] = useState(false);
 

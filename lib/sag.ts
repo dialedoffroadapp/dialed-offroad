@@ -65,6 +65,54 @@ export function springRuleApplies(staticV: SagVerdict, ridingV: SagVerdict): boo
   return staticV === "in_range" && (ridingV === "low" || ridingV === "high");
 }
 
+/** The page's section order (device pass finding 1, 2026-09-08): the test
+ *  pins it so a rewrite cannot quietly move the target or the result. */
+export const SAG_SECTION_ORDER = ["header", "target", "inputs", "result", "save", "history", "why", "how", "front"] as const;
+export type SagSection = (typeof SAG_SECTION_ORDER)[number];
+
+/** Result coloring: in the window, close (within 3 mm of an edge), or out. */
+export type SagResultState = "in_range" | "close" | "out" | "empty";
+export const SAG_CLOSE_MM = 3;
+export function ridingState(ridingMm: number | null, bounds: SagBounds): SagResultState {
+  if (!isNum(ridingMm)) return "empty";
+  if (ridingMm >= bounds.min && ridingMm <= bounds.max) return "in_range";
+  const off = ridingMm < bounds.min ? bounds.min - ridingMm : ridingMm - bounds.max;
+  return off <= SAG_CLOSE_MM ? "close" : "out";
+}
+
+/** The one sentence under the result, from a small rule set. */
+export function resultSentence(p: { ridingMm: number | null; staticMm: number | null; bounds: SagBounds; staticTarget: number | null | undefined }): { text: string; springRule: boolean } {
+  const rv = ridingVerdict(p.ridingMm, p.bounds);
+  const sv = staticVerdict(p.staticMm, p.staticTarget);
+  if (rv === "unknown") return { text: "Enter A and C to see your riding sag.", springRule: false };
+  if (springRuleApplies(sv, rv)) return { text: "Static is right and riding is out. That is a spring, not preload.", springRule: true };
+  if (rv === "in_range") return { text: `In the window, ${p.bounds.min} to ${p.bounds.max} mm. Ride it.`, springRule: false };
+  if (rv === "high") return { text: "Too much sag. Add preload until it reads inside the window.", springRule: false };
+  return { text: "Too little sag. Back the preload off until it reads inside the window.", springRule: false };
+}
+
+/** Save is enabled the moment A and C exist (riding sag); B is optional at save. */
+export function canSaveSag(i: SagInputs): boolean {
+  return isNum(i.a) && isNum(i.c) && i.a > i.c;
+}
+
+const introKey = (bikeId: string) => `sag_intro_seen_v1:${bikeId}`;
+/** "Why it matters" and "How to measure" open on the first visit, closed after the first save. */
+export async function sagIntroOpen(bikeId: string): Promise<boolean> {
+  try {
+    return (await AsyncStorage.getItem(introKey(bikeId))) === null;
+  } catch {
+    return true;
+  }
+}
+export async function markSagIntroSeen(bikeId: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(introKey(bikeId), new Date().toISOString());
+  } catch {
+    // device only
+  }
+}
+
 export function verdictLine(kind: "riding" | "static", v: SagVerdict, bounds?: SagBounds, target?: number | null): string {
   if (v === "unknown") return kind === "riding" ? "Enter A and C for riding sag." : "Enter A and B for static sag.";
   if (kind === "riding" && bounds) {
@@ -94,10 +142,12 @@ export type SagMeasurement = {
 
 /** Insert the measurement (linked to the active version) and log the
  *  event. Throws on a failed write so the screen can show it. */
-export async function saveSagMeasurement(p: { bikeId: string; versionId: string | null; a: number; b: number; c: number; bounds: SagBounds; fromRecheck?: boolean }): Promise<SagMeasurement> {
+export async function saveSagMeasurement(p: { bikeId: string; versionId: string | null; a: number; b: number | null; c: number; bounds: SagBounds; fromRecheck?: boolean }): Promise<SagMeasurement> {
   const { staticMm, ridingMm } = sagMath({ a: p.a, b: p.b, c: p.c });
-  if (staticMm === null || ridingMm === null) throw new Error("Enter all three measurements.");
-  if (ridingMm <= 0 || staticMm < 0 || ridingMm > 200 || staticMm > 100) throw new Error("Those numbers do not add up. A is the longest, then B, then C.");
+  if (ridingMm === null) throw new Error("Enter A and C.");
+  // B is optional at save (finding 1): static goes in as 0 when it was not measured.
+  const staticOut = staticMm ?? 0;
+  if (ridingMm <= 0 || staticOut < 0 || ridingMm > 200 || staticOut > 100) throw new Error("Those numbers do not add up. A is the longest, then B, then C.");
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id;
   if (!userId) throw new Error("Sign in to save a measurement.");
@@ -106,16 +156,17 @@ export async function saveSagMeasurement(p: { bikeId: string; versionId: string 
     bike_id: isUuid(p.bikeId) ? p.bikeId : null,
     version_id: p.versionId && isUuid(p.versionId) ? p.versionId : null,
     a_mm: Math.round(p.a),
-    b_mm: Math.round(p.b),
+    b_mm: isNum(p.b) ? Math.round(p.b) : Math.round(p.a),
     c_mm: Math.round(p.c),
     riding_mm: ridingMm,
-    static_mm: staticMm,
+    static_mm: staticOut,
   };
   const { data, error } = await supabase.from("sag_measurements").insert(row).select("*").single();
   if (error) throw new Error(`Couldn't save the measurement: ${error.message}`);
   const saved = data as unknown as SagMeasurement;
   const inRange = ridingVerdict(ridingMm, p.bounds) === "in_range";
   void logEvent("sag_measured_saved", { bike_id: p.bikeId, version_id: row.version_id, riding_mm: ridingMm, static_mm: staticMm, in_range: inRange });
+  void markSagIntroSeen(p.bikeId);
   if (p.fromRecheck) void logEvent("sag_recheck_completed", { bike_id: p.bikeId });
   return saved;
 }

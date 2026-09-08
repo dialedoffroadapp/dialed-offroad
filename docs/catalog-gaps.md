@@ -21,6 +21,10 @@ Rows the next research pass should target. Kept current by hand after each catal
 - KYB PSF-2 exact per-leg positions of the hi/lo compression and hi/lo rebound adjusters.
 - An explicit published "clicks per 10 lb" slope from any major shop: none exists, and it is contradicted by their stated philosophy (weight = springs).
 
+## Owed manual pages
+
+- Husqvarna TX 300 and KTM 250/300 XC (and the rest of the WP MX linkage platform outside the 250 SX-F, FC 250 and XC-F rows): the riding sag window 102 to 112 mm was applied from the KTM 250 SX-F manual across the shared platform by migration `20260907260000` (device pass finding 1, 2026-09-08). A TX or XC specific manual page would confirm it per model; until then the source string says so.
+
 ## Catalog rows the report contradicts (flagged, not changed)
 
 - Kawasaki KX250: verify from a 2020 and a 2021 KX250 owner's manual whether the fork moved to KYB SSS for 2020 (the report says so on one magazine line; the catalog's 2017 to 2020 row runs on Showa SFF through 2020 and its 2021+ row says Showa 48 coil). Not corrected from the report alone (River, 2026-09-08). The 15/15 stays on the 2017 to 2020 row, noted as confirmed for 2017 to 2019 only. Weekly gap sweep item.
