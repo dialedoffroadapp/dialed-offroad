@@ -41,7 +41,8 @@ test("sag: a matched row wins, an unmatched bike takes the platform manual value
 
 test("fork-air why-copy: WP's base is WP's, the per-weight step is ours", () => {
   const withBase = whyForYou("fork_air", 10.4, { riderWeightLbs: 172, terrain: "Hardpack", skill: "intermediate", stockAirBar: 10.6 });
-  expect(withBase).toMatch(/^WP's base for this model is 10\.6 bar\. At 172 lbs on hardpack/);
+  // The lead is "At 172 lbs" where the engine gate allows weight copy and "For this bike" where it does not (contract branch); both keep WP's base first.
+  expect(withBase).toMatch(/^WP's base for this model is 10\.6 bar\. (At 172 lbs on hardpack|For this bike on hardpack)/);
   expect(withBase).toMatch(/our rule, not WP's/);
   const noBase = whyForYou("fork_air", 10.4, { riderWeightLbs: 172, terrain: "Hardpack", skill: "intermediate" });
   expect(noBase).not.toMatch(/WP/);

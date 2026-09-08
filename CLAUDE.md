@@ -730,6 +730,47 @@ that change none of those skip it.)*
   the Pro-gated tires tile and the list-first Garage; (15) `paywall_position`
   stays action-gated, `premium.tsx` honors `returnTo` anyway.
 
+- **Research applied 2026-09-07 (`docs/open-questions-resolution-2026-09-07.md`;
+  report `~/Downloads/compass_artifact_wf-7c11d3ba-*.md`; questions in
+  `docs/open-questions-2026-09-07.md`):** catalog migrations `20260907140000`
+  (fork type by year with `fork_type_verified` + source, 2016 SX/SX-F/FC/TC
+  rows split at 2017 and marked `fork_type_ambiguous` with `has_air_fork`
+  NULL, KTM 250/300 XC 2017 to 2023 air, 2024+ XC/XC-F/EX XACT coil, sag
+  windows + `stock_static_sag_mm` + `sag_window_source`, WP `stock_air_bar`
+  bases, stock clickers + `stock_shock_hsc_turns`, spring notes, reference
+  rider 165 to 187 lb on KTM/Husqvarna/Sherco, `catalog_constants` table) and
+  `20260907150000` (SX-F rows split at 2019 for the 2019 to 2022 clickers);
+  both STAGED for prod, APPLIED on dev-3-0 by psql with history rows (the
+  branch history carries the contract branch's `20260907130000`, which the
+  integration folder lacks, so `scripts/dev-branch.sh` refuses to push from
+  it; pushing from the contract branch works). Fork type resolves ONLY through
+  `lib/modelSpecs.ts:effectiveAirFork(specs, override)`: catalog flag, else
+  the rider's air-or-coil answer (`bikes.air_fork_override`, guest bike
+  `airFork`, quiz `answers.airForkOverride`; asked by `app/quiz/bike.tsx`'s
+  third phase on ambiguous rows only), else the caller's fallback. Unmatched
+  bikes take `lib/sagBounds.ts:platformSagBounds(make, model)` (manual values
+  per platform with source) before `DEFAULT_SAG`. `generateTune` sends the
+  row's `stock_air_bar` as the air base (integration: replaces the flat 10.6;
+  contract branch: sent as `aer_pressure_bar_default` only when the catalog
+  has one, slope stays the engine's). Tire defaults are Dunlop's per surface
+  AND discipline (`TIRE_PRESSURE_SOURCE`); walkthrough WP fork rows say both
+  clickers sit under the RIGHT cap (AER/XACT) with sources in the file
+  header, Öhlins/Showa/KYB rows stay DRAFT; the HSC quarter turn is OUR step
+  (no detent claim). `docs/lifecycle-emails.md` recommends Resend over Loops
+  (Apple relay documented) pending River's yes. Contract branch
+  (`feat/engine-contract-v3`, merged with integration at `c75cba1`, edge
+  deployed to dev-3-0): OpenAI's spend-cap 429 codes
+  (`project_spend_limit_exceeded`, `organization_spend_limit_exceeded`) are
+  `SpendLimitError`; llm mode ships the formula tagged `engine_source:
+  "spend_limited"` + "Tuning is paused" note, deterministic mode tags
+  `notes_source: "spend_limited"`; `lib/ai.ts:tuningPausedLine` renders it
+  on the reveal and legacy results. `docs/symptom-table-draft.md` carries a
+  "Research 2026-09-07" agree/disagree column (annotation only). Flags in
+  the resolution doc: Suzuki RM-Z250 2016 to 2018 NOT flipped (instruction
+  conflicted with the seed), 2024+ enduro fork names provisional, GasGas
+  inferred from the shared platform, 126 existing 2016 bikes sit on
+  ambiguous rows and need the answer on next open.
+
 ## Sprint focus (in order)
 
 1. Results page
