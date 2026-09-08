@@ -9,7 +9,8 @@ import { QuizChoiceCard } from "../../components/quiz/QuizChoiceCard";
 import { QuizShell } from "../../components/quiz/QuizShell";
 import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { useAnswerRhythm } from "../../components/quiz/useAnswerRhythm";
-import { answersFromProfile, canConfirmProfile, confirmLine, fetchActiveRiderProfile, type RiderProfile } from "../../lib/riderProfile";
+import { answersFromProfile, canConfirmProfile, confirmFillPatch, confirmLine, fetchActiveRiderProfile, profileFieldRows, saveRiderProfile, type RiderProfile } from "../../lib/riderProfile";
+import { useToast } from "../../components/Toast";
 import { useQuiz, useQuizStepView } from "../../lib/quizContext";
 import {
   brandColor,
@@ -22,6 +23,7 @@ import {
 export default function QuizSkillScreen() {
   const router = useRouter();
   const { answers, setAnswers } = useQuiz();
+  const toast = useToast();
   useQuizStepView("skill");
 
   // Rider profile (2026-09-08): with the facts known (the active profile,
@@ -48,6 +50,16 @@ export default function QuizSkillScreen() {
     if (!known) return;
     const facts = answersFromProfile(known);
     await setAnswers(facts);
+    // A seeded profile may lack the class or the discipline: the confirm
+    // step fills them (River, 2026-09-08). A failed write is said, not hidden.
+    const fill = known.id ? confirmFillPatch(known, answers.discipline) : null;
+    if (fill) {
+      try {
+        await saveRiderProfile(fill);
+      } catch {
+        toast.show("Your rider profile did not update; edit it from Profile.", { kind: "error" });
+      }
+    }
     await logQuizEvent("quiz_step_answered", { step: "skill", answer: "confirmed", engine_skill: known.skill ? engineSkillForQuizSkill(known.skill) : undefined });
     router.push(nextQuizRoute("skill", { ...answers, ...facts }) as never);
   };
@@ -82,6 +94,16 @@ export default function QuizSkillScreen() {
     return (
       <QuizShell step="skill" title={confirmLine(known)} subtitle="Same rider, same numbers. Change it for a different rider or a new weight." showBack>
         <View style={styles.cards}>
+          {known.id && !(known.class && typeof known.weight_lbs === "number") ? (
+            <View style={styles.fields} testID="quiz-skill-profile-fields">
+              {profileFieldRows(known).map((r) => (
+                <View key={r.label} style={styles.fieldRow}>
+                  <Text style={styles.fieldLabel}>{r.label}</Text>
+                  <Text style={styles.fieldValue}>{r.value}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
           <Pressable onPress={() => void confirmYes()} accessibilityRole="button" style={styles.yes} testID="quiz-skill-confirm-yes">
             <Text style={[styles.yesText, displayFont("bold")]}>Yes</Text>
           </Pressable>
@@ -125,4 +147,8 @@ const styles = StyleSheet.create({
   yesText: { color: Q.BG, fontSize: 20, letterSpacing: 0.5 },
   change: { borderWidth: 1, borderColor: Q.BORDER_STRONG, borderRadius: 14, paddingVertical: 16, alignItems: "center" },
   changeText: { color: Q.TEXT, fontSize: 16 },
+  fields: { backgroundColor: Q.PANEL, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 },
+  fieldRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Q.BORDER },
+  fieldLabel: { color: Q.STEEL, fontSize: 14 },
+  fieldValue: { color: Q.TEXT, fontSize: 14, fontWeight: "600" },
 });

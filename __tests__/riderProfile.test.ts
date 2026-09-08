@@ -2,15 +2,29 @@
 jest.mock("../lib/supabase", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) }, from: () => { throw new Error("offline"); } } }));
 
 /* eslint-disable import/first */
-import { answersFromProfile, canConfirmProfile, confirmLine, profilePatchFromQuiz, saveRiderProfile, activeRiderProfileId, type RiderProfile } from "../lib/riderProfile";
+import { answersFromProfile, canConfirmProfile, confirmFillPatch, confirmLine, profileFieldRows, profilePatchFromQuiz, saveRiderProfile, activeRiderProfileId, type RiderProfile } from "../lib/riderProfile";
 
 const base: RiderProfile = { id: "11111111-2222-4333-8444-555555555555", user_id: "u", name: "Me", weight_lbs: 160, unit: "lbs", skill: "comfortable", class: "c", discipline_default: "offroad" };
 
-test("the confirm line reads the weight in the rider's unit and the class", () => {
+test("the confirm line names the weight and the class only when both are stored; otherwise the generic line with every field shown", () => {
   expect(confirmLine(base)).toBe("Still 160 lb, C class?");
   expect(confirmLine({ ...base, unit: "kg", weight_lbs: 161 })).toBe("Still 73 kg, C class?");
-  expect(confirmLine({ ...base, class: null, skill: "fast" })).toBe("Still 160 lb, B class?");
-  expect(confirmLine({ ...base, class: null, skill: null })).toBe("Still 160 lb?");
+  // A seeded profile: weight and skill, no class (the class is not derived for the line).
+  const seeded = { ...base, class: null, discipline_default: null };
+  expect(confirmLine(seeded)).toBe("Confirm your rider profile");
+  expect(confirmLine({ ...base, weight_lbs: null })).toBe("Confirm your rider profile");
+  expect(profileFieldRows(seeded)).toEqual([
+    { label: "Weight", value: "160 lb" },
+    { label: "Skill", value: "Comfortable" },
+    { label: "Class", value: "C class (from your skill)" },
+  ]);
+  expect(profileFieldRows(base)[3]).toEqual({ label: "Rides", value: "Off-road" });
+});
+
+test("a confirmed step fills what the seeded profile lacks: the class from the skill and this run's discipline", () => {
+  expect(confirmFillPatch({ ...base, class: null, discipline_default: null }, "offroad")).toEqual({ class: "c", discipline_default: "offroad" });
+  expect(confirmFillPatch({ ...base, class: null }, null)).toEqual({ class: "c" });
+  expect(confirmFillPatch(base, "mx")).toBeNull();
 });
 
 test("a profile collapses the quiz only with both weight and skill", () => {

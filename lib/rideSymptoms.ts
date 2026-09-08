@@ -7,7 +7,7 @@
 // The plan's 14-id taxonomy (4.3) is a separate contract change set.
 import type { Tune2SymptomId } from "./ai";
 
-export type SymptomChip = { id: Tune2SymptomId; label: string; qualifierPrompt?: string; qualifiers?: string[] };
+export type SymptomChip = { id: Tune2SymptomId; label: string; hint?: string; qualifierPrompt?: string; qualifiers?: string[] };
 
 export const PRIMARY_SYMPTOMS: SymptomChip[] = [
   { id: "rear_kicks_accel", label: "Rear kicks", qualifierPrompt: "Where did it kick?", qualifiers: ["Square edges", "Landings", "Braking bumps"] },
