@@ -15,7 +15,7 @@ import { ChoiceChip, Cta, Grid, Hint, RideH1, RideScreenBg, ValueRow } from "../
 import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
 import { previewValue, RETUNE_TILES, type RetuneTile } from "../../lib/conditionsRules";
 import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
-import { disciplineFromBike } from "../../lib/discipline";
+import { disciplineForBike } from "../../lib/discipline";
 import { engineSkillForQuizSkill, readQuizAnswers } from "../../lib/quizOnboarding";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { CIRCUIT_STEPS, type CircuitKey } from "../../lib/currentSetup";
@@ -77,7 +77,7 @@ export default function RideRetuneScreen() {
         state: s.conditions.state ?? null,
         bottoming: s.motos.some((m) => m.symptoms.some((sy) => sy.id === "bottoms_landings" || sy.id === "bottoming")),
         skill: riderSkill,
-        discipline: disciplineFromBike(s.bike.make, s.bike.model),
+        discipline: disciplineForBike(s.bike),
       },
     }).then((r) => {
       if (!alive) return;

@@ -20,6 +20,8 @@ import { mostChangedCircuits, VersionGraph } from "../components/garage/VersionG
 import { Accent, Button, Card, Chip, Eyebrow, H1, Label, Row, Small } from "../components/v3/primitives";
 import { headingFont, interFont, useV3Fonts, V3 } from "../components/v3/theme";
 import { ADJUSTERS, whyForYou, type AdjusterKey } from "../lib/adjusterCopy";
+import { WhyCard } from "../components/v3/WhyCard";
+import { whyTextFor } from "../lib/whyCopy";
 import { saveBikeExtras } from "../lib/bikeExtras";
 import { createManualVersion, runningSetup, switchRunningSetup, type SetupWithVersions } from "../lib/bikeSetups";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../lib/garageV3";
@@ -62,10 +64,11 @@ export default function SetupSheetScreen() {
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
-  const { bikeId, setupId, freeRefineUsed } = useLocalSearchParams<{ bikeId?: string; setupId?: string; freeRefineUsed?: string }>();
+  const { bikeId, setupId, freeRefineUsed, expand } = useLocalSearchParams<{ bikeId?: string; setupId?: string; freeRefineUsed?: string; expand?: string }>();
   const { shareView, share, available: canShare } = useShareSetup();
   const [data, setData] = useState<BikePageData | null>(null);
-  const [expanded, setExpanded] = useState<AdjusterKey | null>(null);
+  // The sag page links here with ?expand=fork_air or fork_spring (finding 1).
+  const [expanded, setExpanded] = useState<AdjusterKey | null>(typeof expand === "string" && expand in ADJUSTERS ? (expand as AdjusterKey) : null);
   const [fix, setFix] = useState<RowDef | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -332,6 +335,17 @@ export default function SetupSheetScreen() {
           </View>
         ))}
 
+        {v ? (
+          <WhyCard
+            text={whyTextFor({
+              notes: v.notes,
+              weightLbs: (v.context as any)?.rider?.weight_lbs ?? (v.recommended_settings as any)?.context?.rider_weight_lbs ?? null,
+              skill: (v.context as any)?.rider?.skill ?? null,
+              terrain: setup.terrain ?? v.terrain ?? null,
+            })}
+          />
+        ) : null}
+
         <Card style={{ paddingVertical: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }} onPress={() => router.push({ pathname: "/garage-bike", params: { bikeId: bike.id } } as never)} accessibilityLabel="Tires">
           <View style={styles.name}>
             <Ionicons name="ellipse-outline" size={17} color={V3.muted} />
@@ -369,6 +383,7 @@ export default function SetupSheetScreen() {
                   year: bike.year ?? undefined,
                   setupId: setup.id,
                   terrain: setup.terrain ?? v?.terrain ?? null,
+                  discipline: bike.discipline ?? null,
                 }).then((first) => router.push(first as never))
               }
               style={{ marginTop: 10 }}

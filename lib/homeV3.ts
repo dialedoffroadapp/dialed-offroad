@@ -31,6 +31,8 @@ export type HomeBike = {
   is_primary: boolean;
   /** Rider's air-or-coil answer for a region-ambiguous model year (null = not asked). */
   air_fork_override?: boolean | null;
+  /** The rider's answer to "What do you mostly ride this bike on?" (2026-09-08); null = not asked. */
+  discipline?: "mx" | "offroad" | null;
 };
 
 export type SeasonStats = { rideDays: number; ridesLogged: number; hours: number | null };

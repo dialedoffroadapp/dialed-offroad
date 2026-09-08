@@ -252,5 +252,28 @@ export function locationCopy(key: AdjusterKey, value: string, unit: string, fork
   return { where, how: HOW[key](value, unit), photo };
 }
 
+const SHORT_NAME: Record<AdjusterKey, string> = {
+  fork_air: "Air",
+  fork_comp: "Compression",
+  fork_reb: "Rebound",
+  shock_sag: "Sag",
+  shock_lsc: "Low speed",
+  shock_hsc: "High speed",
+  shock_reb: "Shock rebound",
+  fork_spring: "Fork spring",
+  shock_spring: "Shock spring",
+};
+
+/** "Compression: right fork leg, top cap" for the Adjust screen (finding 8,
+ *  2026-09-08): the first sentence of the walkthrough copy. null when the
+ *  family's row is a DRAFT or the manual fallback, so nothing is asserted. */
+export function shortLocation(key: AdjusterKey, fork: ForkFamily, shock: ShockFamily, ctx?: LocationContext): string | null {
+  const { where } = locationCopy(key, "", "", fork, shock, ctx);
+  if (/^DRAFT|owner's manual/.test(where)) return null;
+  const first = where.split(/(?<=\.)\s+/)[0]?.replace(/\.$/, "").trim();
+  if (!first) return null;
+  return `${SHORT_NAME[key]}: ${first.charAt(0).toLowerCase()}${first.slice(1)}`;
+}
+
 /** One card per settable adjuster, in the clicker sheet's order. */
 export const WALKTHROUGH_ORDER: readonly AdjusterKey[] = ["fork_air", "fork_comp", "fork_reb", "shock_sag", "shock_lsc", "shock_hsc", "shock_reb"] as const;

@@ -997,6 +997,52 @@ that change none of those skip it.)*
   offline stretch) with the table or event to check after every step and
   the expected `engine_source` per call.
 
+- **Device pass findings 1 to 8 (2026-09-08, `feat/v3-integration`, edge on
+  `feat/engine-contract-v3`; checklist Pass C in `docs/device-pass-2026-09.md`):**
+  (1) `app/garage/[bikeId]/sag.tsx` rebuilt around the target and the
+  result (`lib/sag.ts`: `SAG_SECTION_ORDER`, `ridingState`,
+  `resultSentence` incl. the spring rule, `canSaveSag`, per-bike intro
+  latch); WP MX linkage sag windows verified 102 to 112 by
+  `20260907260000`. (2) The Tires sheet SHOWS the tune's numbers
+  (`lib/tirePlanStore.ts:garageTirePlan`, subtitle "From your [setup]
+  tune, [conditions]", system chips with Edit); the 12 / 12.5 on a TX 300
+  came from the sheet's hardcoded MX defaults AND `generateTuneTwo`
+  dropping `rider.discipline` on this branch: `Tune2Context.rider.discipline`
+  is sent, `lib/discipline.ts:disciplineForBike(bike)` = the stored
+  `bikes.discipline` first, the classifier as fallback; the edge's
+  `tireFieldsFor` now answers a conditions ask with no surface word from the
+  discipline table (`conditionsAsk`). (3) Add a bike ASKS the discipline
+  after the fork and tire questions (platform preselects only, Continue
+  required); stored in `bikes.discipline` (`20260907270000`), carried by
+  guest bikes, sign-up migration and every `startGarageQuizFlow` caller;
+  `add_bike` seeds none. Other fields still derived from the platform:
+  `engineStyleForDiscipline`/`engineGoalsFor` (style and goals from the
+  discipline), `terrainIdFor` (regenerate preselect), the tire table's
+  discipline, today/retune context. (4) Rider profiles: migration
+  `20260908100000` (`rider_profiles` + `profiles.active_rider_profile_id`,
+  STAGED for prod, APPLIED on dev-3-0 with 228 rows seeded from the latest
+  `tune_calls.input.rider` per user; the quiz answers never reached the
+  server), `lib/riderProfile.ts` (fail-open reads, throwing writes, guests
+  null), the quiz skill step collapses to "Still 160 lb, C class? Yes /
+  Change" (Add a bike always visits it: `flowStepNeeded`), the weight step's
+  "Just this bike" checkbox, `components/profile/RiderProfileCard.tsx`,
+  `rider.profile_id` (uuid only) on both payloads and accepted by the edge
+  (`sanitizeRiderProfileId`), `docs/rider-profiles.md`. (5) Drumroll lines
+  are the six true ones and check off as `lib/quizGenerate.ts` reports each
+  stage (`onStage`, `QUIZ_BUILD_STAGES`); llm engine_source swaps the last
+  line. (6) `components/v3/WhyCard.tsx` + `lib/whyCopy.ts` on the reveal and
+  the setup sheet. (7) `app/ride/log.tsx` shows the full 11-id taxonomy
+  grouped Front / Rear / Both ends with per-discipline labels
+  (`lib/rideSymptoms.ts:symptomGroupsFor`), multi-select with
+  `cycleLevel`, a boxed free text, `canSaveLog` (quick refine needs a chip
+  or text; a moto saves on the sentiment); every chip rides to
+  `fetchAdjustResult`. No Bottoming front/rear qualifier exists (flagged).
+  (8) Adjust: reason from `lib/symptomReasons.ts` (the symptom table row,
+  never the LLM), `lib/adjusterLocations.ts:shortLocation` line, inline
+  stepper, words link under the buttons, `rideDay.recordSkipped` (skips are
+  recorded on the session, never applied; logged as `adjust_confirmed`
+  `outcome: "skipped"`).
+
 ## Sprint focus (in order)
 
 1. Results page

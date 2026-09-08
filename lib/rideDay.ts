@@ -63,6 +63,8 @@ export type MotoLog = {
 
 export type PendingKind = "conditions" | "retune" | "adjust" | "manual";
 
+export type SkippedChange = { circuit: CircuitKey; delta: number; reason: string | null; at: string; afterMoto: number };
+
 export type RidePending = PendingAdjust & {
   kind: PendingKind;
   reason: string | null;
@@ -70,7 +72,7 @@ export type RidePending = PendingAdjust & {
   afterMoto: number;
 };
 
-export type RideBike = { id: string; make: string | null; model: string | null; year: number | null; nickname: string | null; model_id: string | null };
+export type RideBike = { id: string; make: string | null; model: string | null; year: number | null; nickname: string | null; model_id: string | null; discipline?: "mx" | "offroad" | null };
 
 export type RideDraft = {
   bike: RideBike | null;
@@ -102,6 +104,9 @@ export type RideSession = {
   /** Values the running setup had at start (before the conditions tweaks). */
   base: SettingsSnapshot;
   pending: RidePending[];
+  /** Engine suggestions the rider skipped on Adjust (finding 8, 2026-09-08):
+   *  recorded, never applied, so the settle does not count them. */
+  skipped?: SkippedChange[];
   motos: MotoLog[];
   /** The conditions suggestion (Today's setup) was shown / applied. */
   suggestionShown: boolean;
@@ -426,6 +431,14 @@ export async function applyDeltas(
   }
   if (!pending.length) return s;
   return writeSession({ ...s, pending: [...s.pending, ...pending] });
+}
+
+/** Adjust's "Skip": the suggestion is recorded as skipped and NOT applied,
+ *  so the effective values, the settle patch and the version notes leave
+ *  it out. */
+export async function recordSkipped(s: RideSession, c: { circuit: CircuitKey; delta: number; reason?: string | null }): Promise<RideSession> {
+  const at = new Date().toISOString();
+  return writeSession({ ...s, skipped: [...(s.skipped ?? []), { circuit: c.circuit, delta: c.delta, reason: c.reason ?? null, at, afterMoto: s.motos.length }] });
 }
 
 /** Set an adjuster to an ABSOLUTE value (Adjust's "Done, turned it" records

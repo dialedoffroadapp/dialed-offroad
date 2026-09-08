@@ -11,6 +11,8 @@ import Animated, { FadeIn } from "react-native-reanimated";
 import { QuizShell } from "../../components/quiz/QuizShell";
 import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { WeightDial, type WeightUnit } from "../../components/quiz/WeightDial";
+import { useToast } from "../../components/Toast";
+import { fetchActiveRiderProfile, profilePatchFromQuiz, saveRiderProfile } from "../../lib/riderProfile";
 import { RiskGate } from "../../components/RiskGate";
 import { useQuiz, useQuizStepView } from "../../lib/quizContext";
 import { logQuizEvent, WEIGHT_DEFAULT_LBS, nextQuizRoute } from "../../lib/quizOnboarding";
@@ -29,6 +31,20 @@ export default function QuizWeightScreen() {
 
   const [weightLbs, setWeightLbs] = useState<number>(answers.weightLbs ?? WEIGHT_DEFAULT_LBS);
   const [unit, setUnit] = useState<WeightUnit>(answers.weightUnit ?? "lbs");
+  const toast = useToast();
+  // "Just this bike": shown once the rider has a profile (a kid's bike, a
+  // borrowed bike); off = the change updates the profile's defaults.
+  const [hasProfile, setHasProfile] = useState(false);
+  const [justThisBike, setJustThisBike] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void fetchActiveRiderProfile().then((p) => {
+      if (alive) setHasProfile(Boolean(p));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [freeOpen, setFreeOpen] = useState(!!answers.freeText);
   const [freeText, setFreeText] = useState(answers.freeText ?? "");
   const [riskOpen, setRiskOpen] = useState(false);
@@ -56,9 +72,18 @@ export default function QuizWeightScreen() {
     setBuilding(true);
     const text = freeText.trim();
     await setAnswers({ weightLbs, weightUnit: unit, freeText: text || undefined });
+    // Rider profile (2026-09-08): a signed-in rider's facts become their
+    // defaults for the next bike, unless this weight is for this bike only.
+    if (!justThisBike) {
+      try {
+        await saveRiderProfile(profilePatchFromQuiz({ ...answers, weightLbs, weightUnit: unit }));
+      } catch {
+        toast.show("Saved for this tune. Your rider profile did not update; edit it from Profile.", { kind: "error" });
+      }
+    }
     await logQuizEvent("quiz_step_answered", {
       step: "weight",
-      answer: { weight_lbs: weightLbs, unit, free_text: text.length > 0 },
+      answer: { weight_lbs: weightLbs, unit, free_text: text.length > 0, just_this_bike: justThisBike },
     });
     if (text.length > 0) void logQuizEvent("quiz_freetext_filled", { len: text.length });
     router.push(nextQuizRoute("weight", answers) as never);
@@ -146,6 +171,12 @@ export default function QuizWeightScreen() {
             persist({ weightUnit: u });
           }}
         />
+        {hasProfile ? (
+          <Pressable onPress={() => setJustThisBike((v) => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: justThisBike }} style={styles.justRow} testID="quiz-weight-just-this-bike">
+            <Ionicons name={justThisBike ? "checkbox" : "square-outline"} size={20} color={justThisBike ? Q.BLUE : Q.STEEL} />
+            <Text style={styles.justText}>Just this bike. Keep my profile as it is.</Text>
+          </Pressable>
+        ) : null}
 
         {freeOpen ? (
           <Animated.View entering={FadeIn.duration(160)} style={styles.freeBox}>
@@ -182,6 +213,8 @@ export default function QuizWeightScreen() {
 }
 
 const styles = StyleSheet.create({
+  justRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 14, paddingVertical: 6 },
+  justText: { color: Q.STEEL, fontSize: 14, flex: 1 },
   trust: {
     flexDirection: "row",
     alignItems: "center",

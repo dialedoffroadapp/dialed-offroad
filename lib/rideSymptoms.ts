@@ -116,6 +116,76 @@ export function symptomLabel(id: string): string {
   return viaMap?.label ?? LEGACY_ONLY_LABELS[id] ?? id;
 }
 
+/* ---- The full taxonomy on the refine screen (device pass finding 7, 2026-09-08) ---- */
+
+export type SymptomEnd = "front" | "rear" | "both";
+export type SymptomGroup = { end: SymptomEnd; title: string; chips: SymptomChip[] };
+export type RideDiscipline = "mx" | "offroad";
+
+/** Every chip id once, with the end it lives on and a label per discipline.
+ *  UI vocabulary over the contract's v3 ids; legacy ids read through
+ *  LEGACY_TO_V3. */
+const TAXONOMY: Record<string, { end: SymptomEnd; mx: string; offroad: string }> = {
+  front_pushes: { end: "front", mx: "Front pushes", offroad: "Front washes out" },
+  deflects: { end: "front", mx: "Deflects in chop", offroad: "Deflects off rocks" },
+  wallows_dives: { end: "front", mx: "Wallows / dives", offroad: "Dives on the brakes" },
+  chatters: { end: "front", mx: "Chatters", offroad: "Chatters on hardpack" },
+  arm_pump: { end: "front", mx: "Arm pump", offroad: "Arm pump" },
+  headshake: { end: "front", mx: "Headshake", offroad: "Headshake" },
+  rear_kicks: { end: "rear", mx: "Rear kicks", offroad: "Rear kicks" },
+  packs_in_chop: { end: "rear", mx: "Packs in chop", offroad: "Packs in rocks" },
+  rear_swaps: { end: "rear", mx: "Rear swaps", offroad: "Rear steps out" },
+  rear_squats: { end: "rear", mx: "Rear squats on the gas", offroad: "Rear squats on the gas" },
+  harsh_small_bumps: { end: "both", mx: "Harsh on small bumps", offroad: "Harsh on roots and rocks" },
+  bottoming: { end: "both", mx: "Bottoms on landings", offroad: "Bottoms on drops" },
+  too_stiff: { end: "both", mx: "Too stiff all over", offroad: "Too stiff all over" },
+  too_soft: { end: "both", mx: "Too soft all over", offroad: "Too soft all over" },
+  dead_feel: { end: "both", mx: "Dead / no pop", offroad: "Dead / no pop" },
+  unstable_whoops: { end: "both", mx: "Unstable in whoops", offroad: "Unstable at speed" },
+  harsh_square_edge: { end: "both", mx: "Harsh on square edges", offroad: "Harsh on roots and rocks" },
+};
+
+const GROUP_TITLE: Record<SymptomEnd, string> = { front: "Front", rear: "Rear", both: "Both ends" };
+
+export function symptomLabelFor(id: string, discipline: RideDiscipline | null | undefined): string {
+  const t = TAXONOMY[id] ?? TAXONOMY[(LEGACY_TO_V3 as Record<string, { id: string }>)[id]?.id ?? ""];
+  if (!t) return symptomLabel(id);
+  return discipline === "offroad" ? t.offroad : t.mx;
+}
+
+/** Front, Rear, Both ends: every chip (ALL_SYMPTOMS) once, with its
+ *  discipline label and the existing qualifier prompt where the id asks. */
+export function symptomGroupsFor(discipline: RideDiscipline | null | undefined): SymptomGroup[] {
+  const ends: SymptomEnd[] = ["front", "rear", "both"];
+  return ends.map((end) => ({
+    end,
+    title: GROUP_TITLE[end],
+    chips: ALL_SYMPTOMS.filter((c) => (TAXONOMY[c.id]?.end ?? "both") === end).map((c) => ({ ...c, label: symptomLabelFor(c.id, discipline) })),
+  }));
+}
+
+/** Tap once = mild, twice = bad, a third tap clears. */
+export function cycleLevel(current: SymptomLevel | null | undefined): SymptomLevel | null {
+  return !current ? "mild" : current === "mild" ? "bad" : null;
+}
+
+/** A logged chip: the qualifier is the engine's where TAG. */
+export type LoggedSymptom = { id: Tune2SymptomId; level: SymptomLevel; qualifier: string | null };
+
+/** Save enables on Better / Same / Worse plus any chip or any text. A quick
+ *  refine needs one of the two (there is nothing to refine otherwise); a
+ *  ride-day moto is a record and saves on the sentiment alone. A picked chip
+ *  that asks where still needs its answer. */
+export function canSaveLog(p: { sentiment: "better" | "same" | "worse" | null; symptoms: LoggedSymptom[]; text: string; quick: boolean }): boolean {
+  if (!p.sentiment) return false;
+  for (const sym of p.symptoms) {
+    const chip = symptomById(sym.id);
+    if (chip?.qualifiers?.length && !sym.qualifier) return false;
+  }
+  if (!p.quick) return true;
+  return p.symptoms.length > 0 || p.text.trim().length > 0;
+}
+
 /** Chip tap level (ported from the legacy debrief's 1-5 picker): one tap =
  *  mild, a second tap = bad, a third clears the chip. */
 export type SymptomLevel = "mild" | "bad";

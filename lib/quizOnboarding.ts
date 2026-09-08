@@ -528,11 +528,15 @@ export async function startGarageQuizFlow(
     setupId?: string | null;
     /** Regenerate: the running setup's terrain, preselected on the tiles. */
     terrain?: string | null;
+    /** The bike's stored discipline (bikes.discipline); wins over the answers
+     *  store and the platform classifier. Add a bike never seeds one: the
+     *  quiz asks (2026-09-08, no discipline assumptions). */
+    discipline?: QuizDiscipline | null;
   }
 ): Promise<string> {
   const a = await readQuizAnswers();
   const now = new Date().toISOString();
-  const discipline = a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined;
+  const discipline = flow === "add_bike" ? undefined : p.discipline ?? a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined;
   const preselect = flow === "regenerate" ? terrainIdFor(discipline ?? "mx", p.terrain) : undefined;
   const terrainMain = flow === "new_setup" ? undefined : preselect ?? a.terrainMain;
   const terrainSecondary = flow === "new_setup" ? [] : (a.terrainSecondary ?? []).filter((t) => t !== terrainMain);
@@ -569,10 +573,11 @@ export async function startGarageQuizFlow(
  *  into a fresh baseline for a known garage bike (audit item 10). Reads the
  *  bike row so the discipline and engine input are never missing. */
 export async function startRegenerateQuizFlow(bikeId: string): Promise<string> {
-  let make: string | undefined, model: string | undefined, year: number | undefined, terrain: string | undefined;
+  let make: string | undefined, model: string | undefined, year: number | undefined, terrain: string | undefined, discipline: QuizDiscipline | null = null;
   try {
-    const { data } = await supabase.from("bikes").select("make, model, year").eq("id", bikeId).maybeSingle();
+    const { data } = await supabase.from("bikes").select("make, model, year, discipline").eq("id", bikeId).maybeSingle();
     make = (data as any)?.make ?? undefined;
+    discipline = (data as any)?.discipline === "mx" || (data as any)?.discipline === "offroad" ? (data as any).discipline : null;
     model = (data as any)?.model ?? undefined;
     year = typeof (data as any)?.year === "number" ? (data as any).year : undefined;
     // The default lineage's running terrain, preselected on the tiles.
@@ -588,7 +593,7 @@ export async function startRegenerateQuizFlow(bikeId: string): Promise<string> {
   } catch {
     // offline: the answers store may still carry the bike from the last run
   }
-  return startGarageQuizFlow("regenerate", { bikeId, make, model, year, terrain });
+  return startGarageQuizFlow("regenerate", { bikeId, make, model, year, terrain, discipline });
 }
 
 /** "Dunes" for the new-setup name ("Dunes setup"), from the main terrain tile. */
@@ -604,9 +609,13 @@ function isQuestionStep(x: unknown): x is QuizRouteStep {
   return typeof x === "string" && (QUESTION_STEPS as readonly string[]).includes(x);
 }
 
-/** Whether a flow still has to ask this question (rider facts persist). */
+/** Whether a flow still has to ask this question (rider facts persist).
+ *  Add a bike always visits the skill step: with the facts known it is the
+ *  rider confirmation ("Still 160 lb, C class? Yes / Change", rider profiles
+ *  2026-09-08), so a kid's bike never inherits the parent's numbers unasked. */
 function flowStepNeeded(step: QuizRouteStep, a: QuizAnswers): boolean {
-  return step === "skill" ? !a.skill : step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
+  if (step === "skill") return !a.skill || a.flow === "add_bike";
+  return step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
 }
 
 /** The questions a garage flow will ask, in order: the flow's anchor question
@@ -783,35 +792,28 @@ export type DrumrollFacts = {
   weightLbs?: number | null;
   terrainLabel?: string | null;
   skill?: QuizSkillId | null;
+  /** The engine's engine_source once it answered (llm swaps the last line). */
+  engineSource?: string | null;
 };
 
+/** The build stages the checklist tracks, in line order. lib/quizGenerate.ts
+ *  reports each one as it completes (device pass finding 5, 2026-09-08): a
+ *  line checks off when its stage reports back, never on a timer. */
+export const QUIZ_BUILD_STAGES = ["specs", "spring", "clickers", "conditions", "sag", "why"] as const;
+export type QuizBuildStage = (typeof QUIZ_BUILD_STAGES)[number];
+
+/** Six lines, each true for the deterministic engine. The two lines that
+ *  were not ("Cross-checked thousands of real rider tunes", "Balancing for
+ *  your pace") are gone. When the engine reports engine_source llm the last
+ *  line reads "Building your setup" (the why is not written by a rule). */
 export function drumrollChecklist(f: DrumrollFacts): string[] {
-  const fork = f.forkType?.trim();
-  const shock = f.shockType?.trim();
-  const specLine =
-    fork && shock
-      ? `Read your ${fork} fork and ${shock} shock specs`
-      : fork
-        ? `Read your ${fork} fork and shock specs`
-        : "Read your fork and shock baseline specs";
   const weightLine =
     typeof f.weightLbs === "number" && Number.isFinite(f.weightLbs)
-      ? `Set spring rates for ${Math.round(f.weightLbs)} lbs geared up`
-      : "Set spring rates for your geared-up weight";
-  const terrainLine = f.terrainLabel
-    ? `Dialing clickers for ${f.terrainLabel.toLowerCase()}...`
-    : "Dialing clickers for your terrain...";
-  const skillLine = f.skill
-    ? `Balancing for ${SKILL_PHRASE[f.skill]}`
-    : "Balancing for your pace";
-  return [
-    specLine,
-    weightLine,
-    "Cross-checked thousands of real rider tunes",
-    terrainLine,
-    skillLine,
-    "Setting your race sag target",
-  ];
+      ? `Checking spring rates for ${Math.round(f.weightLbs)} lb`
+      : "Checking spring rates for your weight";
+  const terrainLine = f.terrainLabel ? `Setting clickers for ${f.terrainLabel.toLowerCase()}` : "Setting clickers for your terrain";
+  const whyLine = f.engineSource === "llm" ? "Building your setup" : "Writing the why";
+  return ["Reading your fork and shock specs", weightLine, terrainLine, "Applying today's conditions", "Setting your race sag target", whyLine];
 }
 
 /* ---------------------------------- Meter -------------------------------- */

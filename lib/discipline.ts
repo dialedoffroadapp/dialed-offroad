@@ -53,6 +53,15 @@ export function classifyModel(make: string, model: string): ModelDiscipline {
   }
 }
 
+/** The bike's discipline for the engine and the tire table: the rider's
+ *  stored answer (bikes.discipline, Add a bike's question since 2026-09-08)
+ *  first, the platform classifier only as the fallback for bikes never
+ *  asked. Nothing else about a bike is assumed from its platform. */
+export function disciplineForBike(bike: { discipline?: RiderDiscipline | null; make?: string | null; model?: string | null } | null | undefined): RiderDiscipline | null {
+  if (bike?.discipline === "mx" || bike?.discipline === "offroad") return bike.discipline;
+  return disciplineFromBike(bike?.make, bike?.model);
+}
+
 export function disciplineFromBike(make: string | null | undefined, model: string | null | undefined): RiderDiscipline | null {
   if (!make || !model) return null;
   const k = classifyModel(make, model);

@@ -24,7 +24,7 @@ export async function startQuickRefine(p: QuickRefineParams): Promise<RideSessio
   if (!setup || !version) throw new Error("No setup to refine yet. Build a tune first.");
   const hasAirFork = effectiveAirFork(page.specs, bike.air_fork_override) ?? (version.fork_air_bar !== null && version.fork_air_bar !== undefined);
   return startQuickRefineSession({
-    bike: { id: bike.id, make: bike.make, model: bike.model, year: bike.year, nickname: bike.nickname, model_id: bike.model_id },
+    bike: { id: bike.id, make: bike.make, model: bike.model, year: bike.year, nickname: bike.nickname, model_id: bike.model_id, discipline: bike.discipline ?? null },
     setupId: setup.id,
     setupName: setup.name,
     startingVersion: version,

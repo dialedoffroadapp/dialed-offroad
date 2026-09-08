@@ -23,7 +23,7 @@ export async function loadBikeChoices(userId: string): Promise<BikeChoice[]> {
       ]);
       const setups = setupsForBike(b.id, named, versions, map).filter((s) => s.running);
       const hasAirFork = effectiveAirFork(specs, b.air_fork_override) ?? typeof versions[0]?.fork_air_bar === "number";
-      return { bike: { id: b.id, make: b.make, model: b.model, year: b.year, nickname: b.nickname, model_id: b.model_id }, setups, hasAirFork };
+      return { bike: { id: b.id, make: b.make, model: b.model, year: b.year, nickname: b.nickname, model_id: b.model_id, discipline: b.discipline ?? null }, setups, hasAirFork };
     })
   );
 }

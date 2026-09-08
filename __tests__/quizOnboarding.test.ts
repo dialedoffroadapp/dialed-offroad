@@ -158,14 +158,20 @@ describe("engine mappings (existing inputs only)", () => {
       terrainLabel: "Hardpack",
       skill: "fast",
     });
-    expect(full).toHaveLength(6);
-    expect(full[0]).toBe("Read your WP XACT air fork and WP linkage shock specs");
-    expect(full[1]).toBe("Set spring rates for 175 lbs geared up");
-    expect(full[3]).toBe("Dialing clickers for hardpack...");
-    expect(full[4]).toBe("Balancing for race pace");
+    // Six lines, each true for the deterministic engine (finding 5, 2026-09-08).
+    expect(full).toEqual([
+      "Reading your fork and shock specs",
+      "Checking spring rates for 175 lb",
+      "Setting clickers for hardpack",
+      "Applying today's conditions",
+      "Setting your race sag target",
+      "Writing the why",
+    ]);
+    expect(full.join(" ")).not.toMatch(/Cross-checked|Balancing/);
+    expect(drumrollChecklist({ engineSource: "llm" })[5]).toBe("Building your setup");
     const generic = drumrollChecklist({});
-    expect(generic[0]).toBe("Read your fork and shock baseline specs");
-    expect(generic[1]).toBe("Set spring rates for your geared-up weight");
+    expect(generic[1]).toBe("Checking spring rates for your weight");
+    expect(generic[2]).toBe("Setting clickers for your terrain");
     expect(generic.join(" ")).not.toMatch(/undefined|null/);
     expect(DRUMROLL_CIRCUITS).toHaveLength(6);
     expect(DRUMROLL_CIRCUITS.length * DRUMROLL_STAGE_MS).toBe(3000);

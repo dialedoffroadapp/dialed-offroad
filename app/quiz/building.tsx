@@ -21,6 +21,8 @@ import {
   DRUMROLL_CIRCUITS,
   DRUMROLL_STAGE_MS,
   drumrollChecklist,
+  QUIZ_BUILD_STAGES,
+  type QuizBuildStage,
   formatTuneValue,
   terrainLabel,
   tuneRowValue, nextQuizRoute } from "../../lib/quizOnboarding";
@@ -36,7 +38,10 @@ export default function QuizBuildingScreen() {
 
   const [result, setResult] = useState<QuizGenerateResult | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
-  const [stage, setStage] = useState(0); // circuits solved so far (0..6)
+  const [stage, setStage] = useState(0); // circuits solved so far (0..6), the visual
+  // The checklist (finding 5): a line checks off when its stage reports
+  // back from lib/quizGenerate.ts, never on the visual's timer.
+  const [reported, setReported] = useState<QuizBuildStage[]>([]);
   const [cycling, setCycling] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const startedRef = useRef<number>(-1);
@@ -54,8 +59,9 @@ export default function QuizBuildingScreen() {
         weightLbs: answers.weightLbs ?? null,
         terrainLabel: terrain,
         skill: answers.skill ?? null,
+        engineSource: result?.tune.engine_source ?? null,
       }),
-    [result?.specs?.fork_type, result?.specs?.shock_type, answers.weightLbs, terrain, answers.skill]
+    [result?.specs?.fork_type, result?.specs?.shock_type, answers.weightLbs, terrain, answers.skill, result?.tune.engine_source]
   );
 
   // Generation — once per attempt.
@@ -65,6 +71,7 @@ export default function QuizBuildingScreen() {
     setError(null);
     setResult(null);
     setStage(0);
+    setReported([]);
     let cancelled = false;
     (async () => {
       try {
@@ -73,6 +80,9 @@ export default function QuizBuildingScreen() {
           onboardingStep: state.onboardingStep,
           onboardingActive,
           lastUpdatedAt: state.lastUpdatedAt,
+          onStage: (s) => {
+            if (!cancelled) setReported((prev) => (prev.includes(s) ? prev : [...prev, s]));
+          },
         });
         if (!cancelled) setResult(r);
       } catch (e: any) {
@@ -188,8 +198,8 @@ export default function QuizBuildingScreen() {
 
           <View style={styles.list}>
             {checklist.map((line, i) => {
-              const done = i < stage;
-              const active = i === stage && !!result;
+              const done = reported.includes(QUIZ_BUILD_STAGES[i]);
+              const active = !done && !error && QUIZ_BUILD_STAGES.slice(0, i).every((s) => reported.includes(s));
               return (
                 <View key={i} style={styles.line}>
                   {done ? (
