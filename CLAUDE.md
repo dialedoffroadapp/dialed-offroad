@@ -953,11 +953,20 @@ that change none of those skip it.)*
   unit)`, HSC row hidden); a tune's `hsc_turns` may be null.
 
 - **Suspension reference follow-up (2026-09-08, River's prompt
-  `claude-code-prompt-2026-09-07-suspension-followup.md`; the report file
-  `docs/suspension-reference-2026-09-07.md` it says is in the repo is NOT
-  there, nor in Downloads or on the remote, so section 1 (the tuner rows for
-  migration `20260907220000`, the not-found list, the 4a tally) is still
-  owed; `docs/catalog-gaps.md` carries it):** migration `20260907230000`
+  `claude-code-prompt-2026-09-07-suspension-followup.md`; River pasted the
+  report the same day and it lives at `docs/suspension-reference-2026-09-07.md`).
+  Section 1 done: migration `20260907220000` (applied on dev-3-0, staged)
+  writes the tuner clicker rows with the report's source strings after a
+  fork-family check per row (Honda CRF450R 2017+ and 2021+, CRF250R 2022+,
+  RM-Z450 2018+ with the shock in TURNS and `stock_shock_comp/reb` now
+  numeric(4,2), YZ250F ×3, KX450 2016 to 2018, KX250 2017 to 2020 at 15/15
+  with its 2020 KYB boundary flagged, Stark Varg MX) and the preset ranges
+  into `stock_clicker_note`; the not-found list is verbatim in
+  `docs/catalog-gaps.md`; the 4a/4b/4c tallies are in the rule comments on
+  both sides. The engine's BFRC baseline anchors on
+  `guardrails.shock_stock_lsc_turns/reb_turns` (sent from the catalog) and
+  keeps the quarter-turn-per-click placeholder only without them.
+  Section 2 and 3:** migration `20260907230000`
   (applied on dev-3-0, staged): the Sherco split at 2022 collapsed, the
   KYB figures (13/13, LSC 14, HSC 1.5, reb 13) now sit on the three Factory
   KYB rows from 2019 with the Factory-line source, no SEF-R figure on any

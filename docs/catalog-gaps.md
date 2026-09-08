@@ -8,13 +8,26 @@ Rows the next research pass should target. Kept current by hand after each catal
 - Beta RR-S 2020 (Sachs 10/10): no catalog row (the RR-S is the four-stroke dual-sport line); the RR 2T 250/300 Sachs rows are a different model.
 - Suzuki RM-Z250 2019+: the catalog's KYB linkage shock stands; the report's BFRC sharing is a source conflict, logged, nothing written.
 
-## Owed from the report file (not in Downloads or the repo as of 2026-09-08)
+## The report's "not found" list (verbatim; the next research targets)
 
-- Tuner clicker rows for migration 20260907220000 with the report's source strings: Honda CRF450R 2017 to 2020 and 2021 to 2024, Honda CRF250R 2022 to 2025, Suzuki RM-Z450 2018+ (fork comp 6 out; shock LSC and rebound in turns, replacing the quarter-turn placeholder), Yamaha YZ250F 2014+, Kawasaki KX450 2016 to 2018, Kawasaki KX250F 2006 to 2019 (15/15), Stark Varg MX 2023+. Each row's fork family is checked against the catalog before writing; a mismatch is a flag.
-- The report's own "not found" list, verbatim, as the next research targets.
-- The 4a source tally for the rutted hardpack rule's comment.
+- Honda CRF450R 2013-2016 KYB PSF-2 numeric standard air pressures and clicker values.
+- Yamaha YZ450F 2010-2017 (pre-2018) numeric standard clickers.
+- Yamaha YZ125 / YZ250 two-stroke numeric standard clickers (owner's manual confirms a standard position exists but omits the numbers).
+- Kawasaki KX250 2020+ (KYB) numeric standard clickers.
+- Kawasaki KX450 2019-2020 (Showa coil) numeric standard clickers.
+- Suzuki RM-Z250 2019+ numeric standard clickers (fork comp/reb and shock values).
+- Beta RR 2023-2026 KYB numeric standard clickers (betausa.com hosts a "2025 KYB suspension settings list" PDF, values not captured in this pass).
+- Exact factory TOTAL click counts (fully closed to fully open) for WP AER48 / WP XACT 2023 / WP XPLOR: inferred ~25-30 only.
+- KYB PSF-2 exact per-leg positions of the hi/lo compression and hi/lo rebound adjusters.
+- An explicit published "clicks per 10 lb" slope from any major shop: none exists, and it is contradicted by their stated philosophy (weight = springs).
 
-## Rows without stock clickers after 20260907230000
+## Catalog rows the report contradicts (flagged, not changed)
+
+- Kawasaki KX250: the report puts the KX250 on KYB SSS from 2020; the catalog's 2017 to 2020 row runs on Showa SFF through 2020 and its 2021+ row says Showa 48 coil. The 15/15 SFF figures were written to the 2017 to 2020 row (the family matches for 2017 to 2019); the 2020 boundary and the 2021+ fork family need a catalog correction.
+- Suzuki RM-Z250 2019+: the report's row reads Showa SFF coil / Showa BFRC (inferred); the catalog says KYB 49 coil / KYB linkage. Conflict logged, nothing written (River's follow-up).
+- WP linkage shock maxima (LSC about 17 to 20, HSC about 2 turns, rebound about 20; Slavens, Vital MX, tuner) and WP PDS (HSC about 1.75 turns; Slavens) are in the report but were not in the prompt's list of families to write; available for a later pass.
+
+## Rows without stock clickers after 20260907220000 (84)
 
 ### Beta (5)
 
@@ -35,14 +48,11 @@ Rows the next research pass should target. Kept current by hand after each catal
 - GasGas EX 450F 2021
 - GasGas EX 450F 2024
 
-### Honda (10)
+### Honda (7)
 
 - Honda CRF250R 2018
-- Honda CRF250R 2022
 - Honda CRF250RX 2019
 - Honda CRF450R 2013
-- Honda CRF450R 2017
-- Honda CRF450R 2021
 - Honda CRF450RWE 2019
 - Honda CRF450RWE 2021
 - Honda CRF450RX 2019
@@ -102,26 +112,19 @@ Rows the next research pass should target. Kept current by hand after each catal
 - KTM 450 XC-F 2024
 - KTM 500 EXC-F 2024
 
-### Kawasaki (6)
+### Kawasaki (4)
 
-- Kawasaki KX250 2017
 - Kawasaki KX250 2021
 - Kawasaki KX250X 2021
-- Kawasaki KX450 2016
 - Kawasaki KX450 2019
 - Kawasaki KX450 2021
 
-### Stark (1)
-
-- Stark Varg MX 2023
-
-### Suzuki (3)
+### Suzuki (2)
 
 - Suzuki RM-Z250 2016
 - Suzuki RM-Z250 2019
-- Suzuki RM-Z450 2018
 
-### Yamaha (13)
+### Yamaha (10)
 
 - Yamaha WR250F 2015
 - Yamaha WR450F 2016
@@ -130,9 +133,6 @@ Rows the next research pass should target. Kept current by hand after each catal
 - Yamaha YZ125X 2020
 - Yamaha YZ250 2006
 - Yamaha YZ250 2022
-- Yamaha YZ250F 2014
-- Yamaha YZ250F 2019
-- Yamaha YZ250F 2024
 - Yamaha YZ250FX 2016
 - Yamaha YZ250X 2016
 - Yamaha YZ450FX 2016
