@@ -911,6 +911,20 @@ that change none of those skip it.)*
   quarter turns behind the new key; shadow re-run beside the first run in
   the resolution doc.
 
+- **2026-09-08 small items + device pass:** (1) the two service-role gates
+  (`claimBaseline`, `refineAllowance`) make ONE retry (300 ms) before failing
+  open, through `withOneRetry`; the eventual fail-open log carries the tag
+  `[ai-tune fail-open]` (grep the edge logs for it); the audit follow-up is
+  closed. (2) Returning riders on the nine ambiguous 2016 rows: the bike
+  page shows the air-or-coil banner (`components/garage/AirForkBanner.tsx`,
+  `lib/modelSpecs.ts:shouldShowAirForkBanner` = ambiguous row + null
+  override) and saves through `upsertQuizBike` like Add a bike; dismiss
+  writes nothing; event `air_fork_override_set` with `source` banner | quiz
+  (migration `20260907250000`, CHECK now 99). (3) `docs/device-pass-2026-09.md`:
+  Pass A (Garage on an existing account) and Pass B (a full ride day with an
+  offline stretch) with the table or event to check after every step and
+  the expected `engine_source` per call.
+
 ## Sprint focus (in order)
 
 1. Results page

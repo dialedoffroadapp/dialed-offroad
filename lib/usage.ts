@@ -131,7 +131,9 @@ export type UsageEvent =
   // Sag page (2026-09-07, migration 20260907200000)
   | "sag_measured_saved"
   | "sag_recheck_shown"
-  | "sag_recheck_completed";
+  | "sag_recheck_completed"
+  // Air-or-coil answer on an ambiguous 2016 row (2026-09-08, migration 20260907250000): source "banner" | "quiz"
+  | "air_fork_override_set";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

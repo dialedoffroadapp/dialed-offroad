@@ -26,6 +26,9 @@ import { gateIfLocked, showProGate } from "../../lib/proGate";
 import { tireCell } from "../../lib/tirePlanCore";
 import { clearTirePlan } from "../../lib/tirePlanStore";
 import { logEvent } from "../../lib/usage";
+import { upsertQuizBike } from "../../lib/guestGarage";
+import { shouldShowAirForkBanner } from "../../lib/modelSpecs";
+import { AirForkBanner } from "./AirForkBanner";
 
 export const SETUP_SHEET_ROUTE = "/setup-sheet";
 export const STORY_ROUTE = "/setup-story";
@@ -42,6 +45,9 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   const [tiresOpen, setTiresOpen] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  // Air-or-coil banner (2026-09-08): dismiss is this visit only.
+  const [forkBannerDismissed, setForkBannerDismissed] = useState(false);
+  const [forkBannerBusy, setForkBannerBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -161,6 +167,28 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
             </View>
           </View>
         </Card>
+
+        {!forkBannerDismissed && shouldShowAirForkBanner(specs, bike.air_fork_override) && bike.make && bike.model && typeof bike.year === "number" ? (
+          <AirForkBanner
+            busy={forkBannerBusy}
+            colors={{ text: V3.white, muted: V3.steel, border: V3.line, accent: V3.blue, onAccent: V3.carbon }}
+            onDismiss={() => setForkBannerDismissed(true)}
+            onChoose={async (airFork) => {
+              if (forkBannerBusy) return;
+              setForkBannerBusy(true);
+              try {
+                // The same path Add a bike uses: bikes.air_fork_override on the row.
+                await upsertQuizBike({ make: bike.make!, model: bike.model!, year: bike.year as number, previousId: bike.id, airFork });
+                void logEvent("air_fork_override_set", { bike_id: bike.id, air_fork: airFork, source: "banner" });
+                await load();
+              } catch (e: any) {
+                toast.show(e?.message ?? "Couldn't save that. Check your signal and tap again.", { kind: "error" });
+              } finally {
+                setForkBannerBusy(false);
+              }
+            }}
+          />
+        ) : null}
 
         <View style={styles.tiles}>
           <Tile label="Engine hrs" value={hoursValue} sub={extras.hours !== null ? `oil at ${trim(nextOilAt(extras))}` : "tap to set"} onPress={() => setHoursOpen(true)} muted={extras.hours === null} />
