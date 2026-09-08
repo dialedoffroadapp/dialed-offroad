@@ -771,6 +771,64 @@ that change none of those skip it.)*
   inferred from the shared platform, 126 existing 2016 bikes sit on
   ambiguous rows and need the answer on next open.
 
+- **Refine gate, tires in the engine, sag page (2026-09-07, River's prompt
+  `claude-code-prompt-2026-09-07-refine-tires-sag.md`; integration `5879c2c`,
+  `0f192a0`, `77197c3`; contract `edd4ce9`, `3a9cecd` + merges; edge
+  deployed to dev-3-0; five migrations `20260907160000`..`20260907200000`
+  APPLIED on dev-3-0 by psql with history rows, STAGED for prod):**
+  (1) **One free refinement per bike.** `app_config.free_refinements_per_bike`
+  (1; 0 = always Pro). The edge's refine path asks
+  `server_refine_allowance(p_user_id, p_bike_id)` through the injected
+  `refineAllowance` dep BEFORE the `tune_calls` insert: entitled
+  (trial_active or pro) passes, else the count of `setup_versions` rows with
+  `source = 'refinement'` on the bike must be under the allowance; refused =
+  402 `no_trial`, never recorded; a conditions ask (`feedback.source:
+  "conditions"`) is never gated; the answer carries
+  `refine_allowance_remaining` (after this call). Client:
+  `lib/refineAllowance.ts` (`gateRefine`: entitled passes, known zero opens
+  the Pro gate with trigger `refine`, unknown proceeds; cache from the last
+  response, `refine_allowance(p_bike_id)` RPC fallback) at the setup sheet's
+  two refine buttons, Bike Home and the legacy debrief's submit; history
+  rows untouched. **A quick refine's Done now settles `source =
+  "refinement"`** (a ride day's settle stays manual) so the count works in
+  3.0. `free_refine_used` at Done; the sheet shows "That was your free
+  refinement. Keep refining, track history, and tune every bike with Pro."
+  + Go Pro under the numbers (`freeRefineUsed=1`), never for Pro.
+  (2) **Tire pressure is an engine output** (reverses the Sep 5 call).
+  `supabase/functions/ai-tune/tire_defaults.json` is the single source of
+  truth (Dunlop per discipline and surface, watered delta, Tubliss ranges,
+  mousse line); `lib/generated/tireDefaults.json` is its generated copy
+  (`scripts/engine-tools/sync_tire_defaults.sh`, drift fails
+  `__tests__/tirePlan.test.ts`). `lib/tirePlanCore.ts` is the offline rule
+  base; the edge's `tirePlanFor` is a port, parity-tested over 1500
+  inputs. Additive optional wire: `input.tires {system_front, system_rear,
+  saved_front_psi, saved_rear_psi}`; answer `tire_front_psi`,
+  `tire_rear_psi` (null on a mousse), `tire_reason` (200 max),
+  `tire_source` (dunlop_default | rider_saved | conditions_adjusted |
+  mousse_none). Emitted on baselines when the terrain word maps to a
+  surface or the request names the tires, on refinements only for a
+  conditions ask or when the request names the tires (a symptom-only
+  refine keeps the v1 frozen shape). The explanation prompt gets the
+  numbers; `stripForeignPsi` drops any sentence with a psi the engine did
+  not set. `bikes.tire_system_front/rear` (tube | heavy_tube | tubliss |
+  mousse | unknown) via `lib/bikeExtras.ts` (42703 retry), the picker
+  (`components/garage/TireSystemPicker.tsx`) in the garage Tires sheet and
+  as the Add a bike question after the fork question (never blocks).
+  Today's setup reads the engine's fields (`SuggestResult.tires`), offline
+  the same table; Current Setup shows the pressure with its reason
+  (`lib/tirePlanStore.ts`); mousse ends read "mousse".
+  (3) **Sag page** `app/garage/[bikeId]/sag.tsx` (bike page Sag row, reveal
+  "Measure it" link, ride-start recheck card): A/B/C method, static = A
+  minus B, riding = A minus C, factory vs typical range, `sag_source`,
+  save, last ten, the spring rule. `setup_versions` gains
+  `sag_riding_measured_mm`, `sag_static_measured_mm`, `sag_measured_at` +
+  an own-rows UPDATE policy with a column-scoped grant (the one update the
+  immutable table accepts; both triggers are BEFORE INSERT);
+  `sag_measurements` holds history; `app_config.sag_recheck_ride_days`
+  (5); events `sag_measured_saved`, `sag_recheck_shown`,
+  `sag_recheck_completed` (CHECK now 98). `VERSION_COLUMNS` unchanged.
+  Supersedes the measure-sag walkthrough (design-queue item, decision 7).
+
 ## Sprint focus (in order)
 
 1. Results page
