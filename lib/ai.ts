@@ -275,6 +275,11 @@ export type Tune2Result = {
    *  path only, 2026-09-07). Absent on baselines, conditions asks and when
    *  the server could not read the allowance. */
   refine_allowance_remaining?: number;
+  /** Tire pressure as an engine output (2026-09-07; additive, optional). */
+  tire_front_psi?: number | null;
+  tire_rear_psi?: number | null;
+  tire_reason?: string;
+  tire_source?: "dunlop_default" | "rider_saved" | "conditions_adjusted" | "mousse_none";
 };
 
 // Engine v2 adaptive step: what the last refinement did and how it went.

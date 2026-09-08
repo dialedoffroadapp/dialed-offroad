@@ -9,6 +9,10 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
+// Tire pressure as an engine output (River, 2026-09-07): the table below is
+// the single source of truth; lib/generated/tireDefaults.json is its
+// generated copy for the client's offline fallback.
+import tireTable from "./tire_defaults.json" with { type: "json" };
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
@@ -87,7 +91,27 @@ type ZeroInput = {
     // last_outcome to it).
     conditions?: Tune2Conditions;
     setup_id?: string;
+    // Tire pressure as an engine output (2026-09-07; additive, optional, both
+    // modes): what is in each tire and the rider's saved pressures.
+    tires?: TireInputWire;
   };
+};
+
+type TireSystem = "tube" | "heavy_tube" | "tubliss" | "mousse" | "unknown";
+type TireSource = "dunlop_default" | "rider_saved" | "conditions_adjusted" | "mousse_none";
+type TireInputWire = {
+  system_front?: TireSystem | null;
+  system_rear?: TireSystem | null;
+  saved_front_psi?: number | null;
+  saved_rear_psi?: number | null;
+};
+/** The engine's tire answer (additive, optional): psi per end (null on a
+ *  mousse), the reason (max 200 chars) and where the number came from. */
+type TireFields = {
+  tire_front_psi: number | null;
+  tire_rear_psi: number | null;
+  tire_reason: string;
+  tire_source: TireSource;
 };
 
 type CircuitValue = number | null;
@@ -153,6 +177,10 @@ type ZeroResult = {
   notes_source?: NotesSource;
   /** Tire pressure change from the conditions stage (psi, both ends). */
   tire_psi_delta?: number;
+  tire_front_psi?: number | null;
+  tire_rear_psi?: number | null;
+  tire_reason?: string;
+  tire_source?: TireSource;
 };
 
 /** A refinement's previous tune may be SPARSE (contract v3, honest previous
@@ -175,6 +203,10 @@ type Tune2Result = {
   engine_source?: EngineSource;
   notes_source?: NotesSource;
   tire_psi_delta?: number;
+  tire_front_psi?: number | null;
+  tire_rear_psi?: number | null;
+  tire_reason?: string;
+  tire_source?: TireSource;
   /** Free refinements left on this bike AFTER this call is counted (the
    *  free-refinement allowance, 2026-09-07). Additive, optional: absent on
    *  conditions asks and when the allowance could not be read. */
@@ -313,6 +345,7 @@ type Tune2Input = {
   // contract v3
   conditions?: Tune2Conditions;
   setupId?: string;
+  tires?: TireInputWire;
 };
 
 const CORS_HEADERS = {
@@ -765,6 +798,7 @@ export function safeShape(
   if (partial.engine_source) out.engine_source = partial.engine_source;
   if (partial.notes_source) out.notes_source = partial.notes_source;
   if (typeof partial.tire_psi_delta === "number") out.tire_psi_delta = partial.tire_psi_delta;
+  copyTireFields(partial, out);
   return out;
 }
 
@@ -787,6 +821,167 @@ export function safeShapeSparse(
   applyForkTypeRule(out, g);
   if (partial.spring_check !== undefined) out.spring_check = partial.spring_check;
   if (typeof partial.tire_psi_delta === "number") out.tire_psi_delta = partial.tire_psi_delta;
+  copyTireFields(partial, out);
+  return out;
+}
+
+function copyTireFields(from: Partial<ZeroResult> | Partial<Tune2Result>, to: ZeroResult | Tune2Result): void {
+  if (typeof from.tire_reason !== "string" || typeof from.tire_source !== "string") return;
+  to.tire_front_psi = typeof from.tire_front_psi === "number" ? from.tire_front_psi : null;
+  to.tire_rear_psi = typeof from.tire_rear_psi === "number" ? from.tire_rear_psi : null;
+  to.tire_reason = from.tire_reason;
+  to.tire_source = from.tire_source;
+}
+
+/* ---------------------------- Tire pressure (engine output, 2026-09-07) ---------------------------- */
+// A PORT of lib/tirePlanCore.ts over the same table. tests/tire_plan_test.ts
+// locks the two together over a case grid. The LLM may mention these
+// numbers in the explanation; it never chooses them (stripForeignPsi).
+
+type TireTable = typeof tireTable;
+const TIRE_TABLE: TireTable = tireTable;
+const TIRE_SYSTEMS: TireSystem[] = ["tube", "heavy_tube", "tubliss", "mousse", "unknown"];
+const TIRE_REASON_MAX = 200;
+type TireSurface = "hardpack" | "loam" | "sand" | "mud";
+type TireDisciplineId = "mx" | "offroad";
+type TirePlanInput = {
+  discipline?: TireDisciplineId | null;
+  surface?: TireSurface | null;
+  watered?: boolean | null;
+  psiDelta?: number | null;
+  systemFront?: TireSystem | null;
+  systemRear?: TireSystem | null;
+  savedFront?: number | null;
+  savedRear?: number | null;
+};
+type TirePlanOutput = {
+  front: number | null;
+  rear: number | null;
+  reason: string;
+  source: TireSource;
+  discipline: TireDisciplineId;
+  surface: TireSurface;
+  delta: number;
+  systemFront: TireSystem;
+  systemRear: TireSystem;
+};
+
+const tireHalf = (n: number) => Math.round(n * 2) / 2;
+const tireIsNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const tireSys = (v: unknown): TireSystem => (TIRE_SYSTEMS.includes(v as TireSystem) ? (v as TireSystem) : "unknown");
+
+export function asTireSurface(v: unknown): TireSurface | null {
+  return v === "hardpack" || v === "loam" || v === "sand" || v === "mud" ? v : null;
+}
+
+/** Map a free-text terrain ("hardpack", "sandy loam", "mx") onto a surface. */
+export function surfaceFromTerrain(terrain: unknown): TireSurface | null {
+  if (typeof terrain !== "string") return null;
+  const t = terrain.toLowerCase();
+  if (/\bmud\b|muddy/.test(t)) return "mud";
+  if (/\bsand|dunes/.test(t)) return "sand";
+  if (/loam|soft|tacky|clay/.test(t)) return "loam";
+  if (/hard\s*-?pack|blue\s*groove|slick|intermediate/.test(t)) return "hardpack";
+  return null;
+}
+
+function capTireReason(parts: string[]): string {
+  const s = parts.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
+  if (s.length <= TIRE_REASON_MAX) return s;
+  const cut = s.slice(0, TIRE_REASON_MAX);
+  const at = cut.lastIndexOf(" ");
+  return (at > 120 ? cut.slice(0, at) : cut).trim();
+}
+
+/** The one tire decision (port of lib/tirePlanCore.ts:tirePlan). */
+export function tirePlanFor(input: TirePlanInput): TirePlanOutput {
+  const table = TIRE_TABLE;
+  const discipline: TireDisciplineId = input.discipline === "offroad" ? "offroad" : "mx";
+  const surface: TireSurface = asTireSurface(input.surface) ?? "hardpack";
+  const surfaceKnown = asTireSurface(input.surface) !== null;
+  const d = table.defaults[discipline][surface];
+  const delta = tireIsNum(input.psiDelta) ? input.psiDelta : input.watered ? table.watered_psi_delta : 0;
+  const systemFront = tireSys(input.systemFront);
+  const systemRear = tireSys(input.systemRear);
+  const savedFront = tireIsNum(input.savedFront) ? input.savedFront : null;
+  const savedRear = tireIsNum(input.savedRear) ? input.savedRear : null;
+
+  const end = (which: "front" | "rear", system: TireSystem, saved: number | null): number | null => {
+    if (system === "mousse") return null;
+    if (system === "tubliss") {
+      const t = table.systems.tubliss[which];
+      const base = saved ?? t.psi;
+      const v = tireHalf(base + delta);
+      return saved !== null ? v : Math.max(t.min, Math.min(t.max, v));
+    }
+    return tireHalf((saved ?? d[which]) + delta);
+  };
+  const front = end("front", systemFront, savedFront);
+  const rear = end("rear", systemRear, savedRear);
+
+  const anySaved = (systemFront !== "mousse" && savedFront !== null) || (systemRear !== "mousse" && savedRear !== null);
+  const bothMousse = systemFront === "mousse" && systemRear === "mousse";
+  const source: TireSource = bothMousse ? "mousse_none" : delta !== 0 ? "conditions_adjusted" : anySaved ? "rider_saved" : "dunlop_default";
+
+  const parts: string[] = [];
+  if (bothMousse) parts.push(table.systems.mousse.reason);
+  else if (anySaved) parts.push("Your saved pressure.");
+  else parts.push(surfaceKnown ? d.reason : `No surface given. ${d.reason}`);
+  if (!bothMousse && delta !== 0) parts.push(delta < 0 ? `Watered track: ${Math.abs(delta)} psi out front and rear for grip.` : `${delta} psi in front and rear.`);
+  if (!bothMousse && (systemFront === "mousse" || systemRear === "mousse")) parts.push(`${systemFront === "mousse" ? "Front" : "Rear"} is a mousse: nothing to set there.`);
+  if (systemFront === "tubliss" || systemRear === "tubliss") parts.push(`Tubliss: ${table.systems.tubliss.reason}`);
+  return { front, rear, reason: capTireReason(parts), source, discipline, surface, delta, systemFront, systemRear };
+}
+
+/** Whitelist the wire input: systems from the five, psi finite inside 1 to 40. */
+export function sanitizeTires(raw: unknown): TireInputWire | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as any;
+  const psi = (v: unknown): number | null => (tireIsNum(v) && v >= 1 && v <= 40 ? Math.round(v * 2) / 2 : null);
+  const out: TireInputWire = {
+    system_front: TIRE_SYSTEMS.includes(r.system_front) ? r.system_front : "unknown",
+    system_rear: TIRE_SYSTEMS.includes(r.system_rear) ? r.system_rear : "unknown",
+    saved_front_psi: psi(r.saved_front_psi),
+    saved_rear_psi: psi(r.saved_rear_psi),
+  };
+  const said = out.system_front !== "unknown" || out.system_rear !== "unknown" || out.saved_front_psi !== null || out.saved_rear_psi !== null;
+  return said ? out : undefined;
+}
+
+/** The engine's tire fields for a request, or null when nothing in the
+ *  request speaks to tires (no surface, no systems, no saved pressure): a
+ *  symptom-only refine says nothing about tires. */
+export function tireFieldsFor(p: { discipline: TireDisciplineId; surface: TireSurface | null; psiDelta: number; tires: TireInputWire | undefined }): TireFields | null {
+  if (!p.surface && !p.tires) return null;
+  const plan = tirePlanFor({
+    discipline: p.discipline,
+    surface: p.surface,
+    psiDelta: p.psiDelta,
+    systemFront: p.tires?.system_front ?? null,
+    systemRear: p.tires?.system_rear ?? null,
+    savedFront: p.tires?.saved_front_psi ?? null,
+    savedRear: p.tires?.saved_rear_psi ?? null,
+  });
+  return { tire_front_psi: plan.front, tire_rear_psi: plan.rear, tire_reason: plan.reason, tire_source: plan.source };
+}
+
+const PSI_RE = /(\d+(?:\.\d+)?)\s*psi\b/gi;
+/** The LLM may repeat the engine's tire numbers; a sentence carrying any
+ *  OTHER psi number is dropped (the model never chooses tire pressure). A
+ *  note with nothing left is dropped. */
+export function stripForeignPsi(notes: string[], tires: TireFields | null | undefined): string[] {
+  if (!tires) return notes;
+  const allowed = new Set([tires.tire_front_psi, tires.tire_rear_psi].filter((v): v is number => typeof v === "number").map((v) => v.toFixed(2)));
+  const out: string[] = [];
+  for (const note of notes) {
+    const sentences = note.split(/(?<=[.!?])\s+/);
+    const kept = sentences.filter((sen) => {
+      const nums = Array.from(sen.matchAll(PSI_RE)).map((m) => Number(m[1]));
+      return nums.every((n) => Number.isFinite(n) && allowed.has(n.toFixed(2)));
+    });
+    const joined = kept.join(" ").trim();
+    if (joined) out.push(joined);
+  }
   return out;
 }
 
@@ -1030,6 +1225,10 @@ function buildExplainPrompts(z: ZeroInput["input"], tune: Partial<ZeroResult>, d
   const f = tune.fork ?? ({} as any);
   const s = tune.shock ?? ({} as any);
   const air = typeof f.air_pressure_bar === "number" ? `, fork air ${f.air_pressure_bar} bar` : "";
+  const tireLine =
+    typeof tune.tire_reason === "string"
+      ? `Tires (final, engine-set, never change them): front ${typeof tune.tire_front_psi === "number" ? `${tune.tire_front_psi} psi` : "mousse, nothing to set"}, rear ${typeof tune.tire_rear_psi === "number" ? `${tune.tire_rear_psi} psi` : "mousse, nothing to set"}. Reason: ${tune.tire_reason}`
+      : null;
   const user = [
     `Bike: ${[z.year, z.make, z.model].filter(Boolean).join(" ") || "Unknown bike"}`,
     `Discipline: ${discipline === "mx" ? "motocross" : discipline === "enduro" ? "off-road / enduro" : "mixed"}`,
@@ -1038,6 +1237,7 @@ function buildExplainPrompts(z: ZeroInput["input"], tune: Partial<ZeroResult>, d
     `Goals: ${(z.rider.goals || []).join(", ") || "none given"}`,
     `Issues: ${z.rider.issues || "none described"}`,
     `Tune (final, clicks out from closed): fork compression ${f.comp_clicks}, fork rebound ${f.reb_clicks}${air}; shock low-speed ${s.lsc_clicks}, high-speed ${s.hsc_turns} turns, rebound ${s.reb_clicks}, sag ${s.sag_mm} mm.`,
+    ...(tireLine ? [tireLine] : []),
     "Explain this tune to the rider. Respond ONLY with the JSON object.",
   ].join("\n");
   return { system, user };
@@ -1737,6 +1937,21 @@ export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
 
   // ---- Contract v3: the conditions stage ----
   const cond = input.conditions ? conditionsRuleDeltas(input.conditions, prevOf, air !== undefined) : null;
+  // Tire pressure (engine output, 2026-09-07): from the ride's surface (else
+  // the terrain word), the watered delta and what is in the tires.
+  // Only when the request speaks to tires (a conditions ask, or what is in
+  // the tires): a symptom-only refine, terrain word or not, keeps the v1
+  // byte-frozen shape.
+  const tireSurface = asTireSurface(input.conditions?.surfaces?.[0]) ?? surfaceFromTerrain(input.terrain);
+  const tires =
+    input.conditions || input.tires
+      ? tireFieldsFor({
+          discipline: input.rider?.discipline === "offroad" ? "offroad" : "mx",
+          surface: tireSurface,
+          psiDelta: cond?.tirePsiDelta ?? 0,
+          tires: input.tires,
+        })
+      : null;
 
   const echo = (notes: string[]): Partial<Tune2Result> => ({
     fork: { comp_clicks: prevOf.fork_comp, reb_clicks: prevOf.fork_reb, air_pressure_bar: air },
@@ -1749,6 +1964,7 @@ export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
     detected: prev.detected,
     notes,
     ...(cond ? { tire_psi_delta: cond.tirePsiDelta } : {}),
+    ...(tires ?? {}),
   });
 
   if (!symptoms.length && !(cond && cond.deltas.length)) {
@@ -2407,6 +2623,7 @@ export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
     detected: prev.detected,
     notes,
     ...(cond ? { tire_psi_delta: cond.tirePsiDelta } : {}),
+    ...(tires ?? {}),
   };
 
   return out;
@@ -2954,6 +3171,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
           parsedAddedIds: merged.parsedAddedIds,
           conditions: sanitizeConditions(raw.conditions),
           setupId: typeof raw.setup_id === "string" && ANON_ID_RE.test(raw.setup_id) ? raw.setup_id.toLowerCase() : undefined,
+          tires: sanitizeTires(raw.tires),
         };
 
         const partial = buildTuneTwo(tune2Input);
@@ -2974,6 +3192,15 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // merge of the model's numbers over the formula.
         const engineMode: BaselineEngine = (await deps.baselineEngine().catch(() => null)) ?? "llm";
         const formula = formulaBaseline(z);
+        // Tire pressure (engine output, 2026-09-07): the terrain word and what
+        // is in the tires; the model may repeat the numbers, never choose them.
+        const baselineTires = tireFieldsFor({
+          discipline: formula.discipline === "enduro" ? "offroad" : "mx",
+          surface: surfaceFromTerrain(z.terrain),
+          psiDelta: 0,
+          tires: sanitizeTires((z as any).tires),
+        });
+        if (baselineTires) Object.assign(formula.partial, baselineTires);
         let partial: Partial<ZeroResult> = formula.partial;
         let engineSource: EngineSource = "formula";
         let notesSource: NotesSource = "formula";
@@ -2981,10 +3208,11 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         if (engineMode === "deterministic") {
           engineSource = "deterministic";
           let spendLimited = false;
-          const explained = await deps.explain(z, formula.partial, formula.discipline, meter).catch((e) => {
+          const explainedRaw = await deps.explain(z, formula.partial, formula.discipline, meter).catch((e) => {
             if (e instanceof SpendLimitError) spendLimited = true;
             return null;
           });
+          const explained = explainedRaw ? stripForeignPsi(explainedRaw, baselineTires) : null;
           if (explained && explained.length) {
             partial = { ...partial, notes: explained };
             notesSource = "llm";
@@ -3008,7 +3236,9 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
               fork: { ...partial.fork, ...ai?.fork } as ZeroResult["fork"],
               shock: { ...partial.shock, ...ai?.shock } as ZeroResult["shock"],
               detected: { ...partial.detected, ...ai?.detected },
-              notes: ai?.notes ?? partial.notes,
+              notes: ai?.notes ? stripForeignPsi(ai.notes, baselineTires) : partial.notes,
+              // The formula's tire answer stands whatever the model returned.
+              ...(baselineTires ?? {}),
             };
           } catch (e) {
             if (e instanceof SpendLimitError) {
