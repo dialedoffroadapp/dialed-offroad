@@ -198,9 +198,14 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
           );
           // The guest bike's air-or-coil answer (ambiguous 2016 rows) rides
           // along as bikes.air_fork_override.
-          const guestAirFork = pending.bikeId
-            ? (await readGuestBikes()).find((b) => b.id === pending.bikeId)?.airFork ?? null
-            : null;
+          const guestBike = pending.bikeId ? (await readGuestBikes()).find((b) => b.id === pending.bikeId) ?? null : null;
+          const guestAirFork = guestBike?.airFork ?? null;
+          // What is in the tires, when the rider said (the column default is
+          // unknown, so an unanswered bike never names the columns).
+          const guestTires =
+            guestBike && ((guestBike.tireSystemFront && guestBike.tireSystemFront !== "unknown") || (guestBike.tireSystemRear && guestBike.tireSystemRear !== "unknown"))
+              ? { tire_system_front: guestBike.tireSystemFront ?? "unknown", tire_system_rear: guestBike.tireSystemRear ?? "unknown" }
+              : {};
           const { data: insertedBike, error: bikeInsertErr } = await supabase
             .from("bikes")
             .insert({
@@ -208,6 +213,7 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
               ...pendingBike,
               model_id,
               ...(typeof guestAirFork === "boolean" ? { air_fork_override: guestAirFork } : {}),
+              ...guestTires,
             })
             .select("id")
             .single();

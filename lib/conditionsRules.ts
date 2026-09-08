@@ -20,6 +20,8 @@ import { coreRetuneRules, coreTodaysSetupRules } from "./conditionsRulesCore";
 import type { CircuitKey } from "./currentSetup";
 import { primarySurface, type RideConditions, type Surface } from "./rideConditions";
 import type { SettingsSnapshot } from "./setupVersions";
+import tireTable from "./generated/tireDefaults.json";
+import { tirePlan, type TireDiscipline, type TirePlanOutput, type TireSystem, type TireTable } from "./tirePlanCore";
 
 export type RuleDelta = { circuit: CircuitKey; delta: number; reason: string };
 
@@ -69,28 +71,17 @@ export function previewValue(v: number | null, delta: number, decimals: number):
 
 /* ------------------------- Tire pressure (today) ------------------------- */
 // Today's setup ALWAYS produces a tire pressure (2026-09-04): the rider's
-// saved value when present, else a starting point per PRIMARY surface and
-// discipline. The defaults are Dunlop's published guidance (research
-// 2026-09-07, TIRE_PRESSURE_SOURCE); the watered-track half psi is our own
-// rule. Front / rear psi. Dunlop's desert and rock range (14 to 16) has no
-// surface of its own here; the off-road hardpack copy names it.
-export const TIRE_PRESSURE_SOURCE =
-  "Dunlop Motorcycle Tires, Geomax off-road tire pressure guidance (MX hardpack and intermediate 12 front / 12.5 rear, four-stroke front 13 to 14; soft 12 / 12; sand 11 to 12; mud 12 / 10; off-road 13 / 14; desert and rocks 14 to 16), read 2026-09-07";
-export type TireDiscipline = "mx" | "offroad";
-export const TIRE_DEFAULT_PSI: Record<TireDiscipline, Record<Surface, { front: number; rear: number; reason: string }>> = {
-  mx: {
-    hardpack: { front: 12, rear: 12.5, reason: "No tire pressure saved. Dunlop starting point for hardpack and intermediate MX: 12 front, 12.5 rear. Four-strokes often run 13 to 14 up front." },
-    loam: { front: 12, rear: 12, reason: "No tire pressure saved. Dunlop starting point for soft MX terrain: 12 front, 12 rear. A touch of give for bite in the top layer." },
-    sand: { front: 12, rear: 11.5, reason: "No tire pressure saved. Dunlop's sand range is 11 to 12. We start at 12 front, 11.5 rear so the tire floats and hooks up." },
-    mud: { front: 12, rear: 10, reason: "No tire pressure saved. Dunlop starting point for mud: 12 front, 10 rear. The low rear opens the knobs for grip." },
-  },
-  offroad: {
-    hardpack: { front: 13, rear: 14, reason: "No tire pressure saved. Dunlop starting point for off-road: 13 front, 14 rear. Rocks and desert run 14 to 16 to protect the tube." },
-    loam: { front: 13, rear: 14, reason: "No tire pressure saved. Dunlop starting point for off-road: 13 front, 14 rear. Drop a psi where the ground is soft and the rocks are gone." },
-    sand: { front: 12, rear: 12, reason: "No tire pressure saved. Dunlop's sand range is 11 to 12. We start at 12 front, 12 rear with a tube in mind." },
-    mud: { front: 12, rear: 10, reason: "No tire pressure saved. Dunlop starting point for mud: 12 front, 10 rear. The low rear opens the knobs for grip." },
-  },
-};
+// saved value when present, else Dunlop's starting point per PRIMARY surface
+// and discipline. Since 2026-09-07 tire pressure is an ENGINE output: the
+// rule base is lib/tirePlanCore.ts over the server's table (single source of
+// truth, supabase/functions/ai-tune/tire_defaults.json; lib/generated/
+// tireDefaults.json is its generated copy) and this module is the offline
+// fallback with the same numbers. The watered-track half psi is in the table.
+export const TIRE_TABLE = tireTable as TireTable;
+export const TIRE_PRESSURE_SOURCE = TIRE_TABLE.source;
+/** Per discipline and surface, for display and the older callers. */
+export const TIRE_DEFAULT_PSI = TIRE_TABLE.defaults;
+export type { TireDiscipline };
 
 export type TirePlan = {
   front: number | null;
@@ -99,22 +90,40 @@ export type TirePlan = {
   changed: boolean;
   reason: string | null;
   source: "saved" | "default" | "none";
+  /** The engine-shaped plan behind the row (systems, tire_source); absent for "none". */
+  plan?: TirePlanOutput;
 };
+
+/** The engine's tire fields (or the offline core's output) in the row shape
+ *  Today's setup renders: changed when it differs from what the bike has. */
+export function planToTirePlan(plan: TirePlanOutput, saved: { front: number | null; rear: number | null }): TirePlan {
+  const anySaved = typeof saved.front === "number" || typeof saved.rear === "number";
+  const changed = plan.front !== saved.front || plan.rear !== saved.rear;
+  return { front: plan.front, rear: plan.rear, changed, reason: plan.reason, source: anySaved ? "saved" : "default", plan };
+}
 
 export function tirePressureForToday(
   c: RideConditions,
   saved: { front: number | null; rear: number | null },
   psiDelta: number,
-  discipline: TireDiscipline | null = "mx"
+  discipline: TireDiscipline | null = "mx",
+  systems?: { front?: TireSystem | null; rear?: TireSystem | null } | null
 ): TirePlan {
   const hasSaved = typeof saved.front === "number" || typeof saved.rear === "number";
-  if (hasSaved) {
-    const front = typeof saved.front === "number" ? saved.front + psiDelta : null;
-    const rear = typeof saved.rear === "number" ? saved.rear + psiDelta : null;
-    return { front, rear, changed: psiDelta !== 0, reason: psiDelta !== 0 ? "Watered track: half a psi out front and rear for grip." : null, source: "saved" };
-  }
   const surface = primarySurface(c);
-  if (!surface) return { front: null, rear: null, changed: false, reason: null, source: "none" };
-  const d = TIRE_DEFAULT_PSI[discipline ?? "mx"][surface];
-  return { front: d.front + psiDelta, rear: d.rear + psiDelta, changed: true, reason: d.reason, source: "default" };
+  if (!surface && !hasSaved) return { front: null, rear: null, changed: false, reason: null, source: "none" };
+  const plan = tirePlan(TIRE_TABLE, {
+    discipline,
+    surface,
+    psiDelta,
+    systemFront: systems?.front ?? null,
+    systemRear: systems?.rear ?? null,
+    savedFront: saved.front,
+    savedRear: saved.rear,
+  });
+  if (hasSaved) {
+    // The saved value is the rider's; the row changes only when a delta moved it.
+    return { front: plan.front, rear: plan.rear, changed: psiDelta !== 0 || plan.front !== saved.front || plan.rear !== saved.rear, reason: psiDelta !== 0 || plan.source === "mousse_none" || plan.systemFront === "mousse" || plan.systemRear === "mousse" || plan.systemFront === "tubliss" || plan.systemRear === "tubliss" ? plan.reason : null, source: "saved", plan };
+  }
+  return { front: plan.front, rear: plan.rear, changed: true, reason: plan.reason, source: "default", plan };
 }

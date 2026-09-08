@@ -23,6 +23,8 @@ import { meterCaption } from "../../lib/dialedMeter";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../../lib/garageV3";
 import { shortDate } from "../../lib/homeCopy";
 import { gateIfLocked, showProGate } from "../../lib/proGate";
+import { tireCell } from "../../lib/tirePlanCore";
+import { clearTirePlan } from "../../lib/tirePlanStore";
 import { logEvent } from "../../lib/usage";
 
 export const SETUP_SHEET_ROUTE = "/setup-sheet";
@@ -122,7 +124,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   };
 
   const hoursValue = extras.hours !== null ? extras.hours.toFixed(1) : "—";
-  const tiresValue = extras.tireFrontPsi !== null && extras.tireRearPsi !== null ? `${trim(extras.tireFrontPsi)} / ${trim(extras.tireRearPsi)}` : "—";
+  const tiresValue = `${tireCell(extras.tireFrontPsi, extras.tireSystemFront)} / ${tireCell(extras.tireRearPsi, extras.tireSystemRear)}`;
 
   return (
     <View style={styles.root}>
@@ -162,7 +164,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
 
         <View style={styles.tiles}>
           <Tile label="Engine hrs" value={hoursValue} sub={extras.hours !== null ? `oil at ${trim(nextOilAt(extras))}` : "tap to set"} onPress={() => setHoursOpen(true)} muted={extras.hours === null} />
-          <Tile label="Tires" value={tiresValue} sub={extras.tireFrontPsi !== null ? "psi front / rear" : "tap to set"} onPress={() => void gateIfLocked({ trigger: "tire_pressure", bikeId: bike.id, hasBaseline: versions.length > 0 }).then((ok) => ok && setTiresOpen(true))} muted={extras.tireFrontPsi === null} />
+          <Tile label="Tires" value={tiresValue} sub={extras.tireFrontPsi !== null || extras.tireSystemFront === "mousse" ? "psi front / rear" : "tap to set"} onPress={() => void gateIfLocked({ trigger: "tire_pressure", bikeId: bike.id, hasBaseline: versions.length > 0 }).then((ok) => ok && setTiresOpen(true))} muted={extras.tireFrontPsi === null && extras.tireSystemFront !== "mousse"} />
         </View>
 
         <Label style={{ marginBottom: 8 }}>Setups</Label>
@@ -238,9 +240,12 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
         onClose={() => setTiresOpen(false)}
         front={extras.tireFrontPsi}
         rear={extras.tireRearPsi}
+        systemFront={extras.tireSystemFront}
+        systemRear={extras.tireSystemRear}
         onSave={async (p) => {
           setTiresOpen(false);
-          const next = await saveBikeExtras(bike.id, { tireFrontPsi: p.front, tireRearPsi: p.rear });
+          const next = await saveBikeExtras(bike.id, { tireFrontPsi: p.front, tireRearPsi: p.rear, tireSystemFront: p.systemFront, tireSystemRear: p.systemRear });
+          void clearTirePlan(bike.id);
           setData({ ...data, extras: next });
         }}
       />

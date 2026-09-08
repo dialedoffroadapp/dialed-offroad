@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "source": "Dunlop Motorcycle Tires, Geomax off-road tire pressure guidance (MX hardpack and intermediate 12 front / 12.5 rear, four-stroke front 13 to 14; soft 12 / 12; sand 11 to 12; mud 12 / 10; off-road 13 / 14; desert and rocks 14 to 16), read 2026-09-07",
+  "watered_psi_delta": -0.5,
+  "defaults": {
+    "mx": {
+      "hardpack": {
+        "front": 12,
+        "rear": 12.5,
+        "reason": "Dunlop starting point for hardpack and intermediate MX: 12 front, 12.5 rear. Four-strokes often run 13 to 14 up front."
+      },
+      "loam": {
+        "front": 12,
+        "rear": 12,
+        "reason": "Dunlop starting point for soft MX terrain: 12 front, 12 rear. A touch of give for bite in the top layer."
+      },
+      "sand": {
+        "front": 12,
+        "rear": 11.5,
+        "reason": "Dunlop's sand range is 11 to 12. Starting at 12 front, 11.5 rear so the tire floats and hooks up."
+      },
+      "mud": {
+        "front": 12,
+        "rear": 10,
+        "reason": "Dunlop starting point for mud: 12 front, 10 rear. The low rear opens the knobs for grip."
+      }
+    },
+    "offroad": {
+      "hardpack": {
+        "front": 13,
+        "rear": 14,
+        "reason": "Dunlop starting point for off-road: 13 front, 14 rear. Rocks and desert run 14 to 16 to protect the tube."
+      },
+      "loam": {
+        "front": 13,
+        "rear": 14,
+        "reason": "Dunlop starting point for off-road: 13 front, 14 rear. Drop a psi where the ground is soft and the rocks are gone."
+      },
+      "sand": {
+        "front": 12,
+        "rear": 12,
+        "reason": "Dunlop's sand range is 11 to 12. Starting at 12 front, 12 rear with a tube in mind."
+      },
+      "mud": {
+        "front": 12,
+        "rear": 10,
+        "reason": "Dunlop starting point for mud: 12 front, 10 rear. The low rear opens the knobs for grip."
+      }
+    }
+  },
+  "systems": {
+    "tubliss": {
+      "front": {
+        "psi": 8,
+        "min": 6,
+        "max": 10
+      },
+      "rear": {
+        "psi": 6,
+        "min": 3,
+        "max": 8
+      },
+      "reason": "Low pressure grips at crawl speed and gets vague at high speed."
+    },
+    "mousse": {
+      "reason": "No pressure to set on a mousse. It rides like roughly 12 to 16 psi."
+    }
+  }
+}

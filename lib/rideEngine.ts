@@ -7,7 +7,8 @@
 // to get an answer: the engine is asked every time it is reachable, with
 // `feedback.source: "conditions"` (no symptoms of its own, no adaptive step),
 // and the rules run locally only when the call fails.
-import { generateTuneTwo, type Tune2Context } from "./ai";
+import { generateTuneTwo, type TireInput, type Tune2Context } from "./ai";
+import { asTireSurface, type TirePlanOutput } from "./tirePlanCore";
 import type { CircuitKey } from "./currentSetup";
 import { disciplineFromBike } from "./discipline";
 import { retuneRules, todaysSetupRules, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
@@ -24,6 +25,8 @@ export type SuggestResult = RuleResult & {
   reasoning: string | null;
   /** Why the engine did not decide (present only when source is "rules"). */
   engineSkipped?: "offline_or_error";
+  /** The engine's tire plan when it answered with one (2026-09-07). */
+  tires?: TirePlanOutput;
 };
 
 export type SuggestParams = {
@@ -39,6 +42,8 @@ export type SuggestParams = {
   /** Retune tile (mid-day); absent = today's setup (morning). */
   tile?: Exclude<RetuneTile, "new_track"> | null;
   priorTweaks?: { circuit: CircuitKey; delta: number }[];
+  /** What is in each tire and the saved pressures, for the engine's tire output. */
+  tires?: TireInput | null;
 };
 
 function rulesFor(p: SuggestParams): RuleResult {
@@ -62,6 +67,7 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
       temp_f: tempBandToF(p.conditions.temp),
       wants_air_fork: p.hasAirFork,
       rider: { discipline: disciplineFromBike(p.bike.make, p.bike.model) ?? undefined },
+      ...(p.tires ? { tires: p.tires } : {}),
     };
     const result = await generateTuneTwo({
       previous: snapshotToTune(p.effective, p.hasAirFork),
@@ -79,6 +85,21 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
     });
     const changes = diffChanges(p.effective, result, 2);
     const reasoning = Array.isArray(result?.notes) ? (result.notes.find((n: unknown) => typeof n === "string" && n.trim()) as string | undefined) ?? null : null;
+    // The engine's tire plan (additive fields) rides along whatever the clickers say.
+    const tires: TirePlanOutput | undefined =
+      "tire_front_psi" in result && typeof result.tire_reason === "string" && typeof result.tire_source === "string"
+        ? {
+            front: typeof result.tire_front_psi === "number" ? result.tire_front_psi : null,
+            rear: typeof result.tire_rear_psi === "number" ? result.tire_rear_psi : null,
+            reason: result.tire_reason,
+            source: result.tire_source,
+            discipline: disciplineFromBike(p.bike.make, p.bike.model) ?? "mx",
+            surface: asTireSurface(surfaces[0]) ?? "hardpack",
+            delta: typeof result.tire_psi_delta === "number" ? result.tire_psi_delta : rules.tirePsiDelta,
+            systemFront: p.tires?.system_front ?? "unknown",
+            systemRear: p.tires?.system_rear ?? "unknown",
+          }
+        : undefined;
     const tirePsiDelta = typeof result.tire_psi_delta === "number" ? result.tire_psi_delta : rules.tirePsiDelta;
     const deltas: RuleDelta[] = changes.map((c) => ({ circuit: c.circuit, delta: c.delta, reason: c.reason }));
     const n = deltas.length + (tirePsiDelta ? 1 : 0);
@@ -87,7 +108,7 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
       : n === 0
         ? `Your ${p.setupName}, as it stands. Nothing today's dirt asks to change.`
         : `Your ${p.setupName}, ${deltas.length === 0 ? "one tweak" : deltas.length === 1 ? "one change" : "two changes"} for today's conditions.`;
-    return { deltas, tirePsiDelta, summary, note: reasoning, source: "engine", reasoning };
+    return { deltas, tirePsiDelta, summary, note: reasoning, source: "engine", reasoning, ...(tires ? { tires } : {}) };
   } catch {
     return { ...rules, source: "rules", reasoning: rules.note ?? (rules.deltas[0]?.reason ?? null), engineSkipped: "offline_or_error" };
   }

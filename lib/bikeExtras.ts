@@ -7,12 +7,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { DEFAULT_OIL_INTERVAL_HOURS } from "./homeCopy";
 import { supabase } from "./supabase";
+import { TIRE_SYSTEMS, type TireSystem } from "./tirePlanCore";
 import { isUuid } from "./uuid";
 
 export type BikeExtras = {
   hours: number | null;
   tireFrontPsi: number | null;
   tireRearPsi: number | null;
+  /** What is in each tire (bikes.tire_system_front/rear, migration
+   *  20260907180000): tube | heavy_tube | tubliss | mousse | unknown. */
+  tireSystemFront: TireSystem;
+  tireSystemRear: TireSystem;
   forkSpringRate: number | null;
   shockSpringRate: number | null;
   photoPath: string | null;
@@ -24,6 +29,8 @@ export const EMPTY_EXTRAS: BikeExtras = {
   hours: null,
   tireFrontPsi: null,
   tireRearPsi: null,
+  tireSystemFront: "unknown",
+  tireSystemRear: "unknown",
   forkSpringRate: null,
   shockSpringRate: null,
   photoPath: null,
@@ -33,6 +40,8 @@ export const EMPTY_EXTRAS: BikeExtras = {
 
 const key = (bikeId: string) => `bike_extras_v1:${bikeId}`;
 
+const system = (v: unknown): TireSystem => (TIRE_SYSTEMS.includes(v as TireSystem) ? (v as TireSystem) : "unknown");
+
 const num = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : null;
 
@@ -41,6 +50,8 @@ function fromRow(row: any): BikeExtras {
     hours: num(row?.hours),
     tireFrontPsi: num(row?.tire_front_psi),
     tireRearPsi: num(row?.tire_rear_psi),
+    tireSystemFront: system(row?.tire_system_front),
+    tireSystemRear: system(row?.tire_system_rear),
     forkSpringRate: num(row?.fork_spring_rate),
     shockSpringRate: num(row?.shock_spring_rate),
     photoPath: typeof row?.photo_path === "string" ? row.photo_path : null,
@@ -54,6 +65,8 @@ function toRow(e: Partial<BikeExtras>): Record<string, unknown> {
   if ("hours" in e) out.hours = e.hours;
   if ("tireFrontPsi" in e) out.tire_front_psi = e.tireFrontPsi;
   if ("tireRearPsi" in e) out.tire_rear_psi = e.tireRearPsi;
+  if ("tireSystemFront" in e) out.tire_system_front = e.tireSystemFront ?? "unknown";
+  if ("tireSystemRear" in e) out.tire_system_rear = e.tireSystemRear ?? "unknown";
   if ("forkSpringRate" in e) out.fork_spring_rate = e.forkSpringRate;
   if ("shockSpringRate" in e) out.shock_spring_rate = e.shockSpringRate;
   if ("photoPath" in e) out.photo_path = e.photoPath;
@@ -72,18 +85,20 @@ export async function readBikeExtras(bikeId: string): Promise<BikeExtras> {
   }
   if (!isUuid(bikeId)) return local ?? EMPTY_EXTRAS;
   try {
-    const { data, error } = await supabase
-      .from("bikes")
-      .select("hours, tire_front_psi, tire_rear_psi, fork_spring_rate, shock_spring_rate, photo_path, maintenance_interval_hours, last_service_hours")
-      .eq("id", bikeId)
-      .maybeSingle();
+    const BASE = "hours, tire_front_psi, tire_rear_psi, fork_spring_rate, shock_spring_rate, photo_path, maintenance_interval_hours, last_service_hours";
+    let { data, error } = await supabase.from("bikes").select(`${BASE}, tire_system_front, tire_system_rear`).eq("id", bikeId).maybeSingle();
+    // A project without migration 20260907180000 answers 42703 (undefined
+    // column): retry without the tire-system columns so the rest still loads.
+    if (error && (error as any).code === "42703") {
+      ({ data, error } = await supabase.from("bikes").select(BASE).eq("id", bikeId).maybeSingle());
+    }
     if (!error && data) {
       const remote = fromRow(data);
       // Server wins for any non-null field; the cache keeps values written
       // while the column didn't exist yet.
       const merged: BikeExtras = { ...(local ?? EMPTY_EXTRAS) };
       (Object.keys(remote) as (keyof BikeExtras)[]).forEach((k) => {
-        if (remote[k] !== null) (merged as any)[k] = remote[k];
+        if (remote[k] !== null && remote[k] !== "unknown") (merged as any)[k] = remote[k];
       });
       void AsyncStorage.setItem(key(bikeId), JSON.stringify(merged)).catch(() => {});
       return merged;
