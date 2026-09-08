@@ -13,7 +13,9 @@ import { Eyebrow, Label, Small, Sub } from "../../components/v3/primitives";
 import { V3 } from "../../components/v3/theme";
 import { Cta, RideH1, RideScreenBg, RowSet, ValueRow } from "../../components/ride/ridePrimitives";
 import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
-import { previewValue, tirePressureForToday } from "../../lib/conditionsRules";
+import { planToTirePlan, previewValue, tirePressureForToday } from "../../lib/conditionsRules";
+import { tireCell } from "../../lib/tirePlanCore";
+import { rememberTirePlan } from "../../lib/tirePlanStore";
 import { disciplineFromBike } from "../../lib/discipline";
 import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
@@ -68,7 +70,7 @@ export default function RideTodayScreen() {
   const base = useMemo(() => (draft?.startingVersion ? snapshotFromVersion(draft.startingVersion) : null), [draft]);
   // Engine when online (free text is what it can act on), rules otherwise.
   useEffect(() => {
-    if (!draft || !base || !draft.bike) return;
+    if (!draft || !base || !draft.bike || !extras) return;
     let alive = true;
     setThinking(true);
     void suggestForConditions({
@@ -79,6 +81,7 @@ export default function RideTodayScreen() {
       effective: base,
       setupName: draft.setupName ?? "setup",
       freeText,
+      tires: { system_front: extras.tireSystemFront, system_rear: extras.tireSystemRear, saved_front_psi: extras.tireFrontPsi, saved_rear_psi: extras.tireRearPsi },
     }).then((r) => {
       if (!alive) return;
       setRules(r);
@@ -88,7 +91,7 @@ export default function RideTodayScreen() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, base, asked]);
+  }, [draft, base, asked, extras]);
 
   if (!draft || !base || !rules || !extras) {
     return (
@@ -104,7 +107,11 @@ export default function RideTodayScreen() {
   const tiresR = extras.tireRearPsi;
   // Always a tire pressure: saved value (plus any rule delta), else the
   // per-surface default, shown as a changed row with its reason.
-  const tires = tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta, disciplineFromBike(draft.bike?.make, draft.bike?.model));
+  // Engine tire fields when it answered (2026-09-07), else the same table offline.
+  const tires = rules.tires
+    ? planToTirePlan(rules.tires, { front: tiresF, rear: tiresR })
+    : tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta, disciplineFromBike(draft.bike?.make, draft.bike?.model), { front: extras.tireSystemFront, rear: extras.tireSystemRear });
+  if (tires.plan && draft.bike) void rememberTirePlan(draft.bike.id, tires.plan, rules.tires ? "engine" : "rules");
 
   const onStart = async () => {
     if (starting) return;
@@ -182,8 +189,8 @@ export default function RideTodayScreen() {
         <RowSet>
           <ValueRow
             label="Tires"
-            value={`${typeof tires.front === "number" ? String(tires.front) : "—"} / ${typeof tires.rear === "number" ? String(tires.rear) : "—"}`}
-            old={tires.changed ? `${typeof tiresF === "number" ? tiresF : "—"} / ${typeof tiresR === "number" ? tiresR : "—"}` : null}
+            value={`${tireCell(tires.front, extras.tireSystemFront)} / ${tireCell(tires.rear, extras.tireSystemRear)}`}
+            old={tires.changed ? `${tireCell(tiresF, extras.tireSystemFront)} / ${tireCell(tiresR, extras.tireSystemRear)}` : null}
             unit="psi"
             last
             onPress={tires.reason ? () => setReason(tires.reason) : undefined}

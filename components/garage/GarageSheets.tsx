@@ -10,6 +10,8 @@ import { BottomSheet } from "../v3/BottomSheet";
 import { Button, Chip, Label, Small, Sub } from "../v3/primitives";
 import { headingFont, interFont, V3 } from "../v3/theme";
 import { BIKE_BRANDS, BIKE_CATALOG } from "../../constants/bike-catalog";
+import type { TireSystem } from "../../lib/tirePlanCore";
+import { TireSystemPicker } from "./TireSystemPicker";
 
 export function DecimalStepper({
   value,
@@ -105,24 +107,39 @@ export function TiresSheet({
   onClose,
   front,
   rear,
+  systemFront = "unknown",
+  systemRear = "unknown",
   onSave,
 }: {
   open: boolean;
   onClose: () => void;
   front: number | null;
   rear: number | null;
-  onSave: (p: { front: number; rear: number }) => void;
+  systemFront?: TireSystem;
+  systemRear?: TireSystem;
+  onSave: (p: { front: number | null; rear: number | null; systemFront: TireSystem; systemRear: TireSystem }) => void;
 }) {
   const [f, setF] = useState(front ?? 12);
   const [r, setR] = useState(rear ?? 12.5);
+  const [sys, setSys] = useState<{ front: TireSystem; rear: TireSystem }>({ front: systemFront, rear: systemRear });
   return (
     <BottomSheet open={open} onClose={onClose} title="Tires">
       <Sub style={{ marginTop: 0, marginBottom: 14 }}>Cold pressures, before the first moto.</Sub>
-      <DecimalStepper value={f} onChange={setF} step={0.5} min={4} max={30} unit="psi" label="Front" />
+      {sys.front === "mousse" ? <Small style={{ marginBottom: 8 }}>Front is a mousse: no pressure to set.</Small> : (
+        <DecimalStepper value={f} onChange={setF} step={0.5} min={2} max={30} unit="psi" label="Front" />
+      )}
       <View style={{ marginTop: 16 }}>
-        <DecimalStepper value={r} onChange={setR} step={0.5} min={4} max={30} unit="psi" label="Rear" />
+        {sys.rear === "mousse" ? <Small style={{ marginBottom: 8 }}>Rear is a mousse: no pressure to set.</Small> : (
+          <DecimalStepper value={r} onChange={setR} step={0.5} min={2} max={30} unit="psi" label="Rear" />
+        )}
       </View>
-      <Button label="Save" style={{ marginTop: 18 }} onPress={() => onSave({ front: f, rear: r })} />
+      <Label style={{ marginTop: 18, marginBottom: 8 }}>What is in them</Label>
+      <TireSystemPicker front={sys.front} rear={sys.rear} onChange={setSys} colors={{ text: V3.white, muted: V3.steel, border: V3.line, on: V3.white, onText: V3.carbon }} />
+      <Button
+        label="Save"
+        style={{ marginTop: 18 }}
+        onPress={() => onSave({ front: sys.front === "mousse" ? null : f, rear: sys.rear === "mousse" ? null : r, systemFront: sys.front, systemRear: sys.rear })}
+      />
     </BottomSheet>
   );
 }

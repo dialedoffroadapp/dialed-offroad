@@ -8,17 +8,12 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import Animated, { FadeIn, FadeOut, SlideInRight } from "react-native-reanimated";
 import { QuizChip } from "../../components/quiz/QuizChip";
 import { fetchModelSpecs } from "../../lib/modelSpecs";
+import { TireSystemPicker } from "../../components/garage/TireSystemPicker";
+import type { TireSystem } from "../../lib/tirePlanCore";
 import { QuizChoiceCard } from "../../components/quiz/QuizChoiceCard";
 import { useToast } from "../../components/Toast";
 import { QuizShell } from "../../components/quiz/QuizShell";
@@ -46,7 +41,7 @@ import {
 } from "../../lib/quizOnboarding";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
-type Phase = "brand" | "model" | "fork";
+type Phase = "brand" | "model" | "fork" | "tires";
 
 const yearAnswerId = (model: string, year: number) => `${model}::${year}`;
 const splitYearAnswer = (id: string): { model: string; year: number } => {
@@ -72,6 +67,13 @@ export default function QuizBikeScreen() {
   // SX/SX-F, FC/TC shipped air in the EU and coil in the US and Australia):
   // the fork phase asks and stores the answer on the bike.
   const forkAskRef = useRef<{ make: string; model: string; year: number; bikeId: string } | null>(null);
+  // The bike the year commit created; the tire question writes onto it.
+  const bikeRef = useRef<{ make: string; model: string; year: number; bikeId: string } | null>(null);
+  const [tireSystems, setTireSystems] = useState<{ front: TireSystem; rear: TireSystem }>({
+    front: answers.tireSystemFront ?? "unknown",
+    rear: answers.tireSystemRear ?? "unknown",
+  });
+  const [tiresSaving, setTiresSaving] = useState(false);
 
   // Returning with a persisted brand lands on 2b with the model expanded.
   useEffect(() => {
@@ -147,6 +149,7 @@ export default function QuizBikeScreen() {
         previousId: answers.bikeLocalId ?? null,
       });
       forkAskRef.current = null;
+      bikeRef.current = { make: mk, model: mo, year: y, bikeId };
       try {
         const specs = await fetchModelSpecs({ id: null, model_id: null, make: mk, model: mo, year: y });
         if (specs?.fork_type_ambiguous && typeof answers.airForkOverride !== "boolean") {
@@ -198,7 +201,8 @@ export default function QuizBikeScreen() {
         answer: { make: mk, model: mo, year: y, catalog_match: catalogMatch },
       });
     },
-    onAdvance: () => (forkAskRef.current ? setPhase("fork") : router.push(nextQuizRoute("bike", answers) as never)),
+    // Fork question on ambiguous rows, then what is in the tires (never blocks).
+    onAdvance: () => setPhase(forkAskRef.current ? "fork" : "tires"),
     onError: () => toast.show("Couldn't save your bike. Check your signal and tap the year again.", { kind: "error" }),
   });
 
@@ -221,7 +225,7 @@ export default function QuizBikeScreen() {
       await setAnswers({ airForkOverride: airFork });
       await logQuizEvent("quiz_step_answered", { step: "bike", answer: { fork: id, make: ask?.make, model: ask?.model, year: ask?.year } });
     },
-    onAdvance: () => router.push(nextQuizRoute("bike", answers) as never),
+    onAdvance: () => setPhase("tires"),
     onError: () => toast.show("Couldn't save your fork. Tap it again.", { kind: "error" }),
   });
 
@@ -509,6 +513,48 @@ export default function QuizBikeScreen() {
     );
   }
 
+  if (phase === "tires") {
+    // What is in the tires (engine tire output, 2026-09-07). Default "Not
+    // sure"; Continue always works. Stored on the bike (guest store until
+    // sign-up) and on the answers for this run.
+    const b = bikeRef.current;
+    const continueTires = async () => {
+      if (tiresSaving) return;
+      setTiresSaving(true);
+      try {
+        await upsertQuizBike({
+          make: b?.make ?? answers.make ?? "",
+          model: b?.model ?? answers.model ?? "",
+          year: b?.year ?? answers.year ?? 0,
+          previousId: b?.bikeId ?? answers.bikeLocalId ?? null,
+          tireSystems,
+        });
+        await setAnswers({ tireSystemFront: tireSystems.front, tireSystemRear: tireSystems.rear });
+        await logQuizEvent("quiz_step_answered", { step: "bike", answer: { tires: tireSystems } });
+      } catch {
+        // never blocks: the default is unknown either way
+      }
+      setTiresSaving(false);
+      router.push(nextQuizRoute("bike", answers) as never);
+    };
+    return (
+      <QuizShell
+        step="bike"
+        title="What's in your tires?"
+        subtitle="Tube, Tubliss or mousse changes what pressure means. Not sure is fine; you can set it in the garage."
+        showBack
+        onBack={() => setPhase(forkAskRef.current ? "fork" : "model")}
+        footerSlot={
+          <Pressable onPress={() => void continueTires()} disabled={tiresSaving} accessibilityRole="button" style={styles.tiresContinue}>
+            <Text style={styles.tiresContinueText}>{tireSystems.front === "unknown" && tireSystems.rear === "unknown" ? "Skip for now" : "Continue"}</Text>
+          </Pressable>
+        }
+      >
+        <TireSystemPicker front={tireSystems.front} rear={tireSystems.rear} onChange={setTireSystems} />
+      </QuizShell>
+    );
+  }
+
   return (
     <QuizShell
       step="bike"
@@ -583,6 +629,8 @@ export default function QuizBikeScreen() {
 }
 
 const styles = StyleSheet.create({
+  tiresContinue: { alignSelf: "stretch", borderRadius: 14, paddingVertical: 16, alignItems: "center", backgroundColor: "#F2F2F0" },
+  tiresContinueText: { color: "#101214", fontSize: 16, fontWeight: "700" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   tileWrap: { width: "48%", flexGrow: 1 },
   moreTile: {

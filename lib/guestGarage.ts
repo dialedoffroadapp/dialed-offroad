@@ -4,6 +4,7 @@
 // same strings, same row shape). Signup migration (lib/authSuccess.ts →
 // reconcileGuestBikes) reads exactly this store, so a bike the quiz writes
 // here migrates into the account like a garage-added one.
+import type { TireSystem } from "./tirePlanCore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { resolveModelId } from "./bikes";
 import { supabase } from "./supabase";
@@ -21,6 +22,10 @@ export type GuestBike = {
   /** The rider's air-or-coil answer for a region-ambiguous model year
    *  (2016 SX/SX-F, FC/TC); migrates to bikes.air_fork_override at sign-up. */
   airFork?: boolean | null;
+  /** What is in each tire (engine tire output, 2026-09-07); migrates to
+   *  bikes.tire_system_front/rear at sign-up. Absent = unknown. */
+  tireSystemFront?: TireSystem | null;
+  tireSystemRear?: TireSystem | null;
 };
 
 /** Same id shape garage.tsx mints (NOT a uuid — see asUuidOrNull callers). */
@@ -58,6 +63,8 @@ export type UpsertQuizBikeInput = {
   previousId?: string | null;
   /** Air (true) or coil (false) for an ambiguous model year; undefined = not asked. */
   airFork?: boolean | null;
+  /** What is in each tire; undefined = not asked (stays as it was). */
+  tireSystems?: { front: TireSystem; rear: TireSystem } | null;
 };
 
 /**
@@ -68,8 +75,11 @@ export type UpsertQuizBikeInput = {
  * Returns the bike id (local id or uuid).
  */
 export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string> {
-  const { make, model, year, previousId, airFork } = input;
+  const { make, model, year, previousId, airFork, tireSystems } = input;
   const override = typeof airFork === "boolean" ? { air_fork_override: airFork } : {};
+  // "unknown" is the column default: sent only when the rider chose, so a
+  // project without migration 20260907180000 never sees the columns.
+  const tires = tireSystems && (tireSystems.front !== "unknown" || tireSystems.rear !== "unknown") ? { tire_system_front: tireSystems.front, tire_system_rear: tireSystems.rear } : {};
 
   const { data: sessionData } = await supabase.auth.getSession();
   const userId = sessionData?.session?.user?.id;
@@ -79,13 +89,13 @@ export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string
     if (previousId && isUuid(previousId)) {
       const { error } = await supabase
         .from("bikes")
-        .update({ make, model, year, model_id, ...override })
+        .update({ make, model, year, model_id, ...override, ...tires })
         .eq("id", previousId);
       if (!error) return previousId;
     }
     const { data, error } = await supabase
       .from("bikes")
-      .insert({ user_id: userId, make, model, year, nickname: null, model_id, ...override })
+      .insert({ user_id: userId, make, model, year, nickname: null, model_id, ...override, ...tires })
       .select("id")
       .single();
     if (!error && (data as any)?.id) return (data as any).id as string;
@@ -114,6 +124,8 @@ export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string
     year,
     nickname: idx >= 0 ? bikes[idx].nickname ?? null : null,
     airFork: typeof airFork === "boolean" ? airFork : idx >= 0 ? bikes[idx].airFork ?? null : null,
+    tireSystemFront: tireSystems ? tireSystems.front : idx >= 0 ? bikes[idx].tireSystemFront ?? null : null,
+    tireSystemRear: tireSystems ? tireSystems.rear : idx >= 0 ? bikes[idx].tireSystemRear ?? null : null,
   };
   if (idx >= 0) bikes[idx] = row;
   else bikes.push(row);

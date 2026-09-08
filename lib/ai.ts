@@ -102,6 +102,13 @@ export type ZeroTuneResult = {
    *  path only, 2026-09-07). Absent on baselines, conditions asks and when
    *  the server could not read the allowance. */
   refine_allowance_remaining?: number;
+  /** Tire pressure as an engine output (2026-09-07; additive, optional):
+   *  psi per end (null on a mousse), the reason (max 200 chars) and where
+   *  the number came from. */
+  tire_front_psi?: number | null;
+  tire_rear_psi?: number | null;
+  tire_reason?: string;
+  tire_source?: "dunlop_default" | "rider_saved" | "conditions_adjusted" | "mousse_none";
 };
 
 /* ------------------------------------------------------------------ */
@@ -165,6 +172,14 @@ export type Tune2LastOutcome = {
   >;
 };
 
+/** The tire inputs the engine reads (additive, optional; 2026-09-07). */
+export type TireInput = {
+  system_front?: "tube" | "heavy_tube" | "tubliss" | "mousse" | "unknown" | null;
+  system_rear?: "tube" | "heavy_tube" | "tubliss" | "mousse" | "unknown" | null;
+  saved_front_psi?: number | null;
+  saved_rear_psi?: number | null;
+};
+
 export type Tune2Context = {
   make?: string;
   model?: string;
@@ -183,6 +198,9 @@ export type Tune2Context = {
     goals?: string[];
   };
   wants_air_fork?: boolean;
+  /** What is in each tire and the rider's saved pressures (engine tire
+   *  output, 2026-09-07). Optional; absent = tubes, no saved pressure. */
+  tires?: TireInput;
 };
 
 /* ------------------------------------------------------------------ */
@@ -362,6 +380,8 @@ export async function generateTuneTwo(params: {
       // The garage bike (uuid only): the server's free-refinement allowance is
       // counted per bike (2026-09-07). Guest and legacy ids stay off the wire.
       ...(typeof bikeId === "string" && isUuid(bikeId) ? { bike_id: bikeId } : {}),
+      // Tire systems and saved pressures: the engine's tire output reads them.
+      ...(context?.tires ? { tires: context.tires } : {}),
     },
   };
 
@@ -569,5 +589,9 @@ function normalizeResult(
     spring_check: result?.spring_check,
     ...(typeof result?.engine_source === "string" ? { engine_source: result.engine_source } : {}),
     ...(typeof result?.refine_allowance_remaining === "number" ? { refine_allowance_remaining: result.refine_allowance_remaining } : {}),
+    ...(result && "tire_front_psi" in result ? { tire_front_psi: typeof result.tire_front_psi === "number" ? result.tire_front_psi : null } : {}),
+    ...(result && "tire_rear_psi" in result ? { tire_rear_psi: typeof result.tire_rear_psi === "number" ? result.tire_rear_psi : null } : {}),
+    ...(typeof result?.tire_reason === "string" ? { tire_reason: result.tire_reason } : {}),
+    ...(typeof result?.tire_source === "string" ? { tire_source: result.tire_source } : {}),
   };
 }

@@ -13,7 +13,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -34,7 +34,11 @@ import {
   type CircuitKey,
   type CurrentSetupState,
 } from "../lib/currentSetup";
+import { readBikeExtras, type BikeExtras } from "../lib/bikeExtras";
+import { TIRE_TABLE } from "../lib/conditionsRules";
 import { effectiveAirFork, fetchModelSpecs } from "../lib/modelSpecs";
+import { tireCell, tirePlan, type TirePlanOutput } from "../lib/tirePlanCore";
+import { readTirePlan } from "../lib/tirePlanStore";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { logEvent } from "../lib/usage";
@@ -59,6 +63,25 @@ export default function CurrentSetupScreen() {
   const { colors: C } = useTheme();
 
   const [setup, setSetup] = useState<CurrentSetupState | null>(null);
+  // Tire pressure with its reason (engine tire output, 2026-09-07): the last
+  // plan Today's setup computed, else the bike's saved pressures through the
+  // same rule base. Read-only here; set on the bike page.
+  const [tirePlanState, setTirePlanState] = useState<{ plan: TirePlanOutput; extras: BikeExtras } | null>(null);
+  useEffect(() => {
+    if (!bikeId) return;
+    let alive = true;
+    void (async () => {
+      const extras = await readBikeExtras(String(bikeId));
+      const stored = await readTirePlan(String(bikeId));
+      const plan =
+        stored?.plan ??
+        tirePlan(TIRE_TABLE, { systemFront: extras.tireSystemFront, systemRear: extras.tireSystemRear, savedFront: extras.tireFrontPsi, savedRear: extras.tireRearPsi });
+      if (alive) setTirePlanState({ plan, extras });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [bikeId]);
   const [title, setTitle] = useState<string>("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [cacheChecked, setCacheChecked] = useState(false);
@@ -100,7 +123,7 @@ export default function CurrentSetupScreen() {
       try {
         const { data: bike } = await supabase
           .from("bikes")
-          .select("make, model, year, nickname, model_id")
+          .select("make, model, year, nickname, model_id, air_fork_override")
           .eq("id", bikeId)
           .maybeSingle();
         if (bike) {
@@ -276,6 +299,19 @@ export default function CurrentSetupScreen() {
             />
           ) : null}
 
+          {tirePlanState ? (
+            <View style={[S.tireRow, { borderColor: C.BORDER }]} accessibilityLabel="Tires">
+              <View style={{ flex: 1 }}>
+                <Text style={[S.tireLabel, { color: C.TEXT }]}>Tires</Text>
+                <Text style={[S.tireReason, { color: C.MUTED }]} numberOfLines={3}>{tirePlanState.plan.reason}</Text>
+              </View>
+              <Text style={[S.tireValue, { color: C.TEXT }]}>
+                {tireCell(tirePlanState.plan.front, tirePlanState.extras.tireSystemFront)} / {tireCell(tirePlanState.plan.rear, tirePlanState.extras.tireSystemRear)}
+                <Text style={[S.tireUnit, { color: C.MUTED }]}> psi</Text>
+              </Text>
+            </View>
+          ) : null}
+
           {pendingCount > 0 ? (
             <Pressable
               onPress={onUndo}
@@ -314,6 +350,11 @@ export default function CurrentSetupScreen() {
 }
 
 const S = StyleSheet.create({
+  tireRow: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 16, marginTop: 10, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderRadius: 12 },
+  tireLabel: { fontSize: 15, fontWeight: "600" },
+  tireReason: { fontSize: 12, marginTop: 2, lineHeight: 16 },
+  tireValue: { fontSize: 20, fontWeight: "700" },
+  tireUnit: { fontSize: 12, fontWeight: "400" },
   header: {
     flexDirection: "row",
     alignItems: "center",

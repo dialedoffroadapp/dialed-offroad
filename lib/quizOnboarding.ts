@@ -378,6 +378,9 @@ export function modelListSubline(d: QuizDiscipline | null | undefined): string {
 
 export type QuizFlow = "add_bike" | "new_setup" | "regenerate";
 
+type TireSystemId = "tube" | "heavy_tube" | "tubliss" | "mousse" | "unknown";
+const isTireSystem = (v: unknown): v is TireSystemId => v === "tube" || v === "heavy_tube" || v === "tubliss" || v === "mousse" || v === "unknown";
+
 export type QuizAnswers = {
   version: 1;
   discipline?: QuizDiscipline;
@@ -406,6 +409,9 @@ export type QuizAnswers = {
   /** Air (true) or coil (false), asked only on region-ambiguous model years
    *  (2016 SX/SX-F, FC/TC); cleared with the bike. Stored on the bike too. */
   airForkOverride?: boolean;
+  /** What is in each tire (engine tire output, 2026-09-07); "unknown" when skipped. Cleared with the bike. */
+  tireSystemFront?: "tube" | "heavy_tube" | "tubliss" | "mousse" | "unknown";
+  tireSystemRear?: "tube" | "heavy_tube" | "tubliss" | "mousse" | "unknown";
   skill?: QuizSkillId;
   terrainMain?: string;
   terrainSecondary?: string[];
@@ -464,6 +470,8 @@ export function parseQuizAnswers(raw: string | null): QuizAnswers {
       flowSteps: Array.isArray(p.flowSteps) ? (p.flowSteps.filter(isQuestionStep) as QuizRouteStep[]) : undefined,
       catalogMatch: typeof p.catalogMatch === "boolean" ? p.catalogMatch : undefined,
       airForkOverride: typeof p.airForkOverride === "boolean" ? p.airForkOverride : undefined,
+      tireSystemFront: isTireSystem(p.tireSystemFront) ? p.tireSystemFront : undefined,
+      tireSystemRear: isTireSystem(p.tireSystemRear) ? p.tireSystemRear : undefined,
       skill: isSkill(p.skill) ? p.skill : undefined,
       terrainMain: optStr(p.terrainMain),
       terrainSecondary: Array.isArray(p.terrainSecondary)
@@ -570,6 +578,8 @@ export async function startGarageQuizFlow(
     bikeLocalId: p.bikeId,
     catalogMatch: undefined,
     airForkOverride: undefined,
+    tireSystemFront: undefined,
+    tireSystemRear: undefined,
     freeText: undefined,
     terrainMain,
     terrainSecondary,
