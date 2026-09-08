@@ -64,6 +64,10 @@ type ZeroInput = {
       style: "short_motos" | "long_enduro";
       goals: string[];
       issues?: string;
+      // Rider profile (2026-09-08): the active rider_profiles.id, uuid only
+      // (sanitizeRiderProfileId strips anything else). Stored with the
+      // input, never read by generation.
+      profile_id?: string;
     };
     has_zeroed_clickers: boolean;
 
@@ -357,6 +361,7 @@ type Tune2Input = {
     skill?: "beginner" | "intermediate" | "pro";
     style?: "short_motos" | "long_enduro";
     goals?: string[];
+    profile_id?: string;
   };
   previous: PreviousTune;
   feedback: Tune2Feedback;
@@ -3157,6 +3162,15 @@ function bikeModelIdFrom(body: ZeroInput): string | null {
 // input.location is stored (tune_calls.input), never used by generation.
 // Normalize in place: a well-formed fix is reduced to exactly
 // {lat, lng, accuracy_m}; anything malformed loses the key entirely.
+const PROFILE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** rider.profile_id (2026-09-08) is a uuid or absent: anything else is
+ *  stripped before the input is stored. Generation never reads it. */
+export function sanitizeRiderProfileId(body: { input?: { rider?: { profile_id?: unknown } } }): void {
+  const rider = body.input?.rider;
+  if (!rider || rider.profile_id === undefined) return;
+  if (typeof rider.profile_id !== "string" || !PROFILE_UUID_RE.test(rider.profile_id)) delete rider.profile_id;
+}
+
 function sanitizeLocation(body: ZeroInput): void {
   const input = body.input as { location?: unknown };
   if (input.location === undefined) return;
@@ -3205,6 +3219,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
       // Before recordCall stores body.input: malformed location never lands,
       // and rider.issues is capped at ISSUES_MAX_CHARS (it reaches the prompt).
       sanitizeLocation(body);
+      sanitizeRiderProfileId(body as { input?: { rider?: { profile_id?: unknown } } });
       capIssues(body.input);
 
       const mode = body.mode ?? "zero_baseline_v1";
