@@ -5,6 +5,7 @@
 // 20%, reason stated, Pro rows locked); CTA "Set it on the bike" into the app.
 // Interstitial world only: a rider who declined the paywall sees the locked
 // card here with the trial CTA instead (old ordering preserved).
+import { tuningPausedLine } from "../../lib/ai";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
@@ -241,9 +242,10 @@ export default function QuizRevealScreen() {
                   ))
                 ) : (
                   <Text style={styles.whyLine}>
-                    {(tune as any)?.engine_source === "deterministic"
-                      ? "Built from your weight, your riding, and what we know about this bike. Ride it, then tell us what it did."
-                      : "Built from your riding and what we know about this bike. Ride it, then tell us what it did."}
+                    {tuningPausedLine((tune as any)?.engine_source, (tune as any)?.notes_source) ??
+                      ((tune as any)?.engine_source === "deterministic"
+                        ? "Built from your weight, your riding, and what we know about this bike. Ride it, then tell us what it did."
+                        : "Built from your riding and what we know about this bike. Ride it, then tell us what it did.")}
                   </Text>
                 )}
               </Animated.View>

@@ -17,6 +17,8 @@ import {
 import {
   buildTuneTwo,
   callParseFeedback,
+  openAIError,
+  SpendLimitError,
   conditionsRuleDeltas,
   LEGACY_TO_V3,
   capIssues,
@@ -994,4 +996,42 @@ Deno.test("24. deterministic mode: the formula's numbers ship, the model only ex
   assertEquals(heavy.clampHits, ["fork_air"]);
   assertEquals(heavy.partial.fork!.air_pressure_bar, 11.8);
   assertEquals(formula.clampHits, []); // 205 lb pro: inside every window
+});
+
+/* ---------------- Test 25: OpenAI's hard spend cap is its own source (research 2026-09-07, item 14) ---------------- */
+
+Deno.test("25. spend cap: a 429 with a spend-limit code becomes SpendLimitError; in deterministic mode only the notes are paused", async () => {
+  // The two documented codes, as JSON or as a bare substring; other 429s and other statuses stay plain errors.
+  assert(openAIError(429, JSON.stringify({ error: { code: "project_spend_limit_exceeded", message: "x" } })) instanceof SpendLimitError);
+  assert(openAIError(429, "organization_spend_limit_exceeded") instanceof SpendLimitError);
+  assertEquals((openAIError(429, JSON.stringify({ error: { code: "organization_spend_limit_exceeded" } })) as SpendLimitError).code, "organization_spend_limit_exceeded");
+  assert(!(openAIError(429, JSON.stringify({ error: { code: "rate_limit_exceeded" } })) instanceof SpendLimitError));
+  assert(!(openAIError(500, "project_spend_limit_exceeded") instanceof SpendLimitError));
+
+  const input = { ...BASELINE, rider: { weight_lbs: 180, discipline: "mx", skill: "intermediate", style: "short_motos", goals: [] }, wants_air_fork: true };
+  const formula = formulaBaseline(input as any);
+  const metas: any[] = [];
+  const h = makeHandler(
+    deps({
+      getUserId: () => Promise.resolve(null),
+      baselineEngine: () => Promise.resolve("deterministic" as const),
+      explain: () => Promise.reject(new SpendLimitError("project_spend_limit_exceeded")),
+      recordCall: () => Promise.resolve(9),
+      recordOutput: (_id, _out, meta) => {
+        metas.push(meta);
+        return Promise.resolve();
+      },
+    })
+  );
+  const body = await (await h(fakeReq({ mode: "zero_baseline_v1", input }, ""))).json();
+  assertEquals(body.fork.comp_clicks, formula.partial.fork!.comp_clicks);
+  assertEquals(body.engine_source, "deterministic"); // the numbers were never the model's
+  assertEquals(body.notes_source, "spend_limited");
+  assert(body.notes[0].startsWith("Baseline zero-based tune for")); // the formula's own notes
+  assertEquals(metas[0].engine_source, "deterministic");
+
+  // Any other explain failure is still the plain fail-open.
+  const h2 = makeHandler(deps({ getUserId: () => Promise.resolve(null), baselineEngine: () => Promise.resolve("deterministic" as const), explain: () => Promise.reject(new Error("timeout")) }));
+  const b2 = await (await h2(fakeReq({ mode: "zero_baseline_v1", input }, ""))).json();
+  assertEquals(b2.notes_source, "formula");
 });

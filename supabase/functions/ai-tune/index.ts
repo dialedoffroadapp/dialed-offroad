@@ -96,7 +96,43 @@ type CircuitValue = number | null;
  *  model's JSON merged over the formula), "fallback_parse" (the model's text
  *  was not JSON; formula values shipped), "fallback_error" (the call threw),
  *  "formula" (no API key). Refinement: always "deterministic". */
-type EngineSource = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic";
+type EngineSource = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic" | "spend_limited";
+/** Who wrote the notes. "spend_limited": the explanation call was refused by
+ *  OpenAI's hard spend cap (research 2026-09-07, item 14), so the formula's
+ *  own notes shipped and the app may say explanations are paused. */
+type NotesSource = "llm" | "formula" | "spend_limited";
+
+/** OpenAI's hard monthly spend limit (reintroduced July 2026) answers 429 with
+ *  one of two error codes until the next billing cycle. It is not a transient
+ *  failure and not a rate limit: the app should say tuning is paused rather
+ *  than retry. Both model-call sites throw this so the handler can tag the
+ *  response (engine_source "spend_limited" when the numbers were meant to
+ *  come from the model, notes_source "spend_limited" when only the
+ *  explanation was). */
+export const SPEND_LIMIT_CODES = ["project_spend_limit_exceeded", "organization_spend_limit_exceeded"] as const;
+export class SpendLimitError extends Error {
+  code: string;
+  constructor(code: string) {
+    super(`OpenAI spend limit reached: ${code}`);
+    this.name = "SpendLimitError";
+    this.code = code;
+  }
+}
+/** Turns a failed OpenAI response into the right error: SpendLimitError for a
+ *  429 carrying a spend-limit code, a plain Error otherwise. */
+export function openAIError(status: number, bodyText: string): Error {
+  if (status === 429) {
+    let code = "";
+    try {
+      code = String(JSON.parse(bodyText)?.error?.code ?? "");
+    } catch {
+      code = "";
+    }
+    const hit = SPEND_LIMIT_CODES.find((c) => c === code || bodyText.includes(c));
+    if (hit) return new SpendLimitError(hit);
+  }
+  return new Error(`OpenAI HTTP ${status}: ${bodyText.slice(0, 200)}`);
+}
 
 type ZeroResult = {
   fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number };
@@ -114,7 +150,7 @@ type ZeroResult = {
   engine_source?: EngineSource;
   /** Who wrote the notes (decision 1, 2026-09-07): in deterministic mode the
    *  formula owns the numbers and the model only explains them. */
-  notes_source?: "llm" | "formula";
+  notes_source?: NotesSource;
   /** Tire pressure change from the conditions stage (psi, both ends). */
   tire_psi_delta?: number;
 };
@@ -137,7 +173,7 @@ type Tune2Result = {
   notes: string[];
   spring_check?: unknown;
   engine_source?: EngineSource;
-  notes_source?: "llm" | "formula";
+  notes_source?: NotesSource;
   tire_psi_delta?: number;
 };
 
@@ -947,7 +983,7 @@ async function callOpenAI(
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`OpenAI HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    throw openAIError(resp.status, text);
   }
 
   const json = await resp.json();
@@ -1030,13 +1066,20 @@ export async function callExplain(
         response_format: { type: "json_object" },
       }),
     });
-    if (!resp.ok) throw new Error(`OpenAI HTTP ${resp.status}`);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw openAIError(resp.status, text);
+    }
     const json = await resp.json();
     addUsage(meter, json);
     const parsed = JSON.parse(String(json?.choices?.[0]?.message?.content ?? "{}"));
     const notes = sanitizeNotes(parsed?.notes);
     return notes.length ? notes : null;
   } catch (e) {
+    // The spend cap is the one failure the handler must know about (it tags
+    // notes_source so the app can say explanations are paused); everything
+    // else stays fail-open to the formula's notes.
+    if (e instanceof SpendLimitError) throw e;
     console.warn("explain skipped (fail-open):", (e instanceof Error ? e.message : String(e)).slice(0, 160));
     return null;
   } finally {
@@ -2883,14 +2926,22 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         const formula = formulaBaseline(z);
         let partial: Partial<ZeroResult> = formula.partial;
         let engineSource: EngineSource = "formula";
-        let notesSource: "llm" | "formula" = "formula";
+        let notesSource: NotesSource = "formula";
 
         if (engineMode === "deterministic") {
           engineSource = "deterministic";
-          const explained = await deps.explain(z, formula.partial, formula.discipline, meter).catch(() => null);
+          let spendLimited = false;
+          const explained = await deps.explain(z, formula.partial, formula.discipline, meter).catch((e) => {
+            if (e instanceof SpendLimitError) spendLimited = true;
+            return null;
+          });
           if (explained && explained.length) {
             partial = { ...partial, notes: explained };
             notesSource = "llm";
+          } else if (spendLimited) {
+            // The numbers are the formula's either way; only the explanation
+            // is paused. The app reads notes_source and says so.
+            notesSource = "spend_limited";
           }
         } else if (OPENAI_API_KEY) {
           try {
@@ -2910,13 +2961,23 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
               notes: ai?.notes ?? partial.notes,
             };
           } catch (e) {
-            // keep baseline but include note
-            engineSource = "fallback_error";
-            const msg = (e as Error).message ?? String(e);
-            partial.notes = [
-              ...(partial.notes ?? []),
-              `AI fallback used: ${msg.slice(0, 160)}`,
-            ];
+            if (e instanceof SpendLimitError) {
+              // OpenAI's hard spend cap: the formula's numbers ship, tagged so
+              // the app can say tuning is paused instead of retrying.
+              engineSource = "spend_limited";
+              partial.notes = [
+                ...(partial.notes ?? []),
+                "Tuning is paused: our model budget for the month is used up, so this baseline comes from our formula. Ride it and refine as usual.",
+              ];
+            } else {
+              // keep baseline but include note
+              engineSource = "fallback_error";
+              const msg = (e as Error).message ?? String(e);
+              partial.notes = [
+                ...(partial.notes ?? []),
+                `AI fallback used: ${msg.slice(0, 160)}`,
+              ];
+            }
           }
         } else {
           partial.notes = [

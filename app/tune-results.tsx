@@ -28,7 +28,7 @@ import { markArmCardArmed } from "../lib/rideArmCard";
 import { SettingRow } from "../components/SettingRow";
 import { useToast } from "../components/Toast";
 import { TuneSegmentedControl } from "../components/TuneSegmentedControl";
-import { ZeroTuneResult } from "../lib/ai";
+import { ZeroTuneResult, tuningPausedLine } from "../lib/ai";
 import { versionMatchesTune } from "../lib/autoBaseline";
 import { scheduleGuestRecoveryReminder } from "../lib/guestRecovery";
 import type { SpringCheck } from "../lib/modelSpecs";
@@ -1518,6 +1518,9 @@ export default function TuneResultScreen() {
             </Pressable>
             {whyExpanded ? (
               <View style={{ marginTop: 10 }}>
+                {tuningPausedLine(base.engine_source, base.notes_source) ? (
+                  <Text style={[S.stepText, { marginBottom: 8 }]}>{tuningPausedLine(base.engine_source, base.notes_source)}</Text>
+                ) : null}
                 {base.notes.map((n, i) => (
                   <View key={`why-${i}`} style={S.stepRow}>
                     <View style={S.stepBadge}>

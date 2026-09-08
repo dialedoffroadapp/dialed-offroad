@@ -37,6 +37,39 @@ const QUALIFIERS: Record<string, string[]> = {
 };
 const NEW_ROUTES = new Set(["harsh_small_bumps+big_hits", "rear_kicks+jump_face", "rear_kicks+braking_bumps", "rear_kicks+logs_ledges", "packs_in_chop+rocks"]);
 
+// Research 2026-09-07 (docs/open-questions-resolution-2026-09-07.md, item 11):
+// what published tuner guidance (Vital MX, Click Suspension, Race Tech,
+// Teknik, MXA, as compiled in the 2026-09-07 research report, Section 9) says
+// about each row. "agree" = same direction on the circuits both name;
+// "disagree" = opposite direction on a named circuit; "partial" = agrees on
+// one circuit and names a different one for the other; "silent" = the report
+// has no guidance for that symptom or qualifier. River's call stands on all.
+const RESEARCH: Record<string, string> = {
+  harsh_small_bumps: "agree: arm pump or harsh small chop, soften low-speed compression and lower air pressure; the report is silent on rebound",
+  bottoming: "agree: bottoming rear, add HSC or preload; bottoming front, add compression or air or oil height. The report separates the ends, which supports question 1.5 (ask which end)",
+  rear_kicks: "ambiguous: rear kicking on square edges is often too STIFF (soften HSC an eighth to a quarter turn) or bottoming if too soft, determine which; on whoops kicking usually means too soft, on small chop usually too stiff. Our default slows shock rebound, which the report names only for braking bumps. Supports the qualifier design",
+  front_pushes: "silent on suspension: the report's only push guidance is tire pressure in tacky mud",
+  packs_in_chop: "agree: packing means rebound too slow, speed it up",
+  wallows_dives: "agree on the fork: wallowing or diving front means insufficient compression (or rebound), increase fork compression and check sag; silent on the shock LSC click",
+  headshake: "disagree in part: headshake or deflection, increase fork rebound damping 2 clicks at a time (slower, which agrees with our fork move) and check fork height and sag; the report does not name shock rebound",
+  rear_swaps: "ambiguous: the report treats swapping with kicking (too stiff on chop, soften HSC; too soft in whoops). Our softer LSC agrees with the too-stiff reading; the report names HSC rather than LSC and does not name rebound",
+  deflects: "agree: deflection, increase fork rebound damping 2 clicks at a time (slower)",
+  rear_squats: "agree: rear squatting on acceleration, increase low-speed compression and check sag",
+  too_stiff: "agree: harshness on small bumps, reduce compression (and the report adds slightly faster rebound, which we leave alone)",
+  too_soft: "agree by inference: heavier or faster riders take more compression and stiffer springs; the report has no too-soft row of its own",
+  arm_pump: "agree on compression and air (soften low-speed compression, lower air pressure, lower oil height); silent on the rebound click",
+  chatters: "partial: chatter or harshness on small bumps, reduce compression (agrees) and slightly FASTER rebound (our row slows it). Direction on rebound is the open call",
+  "harsh_small_bumps+big_hits": "agree: harsh on big hits is bottoming; front add compression or air, rear add HSC",
+  "rear_kicks+jump_face": "agree in spirit: kicking on jump faces and whoops usually means too soft, so holding the rear up with HSC matches",
+  "rear_kicks+braking_bumps": "partial: rear kicking under braking bumps, slow rebound slightly or soften compression; the report reads it as the rear's rebound, our route slows the FORK rebound on top of the shock move",
+  "rear_kicks+logs_ledges": "silent",
+  "packs_in_chop+rocks": "silent on the extra compression click; agrees on faster rebound",
+  "packs_in_chop+whoops": "agree: faster rebound",
+  "harsh_small_bumps+small_chop": "agree: soften low-speed compression, lower air",
+  "harsh_small_bumps+under_braking": "agree: soften compression; the report also names slower rebound for front diving under braking, which we do not touch here",
+};
+const research = (key: string, id: string) => RESEARCH[key] ?? RESEARCH[id] ?? "silent";
+
 function run(symptoms: any[]) {
   const out = safeShapeSparse(buildTuneTwo({ make: "KTM", model: "350 SX-F", year: 2024, terrain: "hardpack", rider: { skill: "intermediate", style: "short_motos", goals: [] }, previous: PREV, feedback: { overall_rating: 6, symptoms }, guardrails: GUARDRAILS }), GUARDRAILS);
   const d = (a: number | null, b: number) => (typeof a === "number" ? Math.round((a - b) * 100) / 100 : null);
@@ -52,9 +85,9 @@ function run(symptoms: any[]) {
   return { deltas, notes: adjustNotes };
 }
 const f = (n: number | null) => (n === null ? "·" : n === 0 ? "0" : n > 0 ? `+${n}` : `${n}`);
-const row = (label: string, sev: number | string, r: ReturnType<typeof run>, authorship: string) =>
-  `| ${label} | ${sev} | ${f(r.deltas.fork_comp)} | ${f(r.deltas.fork_reb)} | ${f(r.deltas.fork_air)} | ${f(r.deltas.shock_lsc)} | ${f(r.deltas.shock_hsc)} | ${f(r.deltas.shock_reb)} | ${authorship} | ${r.notes.map((n) => n.replace(/\|/g, "/")).join(" ⏎ ")} |`;
-const HEAD = "| Symptom | Severity | Fork comp | Fork reb | Fork air (bar) | Shock LSC | Shock HSC (turns) | Shock reb | Authorship | Engine notes |\n|---|---|---|---|---|---|---|---|---|---|";
+const row = (label: string, sev: number | string, r: ReturnType<typeof run>, authorship: string, note = "") =>
+  `| ${label} | ${sev} | ${f(r.deltas.fork_comp)} | ${f(r.deltas.fork_reb)} | ${f(r.deltas.fork_air)} | ${f(r.deltas.shock_lsc)} | ${f(r.deltas.shock_hsc)} | ${f(r.deltas.shock_reb)} | ${authorship} | ${note} | ${r.notes.map((n) => n.replace(/\|/g, "/")).join(" ⏎ ")} |`;
+const HEAD = "| Symptom | Severity | Fork comp | Fork reb | Fork air (bar) | Shock LSC | Shock HSC (turns) | Shock reb | Authorship | Research 2026-09-07 | Engine notes |\n|---|---|---|---|---|---|---|---|---|---|---|";
 
 const lines: string[] = [];
 lines.push("# Symptom table draft (contract v3, for River's review)");
@@ -63,12 +96,14 @@ lines.push(`Generated ${new Date().toISOString().slice(0, 10)} by scripts/engine
 lines.push("");
 lines.push("How to review: change the numbers or the direction in this file (or say so in the PR); the PR then implements the corrected table and its tests. Rows you leave alone ship as shown.");
 lines.push("");
+lines.push("The \"Research 2026-09-07\" column says what published tuner guidance (Vital MX, Click Suspension, Race Tech, Teknik, MXA, compiled in the 2026-09-07 research report, Section 9) says about the row: agree, disagree, partial, ambiguous, or silent. It annotates; it changes nothing. The rear-kicks rows are the clearest case for the qualifiers: the report reads kicking as too stiff on chop and too soft in whoops.");
+lines.push("");
 lines.push("## The 14 ids at three severities");
 lines.push("");
 lines.push(HEAD);
 for (const id of V3_SYMPTOM_IDS) {
   const authorship = INHERITED[id] ? `inherited from ${INHERITED[id]}` : "NEW (sign-off)";
-  for (const sev of SEVERITIES) lines.push(row(id, sev, run([{ id, severity: sev }]), authorship));
+  for (const sev of SEVERITIES) lines.push(row(id, sev, run([{ id, severity: sev }]), authorship, research(id, id)));
 }
 lines.push("");
 lines.push("## Qualifier pairs (severity 6)");
@@ -77,10 +112,10 @@ lines.push("The three chips with a mandatory qualifier. A route marked NEW chang
 lines.push("");
 lines.push(HEAD);
 for (const [id, tags] of Object.entries(QUALIFIERS)) {
-  lines.push(row(`${id} (no qualifier)`, 6, run([{ id, severity: 6 }]), INHERITED[id] ? `inherited from ${INHERITED[id]}` : "NEW (sign-off)"));
+  lines.push(row(`${id} (no qualifier)`, 6, run([{ id, severity: 6 }]), INHERITED[id] ? `inherited from ${INHERITED[id]}` : "NEW (sign-off)", research(id, id)));
   for (const tag of tags) {
     const key = `${id}+${tag}`;
-    lines.push(row(`${id} + ${tag}`, 6, run([{ id, severity: 6, where: tag }]), NEW_ROUTES.has(key) ? "NEW route (sign-off)" : "default move + note"));
+    lines.push(row(`${id} + ${tag}`, 6, run([{ id, severity: 6, where: tag }]), NEW_ROUTES.has(key) ? "NEW route (sign-off)" : "default move + note", research(key, id)));
   }
 }
 lines.push("");
@@ -89,7 +124,7 @@ lines.push("");
 lines.push(HEAD);
 for (const id of Object.keys(LEGACY_TO_V3)) {
   const m = LEGACY_TO_V3[id];
-  lines.push(row(id, 6, run([{ id, severity: 6 }]), `frozen; reads as ${m.id}${m.where ? ` + ${m.where}` : ""}`));
+  lines.push(row(id, 6, run([{ id, severity: 6 }]), `frozen; reads as ${m.id}${m.where ? ` + ${m.where}` : ""}`, "frozen row; see its v3 twin"));
 }
 lines.push("");
 lines.push("## Legacy tags on the v3 ids (severity 6)");
@@ -98,7 +133,7 @@ lines.push("The four v2 location tags still route on the inherited rows exactly 
 lines.push("");
 lines.push(HEAD);
 for (const [id, tag] of [["harsh_small_bumps", "landings"], ["harsh_small_bumps", "corners"], ["harsh_small_bumps", "whoops"], ["bottoming", "whoops"], ["deflects", "braking"], ["front_pushes", "corners"]]) {
-  lines.push(row(`${id} + ${tag}`, 6, run([{ id, severity: 6, where: tag }]), INHERITED[id] ? `inherited from ${INHERITED[id]}` : "NEW (sign-off)"));
+  lines.push(row(`${id} + ${tag}`, 6, run([{ id, severity: 6, where: tag }]), INHERITED[id] ? `inherited from ${INHERITED[id]}` : "NEW (sign-off)", research(`${id}+${tag}`, id)));
 }
 lines.push("");
 await Deno.writeTextFile("docs/symptom-table-draft.md", lines.join("\n"));

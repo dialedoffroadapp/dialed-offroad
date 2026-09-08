@@ -103,6 +103,7 @@ export type ZeroTuneResult = {
   spring_check?: SpringCheck;
   /** Who decided the numbers (contract v3): "llm" or a fallback for baselines. */
   engine_source?: EngineSource;
+  notes_source?: NotesSource;
   tire_psi_delta?: number;
 };
 
@@ -224,8 +225,21 @@ export type Tune2Conditions = {
   retune?: { tile: "watered" | "roughed" | "heating"; prior_tweaks?: { circuit: string; delta: number }[] } | null;
 };
 
-/** Who decided a tune's numbers (contract v3). */
-export type EngineSource = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic";
+/** Who decided a tune's numbers (contract v3). "spend_limited": OpenAI's hard
+ *  spend cap refused the model call, so the formula's numbers shipped and the
+ *  app says tuning is paused (research 2026-09-07, item 14). */
+export type EngineSource = "llm" | "fallback_parse" | "fallback_error" | "formula" | "deterministic" | "spend_limited";
+/** Who wrote the notes; "spend_limited" = the explanation call hit the cap. */
+export type NotesSource = "llm" | "formula" | "spend_limited";
+/** The one line every results surface shows when the model budget is out.
+ *  engine_source "spend_limited" = the numbers were meant to come from the
+ *  model and the formula shipped instead; notes_source "spend_limited" = the
+ *  numbers are the formula's as designed and only the explanation is paused. */
+export function tuningPausedLine(engineSource?: string | null, notesSource?: string | null): string | null {
+  if (engineSource === "spend_limited") return "Tuning is paused: our model budget for the month is used up, so this baseline comes from our formula. Ride it and refine as usual.";
+  if (notesSource === "spend_limited") return "Explanations are paused this month (model budget reached). The numbers are ours as always.";
+  return null;
+}
 
 /** A refinement's previous tune, SPARSE where the running setup never
  *  recorded a circuit (contract v3, honest previous values): null is sent as
