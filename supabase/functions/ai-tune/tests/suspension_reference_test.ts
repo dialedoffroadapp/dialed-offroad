@@ -82,7 +82,18 @@ Deno.test("skill offset: class steps C to B to A firm compression 2 clicks and r
   assertEquals(c.shock!.lsc_clicks - b.shock!.lsc_clicks, 2);
   assertEquals(c.shock!.reb_clicks - b.shock!.reb_clicks, 1);
   assertEquals(b.fork!.comp_clicks - a.fork!.comp_clicks, 2);
-  assertEquals(ENGINE_TUNING_DEFAULTS, { weight_slope_cap_clicks: 3, skill_offset_comp_per_step: -2, skill_offset_reb_per_step: -1 });
+  assertEquals(ENGINE_TUNING_DEFAULTS, { weight_slope_cap_clicks: 3, weight_slope_cap_hsc_quarter_turns: 2, skill_offset_comp_per_step: -2, skill_offset_reb_per_step: -1 });
+  // Follow-up (2026-09-08): the intensity term carries no skill any more, so
+  // beginner (novice) and intermediate (C) are the same tune at the same
+  // weight and style, and a pro differs from a C rider by the offset alone.
+  const beginner = formulaBaseline(base({ rider: rider({ skill: "beginner" }) }) as any).partial;
+  const inter = formulaBaseline(base({ rider: rider({ skill: "intermediate" }) }) as any).partial;
+  const pro = formulaBaseline(base({ rider: rider({ skill: "pro" }) }) as any).partial;
+  assertEquals(beginner.fork, inter.fork);
+  assertEquals(beginner.shock, inter.shock);
+  assertEquals(inter.fork!.comp_clicks - pro.fork!.comp_clicks, 4);
+  assertEquals(inter.fork!.reb_clicks - pro.fork!.reb_clicks, 2);
+  assertEquals(inter.shock!.hsc_turns, pro.shock!.hsc_turns); // the offset moves clicks only
 });
 
 Deno.test("weight cap: the slope's contribution stops at the cap; app_config keys override the defaults", async () => {
@@ -102,4 +113,16 @@ Deno.test("weight cap: the slope's contribution stops at the cap; app_config key
   const heavyH = await (await h(req({ mode: "zero_baseline_v1", input: base({ rider: rider({ weight_lbs: 260 }) }) }))).json();
   assertEquals(light.fork.comp_clicks, heavyH.fork.comp_clicks);
   assertEquals(light.shock.lsc_clicks, heavyH.shock.lsc_clicks);
+});
+
+Deno.test("HSC weight cap: the turn-scale weight term stops at the quarter-turn cap; a cap of 0 makes weight a no-op on HSC", () => {
+  const mid = formulaBaseline(base({ rider: rider({ weight_lbs: 185 }) }) as any).partial.shock!;
+  const heavy = formulaBaseline(base({ rider: rider({ weight_lbs: 260 }) }) as any).partial.shock!;
+  // 7.5 * 0.03 = 0.225 turns at the engine's 260 lb ceiling: under the default 0.5 turn cap.
+  assertEquals(Number(((mid.hsc_turns as number) - (heavy.hsc_turns as number)).toFixed(2)), 0.23);
+  const tight = formulaBaseline(base({ rider: rider({ weight_lbs: 260 }) }) as any, { ...ENGINE_TUNING_DEFAULTS, weight_slope_cap_hsc_quarter_turns: 0 }).partial.shock!;
+  assertEquals(tight.hsc_turns, mid.hsc_turns);
+  // Half a quarter turn of cap (0.125 turn): 1.4 base, 0.125 weight, 0.025 style = 1.25.
+  const half = formulaBaseline(base({ rider: rider({ weight_lbs: 260 }) }) as any, { ...ENGINE_TUNING_DEFAULTS, weight_slope_cap_hsc_quarter_turns: 0.5 }).partial.shock!;
+  assertEquals(half.hsc_turns, 1.25);
 });

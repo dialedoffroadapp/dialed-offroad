@@ -413,12 +413,12 @@ function weightFactor(z: ZeroInput["input"]): number {
   return (w - 185) / 10;
 }
 
-// How aggressive the riding is (skill + style)
+// How aggressive the riding is: STYLE only. The skill component (pro +1.0,
+// beginner -0.5) came out on 2026-09-08 (suspension reference follow-up):
+// the per-class skill offset (classStepsFor, the app_config keys) is the
+// only skill term in the formula.
 function intensityFactor(z: ZeroInput["input"]): number {
   let f = 0;
-
-  if (z.rider.skill === "pro") f += 1.0;
-  if (z.rider.skill === "beginner") f -= 0.5;
 
   if (z.rider.style === "short_motos") f += 0.5;
   if (z.rider.style === "long_enduro") f -= 0.2;
@@ -665,11 +665,12 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline, tuning: En
       : 1.5;
 
   // Scale: heavier + more intense → more control. The weight term is capped
-  // on the click circuits (second report); HSC's turn-scale weight term is
-  // left as is (a click cap has no turn equivalent; flagged).
+  // on the click circuits (second report) and, since the 2026-09-08
+  // follow-up, on HSC too, in quarter turns (weight_slope_cap_hsc_quarter_turns).
+  const hscCap = Math.max(0, tuning.weight_slope_cap_hsc_quarter_turns) * 0.25;
   lscBase -= cappedWeight(wf, 0.3, tuning) + intensity * 0.4;
   rebBase -= cappedWeight(wf, 0.4, tuning) + intensity * 0.6;
-  hscBaseTurns -= wf * 0.03 + intensity * 0.05;
+  hscBaseTurns -= clamp(wf * 0.03, -hscCap, hscCap) + intensity * 0.05;
   lscBase += steps * tuning.skill_offset_comp_per_step;
   rebBase += steps * tuning.skill_offset_reb_per_step;
 
@@ -2793,11 +2794,14 @@ export type BaselineEngine = "llm" | "deterministic";
  *  rebound. All three are remote so River tunes them without a deploy. */
 export type EngineTuning = {
   weight_slope_cap_clicks: number;
+  /** HSC's weight term is capped in quarter turns (follow-up, 2026-09-08). */
+  weight_slope_cap_hsc_quarter_turns: number;
   skill_offset_comp_per_step: number;
   skill_offset_reb_per_step: number;
 };
 export const ENGINE_TUNING_DEFAULTS: EngineTuning = {
   weight_slope_cap_clicks: 3,
+  weight_slope_cap_hsc_quarter_turns: 2,
   skill_offset_comp_per_step: -2,
   skill_offset_reb_per_step: -1,
 };
