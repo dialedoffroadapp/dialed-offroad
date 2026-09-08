@@ -174,13 +174,39 @@ export function canConfirmProfile(p: RiderProfile | null | undefined): p is Ride
   return Boolean(p && typeof p.weight_lbs === "number" && p.skill);
 }
 
-/** "Still 160 lb, C class?" (the quiz's collapsed skill + weight step). */
+/** "Still 160 lb, C class?" only when the profile STORES both the weight
+ *  and the class (River, 2026-09-08); otherwise "Confirm your rider profile"
+ *  and the step shows every field (profileFieldRows). */
 export function confirmLine(p: RiderProfile): string {
   const w = weightLabel(p);
-  const c = classOf(p);
-  if (w && c) return `Still ${w}, ${CLASS_LABEL[c]}?`;
-  if (w) return `Still ${w}?`;
-  return c ? `Still ${CLASS_LABEL[c]}?` : "Same rider as last time?";
+  if (w && p.class) return `Still ${w}, ${CLASS_LABEL[p.class]}?`;
+  return "Confirm your rider profile";
+}
+
+export const DISCIPLINE_LABEL: Record<"mx" | "offroad", string> = { mx: "Motocross", offroad: "Off-road" };
+
+/** The fields the confirm step shows when the line is the generic one. */
+export function profileFieldRows(p: RiderProfile): { label: string; value: string }[] {
+  const skill = SKILL_OPTIONS.find((o) => o.id === p.skill)?.label;
+  const derived = !p.class && p.skill ? engineClassForQuizSkill(p.skill) : null;
+  const rows = [
+    { label: "Weight", value: weightLabel(p) ?? "Not set" },
+    { label: "Skill", value: skill ?? "Not set" },
+    { label: "Class", value: p.class ? CLASS_LABEL[p.class] : derived ? `${CLASS_LABEL[derived]} (from your skill)` : "Not set" },
+  ];
+  if (p.discipline_default) rows.push({ label: "Rides", value: DISCIPLINE_LABEL[p.discipline_default] });
+  return rows;
+}
+
+/** What a confirmed step writes back when the profile lacks it: the class
+ *  derived from the skill and the discipline this run answered. null when
+ *  nothing is missing. */
+export function confirmFillPatch(p: RiderProfile, discipline?: "mx" | "offroad" | null): RiderProfilePatch | null {
+  const patch: RiderProfilePatch = {};
+  const derived = classOf(p);
+  if (!p.class && derived) patch.class = derived;
+  if (!p.discipline_default && (discipline === "mx" || discipline === "offroad")) patch.discipline_default = discipline;
+  return Object.keys(patch).length ? patch : null;
 }
 
 /** The quiz answers a confirmed profile supplies. */

@@ -176,7 +176,7 @@ export default function RideLogScreen() {
             <Label style={{ marginBottom: 8, marginTop: 4 }}>{g.title}</Label>
             <Grid cols={2} style={{ marginBottom: 8 }}>
               {g.chips.map((c) => (
-                <ChoiceChip key={c.id} out label={c.label} sub={levelSub(c)} on={!!picks[c.id]} onPress={() => tapSymptom(c)} minHeight={52} />
+                <ChoiceChip key={c.id} out label={c.label} sub={levelSub(c) ?? c.hint} on={!!picks[c.id]} onPress={() => tapSymptom(c)} minHeight={52} />
               ))}
             </Grid>
             {g.chips

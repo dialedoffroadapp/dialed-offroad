@@ -17,6 +17,9 @@ test("labels follow the discipline; legacy ids read through the map; the where t
   expect(symptomLabelFor("front_pushes", "offroad")).toBe("Front washes out");
   expect(symptomLabelFor("front_knifes", "offroad")).toBe("Front washes out");
   expect(symptomLabelFor("headshake", null)).toBe("Headshake");
+  expect(symptomLabelFor("rear_swaps", "offroad")).toBe("Rear swaps");
+  expect(symptomLabelFor("wallows_dives", "offroad")).toBe("Dives on the brakes");
+  expect(symptomGroupsFor("mx").flatMap((g) => g.chips).find((c) => c.id === "rear_swaps")?.hint).toBe("Steps side to side under power or on chop");
   const chips = symptomGroupsFor("offroad").flatMap((g) => g.chips);
   expect(chips.find((c) => c.id === "rear_kicks")?.qualifiers?.map((q) => q.tag)).toEqual(["jump_face", "braking_bumps", "logs_ledges"]);
   expect(chips.find((c) => c.id === "bottoming")?.qualifiers).toBeUndefined(); // no front/rear qualifier yet (flagged)

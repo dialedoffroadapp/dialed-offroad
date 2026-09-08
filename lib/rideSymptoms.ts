@@ -9,7 +9,7 @@
 import type { Tune2LegacySymptomId, Tune2SymptomId, Tune2WhereTag } from "./ai";
 
 export type SymptomQualifier = { tag: Tune2WhereTag; label: string };
-export type SymptomChip = { id: Tune2SymptomId; label: string; qualifierPrompt?: string; qualifiers?: SymptomQualifier[] };
+export type SymptomChip = { id: Tune2SymptomId; label: string; hint?: string; qualifierPrompt?: string; qualifiers?: SymptomQualifier[] };
 
 export const PRIMARY_SYMPTOMS: SymptomChip[] = [
   {
@@ -125,7 +125,7 @@ export type RideDiscipline = "mx" | "offroad";
 /** Every chip id once, with the end it lives on and a label per discipline.
  *  UI vocabulary over the contract's v3 ids; legacy ids read through
  *  LEGACY_TO_V3. */
-const TAXONOMY: Record<string, { end: SymptomEnd; mx: string; offroad: string }> = {
+const TAXONOMY: Record<string, { end: SymptomEnd; mx: string; offroad: string; hint?: string }> = {
   front_pushes: { end: "front", mx: "Front pushes", offroad: "Front washes out" },
   deflects: { end: "front", mx: "Deflects in chop", offroad: "Deflects off rocks" },
   wallows_dives: { end: "front", mx: "Wallows / dives", offroad: "Dives on the brakes" },
@@ -134,7 +134,9 @@ const TAXONOMY: Record<string, { end: SymptomEnd; mx: string; offroad: string }>
   headshake: { end: "front", mx: "Headshake", offroad: "Headshake" },
   rear_kicks: { end: "rear", mx: "Rear kicks", offroad: "Rear kicks" },
   packs_in_chop: { end: "rear", mx: "Packs in chop", offroad: "Packs in rocks" },
-  rear_swaps: { end: "rear", mx: "Rear swaps", offroad: "Rear steps out" },
+  // "Rear steps out" read as a traction complaint; woods riders say swapping
+  // (River, 2026-09-08). The helper text carries the meaning on both.
+  rear_swaps: { end: "rear", mx: "Rear swaps", offroad: "Rear swaps", hint: "Steps side to side under power or on chop" },
   rear_squats: { end: "rear", mx: "Rear squats on the gas", offroad: "Rear squats on the gas" },
   harsh_small_bumps: { end: "both", mx: "Harsh on small bumps", offroad: "Harsh on roots and rocks" },
   bottoming: { end: "both", mx: "Bottoms on landings", offroad: "Bottoms on drops" },
@@ -160,7 +162,7 @@ export function symptomGroupsFor(discipline: RideDiscipline | null | undefined):
   return ends.map((end) => ({
     end,
     title: GROUP_TITLE[end],
-    chips: ALL_SYMPTOMS.filter((c) => (TAXONOMY[c.id]?.end ?? "both") === end).map((c) => ({ ...c, label: symptomLabelFor(c.id, discipline) })),
+    chips: ALL_SYMPTOMS.filter((c) => (TAXONOMY[c.id]?.end ?? "both") === end).map((c) => ({ ...c, label: symptomLabelFor(c.id, discipline), ...(TAXONOMY[c.id]?.hint ? { hint: TAXONOMY[c.id].hint } : {}) })),
   }));
 }
 
