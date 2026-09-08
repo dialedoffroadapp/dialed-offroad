@@ -12,7 +12,7 @@ import { generateTuneTwo, type Tune2Context, type Tune2SymptomId, type ZeroTuneR
 import { CIRCUIT_STEPS, type CircuitKey } from "./currentSetup";
 import { surfacesOf, tempBandToF } from "./rideConditions";
 import type { RideSession } from "./rideDay";
-import { ratingFor, severityFor, type SymptomLevel } from "./rideSymptoms";
+import { ratingFor, severityFor, type LoggedSymptom, type SymptomLevel } from "./rideSymptoms";
 import type { SettingsSnapshot } from "./setupVersions";
 import { NOTE_HINTS, reasonFromNotes } from "./tuneNotes";
 
@@ -121,7 +121,9 @@ export async function fetchAdjustResult(
   sentiment: "better" | "same" | "worse",
   effective: SettingsSnapshot,
   freeText?: string | null,
-  level?: SymptomLevel | null
+  level?: SymptomLevel | null,
+  /** Every chip the moto logged (finding 7); when given it replaces the single symptom. */
+  symptoms?: LoggedSymptom[] | null
 ): Promise<AdjustResult> {
   const previous = snapshotToTune(effective, s.hasAirFork);
   const surfaces = surfacesOf(s.conditions);
@@ -140,7 +142,11 @@ export async function fetchAdjustResult(
     previous,
     feedback: {
       overall_rating: ratingFor(sentiment),
-      symptoms: symptom ? [{ id: symptom, severity: severityFor(sentiment, level), ...(qualifier ? { where: qualifier } : {}) }] : [],
+      symptoms: symptoms?.length
+        ? symptoms.map((x) => ({ id: x.id, severity: severityFor(sentiment, x.level), ...(x.qualifier ? { where: x.qualifier } : {}) }))
+        : symptom
+          ? [{ id: symptom, severity: severityFor(sentiment, level), ...(qualifier ? { where: qualifier } : {}) }]
+          : [],
       terrain_tags: [...surfaces, s.conditions.state, s.conditions.watered ? "watered" : null].filter(Boolean) as string[],
       ...(text ? { free_text: text } : {}),
     },

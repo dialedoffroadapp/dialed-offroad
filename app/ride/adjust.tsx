@@ -10,7 +10,7 @@ import { formatSetting } from "../../lib/format";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DecimalStepper } from "../../components/garage/GarageSheets";
@@ -26,7 +26,7 @@ import { finishQuickRefine } from "../../lib/rideEnd";
 import { isEntitled, resolveEntitlement } from "../../lib/entitlement";
 import { showProGate } from "../../lib/proGate";
 import { useToast } from "../../components/Toast";
-import { symptomById, type SymptomLevel } from "../../lib/rideSymptoms";
+import { symptomById, type LoggedSymptom, type SymptomLevel } from "../../lib/rideSymptoms";
 import { logEvent } from "../../lib/usage";
 
 type Phase = "loading" | "changes" | "manual" | "error";
@@ -36,7 +36,15 @@ const fmt = (v: number, k: CircuitKey) => formatSetting(v, k);
 export default function RideAdjustScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { symptom, qualifier, moto, sentiment, manual, level } = useLocalSearchParams<{ symptom?: string; qualifier?: string; moto?: string; sentiment?: string; manual?: string; level?: string }>();
+  const { symptom, qualifier, moto, sentiment, manual, level, symptoms: symptomsParam } = useLocalSearchParams<{ symptom?: string; qualifier?: string; moto?: string; sentiment?: string; manual?: string; level?: string; symptoms?: string }>();
+  const loggedSymptoms = useMemo<LoggedSymptom[]>(() => {
+    try {
+      const parsed = symptomsParam ? JSON.parse(symptomsParam) : [];
+      return Array.isArray(parsed) ? parsed.filter((x) => x && typeof x.id === "string") : [];
+    } catch {
+      return [];
+    }
+  }, [symptomsParam]);
   const toast = useToast();
   const [finishing, setFinishing] = useState(false);
   const [s, setS] = useState<RideSession | null>(null);
@@ -58,18 +66,18 @@ export default function RideAdjustScreen() {
       if (!open) return router.replace("/(tabs)" as never);
       if (!alive) return;
       setS(open);
-      if (manual === "1" || !symptom) {
+      // The rider's own words: the moto's note on first load, then whatever
+      // they type here and re-ask with (feedback.free_text, engine-parsed).
+      const lastNote = open.motos[open.motos.length - 1]?.note ?? "";
+      if (manual === "1" || (!symptom && !loggedSymptoms.length && !lastNote.trim())) {
         setPhase("manual");
         return;
       }
       try {
         setPhase("loading");
-        // The rider's own words: the moto's note on first load, then whatever
-        // they type here and re-ask with (feedback.free_text, engine-parsed).
-        const lastNote = open.motos[open.motos.length - 1]?.note ?? "";
         const text = asked > 0 ? freeText : lastNote;
         if (asked === 0 && lastNote && !freeText) setFreeText(lastNote);
-        const res = await fetchAdjustResult(open, symptom as any, qualifier || null, (sentiment as any) || "worse", rideEffective(open), text, (level === "mild" || level === "bad" ? level : null) as SymptomLevel | null);
+        const res = await fetchAdjustResult(open, (symptom || null) as any, qualifier || null, (sentiment as any) || "worse", rideEffective(open), text, (level === "mild" || level === "bad" ? level : null) as SymptomLevel | null, loggedSymptoms);
         const list = res.changes;
         if (!alive) return;
         setReasoning(res.reasoning);

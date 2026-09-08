@@ -1,7 +1,8 @@
 // app/ride/log.tsx — Log moto (design/mockups/ride/08, OUTDOOR). Better /
-// Same / Worse at 56pt, 4 large symptom chips + "More symptoms", a terrain
-// qualifier only for the ambiguous chips (phrased per chip), an optional
-// note (typed; on-device voice needs a native module — flagged). Save writes
+// Same / Worse at 56pt, then the full symptom taxonomy grouped Front / Rear /
+// Both ends with discipline labels (finding 7, 2026-09-08), a where
+// qualifier only for the ambiguous chips, and a visible free-text box (voice
+// needs a native module — flagged). Save writes
 // the moto (track_sessions via the outbox) and hands symptoms to Adjust.
 // Chips carry the debrief's severity: tap once = mild, twice = bad, again
 // clears. ?quick=1 (setup sheet "Refine after ride", the retired debrief's
@@ -21,7 +22,8 @@ import { finishQuickRefine } from "../../lib/rideEnd";
 import { startQuickRefine } from "../../lib/rideRefine";
 import { BottomSheet } from "../../components/v3/BottomSheet";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
-import { MORE_SYMPTOMS, PRIMARY_SYMPTOMS, type SymptomChip, type SymptomLevel } from "../../lib/rideSymptoms";
+import { canSaveLog, cycleLevel, symptomGroupsFor, type LoggedSymptom, type SymptomChip, type SymptomLevel } from "../../lib/rideSymptoms";
+import { disciplineForBike } from "../../lib/discipline";
 import { logEvent } from "../../lib/usage";
 
 export default function RideLogScreen() {
@@ -32,10 +34,8 @@ export default function RideLogScreen() {
   const [s, setS] = useState<RideSession | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sentiment, setSentiment] = useState<Sentiment | null>(null);
-  const [picked, setPicked] = useState<SymptomChip | null>(null);
-  const [level, setLevel] = useState<SymptomLevel>("mild");
-  const [qualifier, setQualifier] = useState<string | null>(null);
-  const [more, setMore] = useState(false);
+  // Multi-select over the full taxonomy (finding 7): id → level + where.
+  const [picks, setPicks] = useState<Record<string, { level: SymptomLevel; qualifier: string | null }>>({});
   const [note, setNote] = useState("");
   const [durationMin, setDurationMin] = useState<number | null>(null);
   const [laps, setLaps] = useState<string>("");
@@ -85,28 +85,24 @@ export default function RideLogScreen() {
   }
 
   const n = nextMotoNumber(s);
-  const needsQualifier = !!picked?.qualifiers?.length;
-  const canSave = !!sentiment && (!needsQualifier || !!qualifier);
+  const groups = symptomGroupsFor(disciplineForBike(s.bike));
+  const chipById = new Map<string, SymptomChip>(groups.flatMap((g) => g.chips).map((c) => [c.id, c]));
+  const logged: LoggedSymptom[] = Object.entries(picks).map(([id, p]) => ({ id: id as LoggedSymptom["id"], level: p.level, qualifier: p.qualifier }));
+  const canSave = canSaveLog({ sentiment, symptoms: logged, text: note, quick: !!s.quick });
 
   // Tap once = mild, twice = bad, a third tap clears (the debrief's picker,
   // ported onto the chips).
   const tapSymptom = (chip: SymptomChip) => {
     void Haptics.selectionAsync().catch(() => {});
-    if (picked?.id === chip.id) {
-      if (level === "mild") {
-        setLevel("bad");
-        return;
-      }
-      setPicked(null);
-      setQualifier(null);
-      setLevel("mild");
-      return;
-    }
-    setPicked(chip);
-    setLevel("mild");
-    setQualifier(null);
+    setPicks((prev) => {
+      const next = cycleLevel(prev[chip.id]?.level ?? null);
+      const out = { ...prev };
+      if (!next) delete out[chip.id];
+      else out[chip.id] = { level: next, qualifier: prev[chip.id]?.qualifier ?? null };
+      return out;
+    });
   };
-  const levelSub = (chip: SymptomChip) => (picked?.id === chip.id ? (level === "bad" ? "Bad" : "Mild") : undefined);
+  const levelSub = (chip: SymptomChip) => (picks[chip.id] ? (picks[chip.id].level === "bad" ? "Bad" : "Mild") : undefined);
 
   const onBack = async () => {
     // Backing out of a quick refine before saving drops the empty session.
@@ -117,7 +113,7 @@ export default function RideLogScreen() {
   const onSave = async () => {
     if (!canSave || saving || !sentiment) return;
     setSaving(true);
-    const symptoms: MotoSymptom[] = picked ? [{ id: picked.id, qualifier, label: picked.label, level }] : [];
+    const symptoms: MotoSymptom[] = logged.map((x) => ({ id: x.id, qualifier: x.qualifier, label: chipById.get(x.id)?.label ?? x.id, level: x.level }));
     const lapsNum = laps.trim() ? Number(laps) : null;
     const next = await logMoto(s, { sentiment, symptoms, note: note.trim() || null, durationMin: durationMin ?? motoDurationMin(s), laps: Number.isFinite(lapsNum as number) ? lapsNum : null });
     void logEvent("moto_logged", {
@@ -133,8 +129,13 @@ export default function RideLogScreen() {
     });
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setSaving(false);
-    if (symptoms.length) {
-      router.replace({ pathname: "/ride/adjust", params: { symptom: symptoms[0].id, qualifier: qualifier ?? "", moto: String(n), sentiment, level } } as never);
+    if (symptoms.length || note.trim()) {
+      // Every chip rides to the engine; the first one heads the Adjust screen.
+      // Text alone is a refine too: the engine parses feedback.free_text.
+      router.replace({
+        pathname: "/ride/adjust",
+        params: { symptom: symptoms[0]?.id ?? "", qualifier: symptoms[0]?.qualifier ?? "", moto: String(n), sentiment, level: symptoms[0]?.level ?? "", symptoms: JSON.stringify(logged) },
+      } as never);
     } else if (next.quick) {
       // Nothing to adjust: the feedback row is queued; no version is made.
       await finishQuickRefine(next);
@@ -169,37 +170,41 @@ export default function RideLogScreen() {
           ))}
         </Grid>
 
-        <Grid cols={2} style={{ marginBottom: 6 }}>
-          {PRIMARY_SYMPTOMS.map((c) => (
-            <ChoiceChip key={c.id} out label={c.label} sub={levelSub(c)} on={picked?.id === c.id} onPress={() => tapSymptom(c)} />
-          ))}
-        </Grid>
-        <Small style={{ marginBottom: 10, color: V3.muted, fontSize: 12 }}>Tap once for mild, twice for bad.</Small>
-        {more ? (
-          <Grid cols={2} style={{ marginBottom: 10 }}>
-            {MORE_SYMPTOMS.map((c) => (
-              <ChoiceChip key={c.id} out label={c.label} sub={levelSub(c)} on={picked?.id === c.id} onPress={() => tapSymptom(c)} minHeight={48} />
-            ))}
-          </Grid>
-        ) : (
-          <ChoiceChip out label="More symptoms" dim minHeight={48} style={{ marginBottom: 10 }} onPress={() => setMore(true)} />
-        )}
-
-        {needsQualifier && picked ? (
-          <View style={styles.card}>
-            <Label style={{ color: V3.blue, marginBottom: 8 }}>{picked.qualifierPrompt}</Label>
-            <Grid cols={2}>
-              {picked.qualifiers!.map((q) => (
-                <ChoiceChip key={q} out label={q} on={qualifier === q} dim minHeight={48} onPress={() => setQualifier(q)} style={qualifier === q ? undefined : { borderColor: V3.line }} />
+        <Small style={{ marginBottom: 10, color: V3.muted, fontSize: 12 }}>Tap once for mild, twice for bad. Pick as many as you felt.</Small>
+        {groups.map((g) => (
+          <View key={g.end} testID={`symptom-group-${g.end}`}>
+            <Label style={{ marginBottom: 8, marginTop: 4 }}>{g.title}</Label>
+            <Grid cols={2} style={{ marginBottom: 8 }}>
+              {g.chips.map((c) => (
+                <ChoiceChip key={c.id} out label={c.label} sub={levelSub(c)} on={!!picks[c.id]} onPress={() => tapSymptom(c)} minHeight={52} />
               ))}
             </Grid>
+            {g.chips
+              .filter((c) => picks[c.id] && c.qualifiers?.length)
+              .map((c) => (
+                <View key={`${c.id}-where`} style={styles.card}>
+                  <Label style={{ color: V3.blue, marginBottom: 8 }}>{c.qualifierPrompt}</Label>
+                  <Grid cols={2}>
+                    {c.qualifiers!.map((q) => (
+                      <ChoiceChip key={q} out label={q} on={picks[c.id]?.qualifier === q} dim minHeight={48} onPress={() => setPicks((prev) => ({ ...prev, [c.id]: { level: prev[c.id]?.level ?? "mild", qualifier: q } }))} style={picks[c.id]?.qualifier === q ? undefined : { borderColor: V3.line }} />
+                    ))}
+                  </Grid>
+                </View>
+              ))}
           </View>
-        ) : null}
+        ))}
 
-        <SayItYourWay value={note} onChangeText={setNote} />
+        <SayItYourWay
+          value={note}
+          onChangeText={setNote}
+          boxed
+          placeholder="Say it your way. Harsh in the bars on braking bumps, front tucks in flat corners, whatever you noticed."
+          note="Voice arrives with the next update."
+          style={{ marginTop: 6, marginBottom: 12 }}
+        />
 
         <View style={{ flex: 1 }} />
-        <Cta label={saving ? "Saving…" : s.quick ? (picked ? "Next: adjust" : "Save") : "Save moto"} dim={!canSave} disabled={saving} onPress={() => void onSave()} />
+        <Cta label={saving ? "Saving…" : s.quick ? "Next: adjust" : "Save moto"} dim={!canSave} disabled={saving} onPress={() => void onSave()} />
       </ScrollView>
       <BottomSheet open={editTime} onClose={() => setEditTime(false)} title={`Moto ${n}`}>
         <Small style={{ marginBottom: 12 }}>Timed from the clock start or your last log. Fix it if you sat around.</Small>
