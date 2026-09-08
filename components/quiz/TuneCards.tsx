@@ -5,7 +5,7 @@
 // locked-row pattern since the meter now does paywall-teaser work).
 import Ionicons from "@expo/vector-icons/Ionicons";
 import React, { useEffect } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import {
   formatTuneValue,
@@ -37,15 +37,23 @@ export function LockedTuneCard({ tune, title }: { tune: TuneLike | null; title?:
   );
 }
 
-export function TuneValuesCard({ tune }: { tune: TuneLike }) {
+export function TuneValuesCard({ tune, onMeasureSag }: { tune: TuneLike; onMeasureSag?: () => void }) {
   const rows = tuneRowsFor(tune);
   return (
     <View style={styles.card}>
       {rows.map((r, i) => {
         const v = tuneRowValue(tune, r.key);
+        const isSag = String(r.key).toLowerCase().includes("sag");
         return (
           <View key={r.key} style={[styles.row, i > 0 && styles.rowBorder]}>
-            <Text style={styles.rowLabel}>{r.label}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>{r.label}</Text>
+              {isSag && onMeasureSag ? (
+                <Pressable onPress={onMeasureSag} accessibilityRole="button" accessibilityLabel="Measure sag" hitSlop={8}>
+                  <Text style={styles.sagLink}>Measure it</Text>
+                </Pressable>
+              ) : null}
+            </View>
             <View style={styles.valueWrap}>
               <Text style={[styles.value, displayFont("black")]}>{formatTuneValue(v, r.unit)}</Text>
               <Text style={styles.unit}>{r.unit}</Text>
@@ -138,6 +146,7 @@ const styles = StyleSheet.create({
   },
   rowBorder: { borderTopWidth: 1, borderTopColor: Q.BORDER },
   rowLabel: { color: Q.TEXT, fontSize: 16, flex: 1 },
+  sagLink: { color: Q.BLUE, fontSize: 12, marginTop: 2, letterSpacing: 0.3 },
   rowLabelLocked: { color: Q.STEEL, fontSize: 16, flex: 1 },
   lockedValue: { flexDirection: "row", alignItems: "center", gap: 10 },
   dashes: { color: Q.STEEL, fontSize: 22, letterSpacing: 2 },

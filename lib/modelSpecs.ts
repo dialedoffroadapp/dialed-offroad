@@ -28,6 +28,8 @@ export type ModelSpecs = {
    *  renders only when both are true; absent columns (a project without the
    *  migration) read as false. */
   sag_window_verified?: boolean | null;
+  /** Where the sag window came from (research 2026-09-07), for the sag page's caption. */
+  sag_window_source?: string | null;
   weight_range_verified?: boolean | null;
   /** Research columns (migration 20260907140000). fork_type_ambiguous = the
    *  model year shipped air OR coil by region (2016 SX/SX-F, FC/TC): the
@@ -60,7 +62,7 @@ const SPEC_COLS =
   "stock_shock_spring_nmm, rider_weight_min_lbs, rider_weight_max_lbs, " +
   "fork_type, shock_type, has_air_fork, spec_verified";
 const PROVENANCE_COLS =
-  ", sag_window_verified, weight_range_verified, fork_type_ambiguous, fork_type_verified, stock_air_bar, " +
+  ", sag_window_verified, sag_window_source, weight_range_verified, fork_type_ambiguous, fork_type_verified, stock_air_bar, " +
   "stock_static_sag_mm, stock_fork_comp, stock_fork_reb, stock_shock_comp, stock_shock_reb, stock_shock_hsc_turns";
 
 // Per-bike, per-session cache (bikes barely change mid-session; keyed by uuid or

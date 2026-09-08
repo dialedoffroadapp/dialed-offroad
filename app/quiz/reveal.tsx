@@ -32,6 +32,8 @@ export default function QuizRevealScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { answers } = useQuiz();
+  // The sag link beside the target needs a garage bike (a uuid); guests get it after sign-up.
+  const revealBikeId = answers.flowBikeId ?? answers.bikeLocalId ?? null;
   const { state } = useOnboarding();
   const [tune, setTune] = useState<TuneLike | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
@@ -208,7 +210,18 @@ export default function QuizRevealScreen() {
         <Text style={[styles.title, displayFont("black")]}>Your bike, dialed</Text>
 
         <View style={styles.card}>
-          {locked || !tune ? <LockedTuneCard tune={tune} /> : <TuneValuesCard tune={tune} />}
+          {locked || !tune ? (
+            <LockedTuneCard tune={tune} />
+          ) : (
+            <TuneValuesCard
+              tune={tune}
+              onMeasureSag={
+                revealBikeId && isUuid(revealBikeId)
+                  ? () => router.push({ pathname: "/garage/[bikeId]/sag", params: { bikeId: revealBikeId } } as never)
+                  : undefined
+              }
+            />
+          )}
         </View>
 
         {locked ? (

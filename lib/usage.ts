@@ -127,7 +127,11 @@ export type UsageEvent =
   | "lifetime_offered"
   | "qualified_trial"
   // One free refinement (2026-09-07, migration 20260907170000)
-  | "free_refine_used";
+  | "free_refine_used"
+  // Sag page (2026-09-07, migration 20260907200000)
+  | "sag_measured_saved"
+  | "sag_recheck_shown"
+  | "sag_recheck_completed";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see
