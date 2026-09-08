@@ -34,7 +34,7 @@ import {
   type CircuitKey,
   type CurrentSetupState,
 } from "../lib/currentSetup";
-import { fetchModelSpecs } from "../lib/modelSpecs";
+import { effectiveAirFork, fetchModelSpecs } from "../lib/modelSpecs";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { logEvent } from "../lib/usage";
@@ -121,8 +121,9 @@ export default function CurrentSetupScreen() {
               model: bike.model,
               year: bike.year,
             });
-            if (typeof specs?.has_air_fork === "boolean") {
-              modelAir = specs.has_air_fork;
+            const resolved = effectiveAirFork(specs, (bike as any)?.air_fork_override ?? null);
+            if (typeof resolved === "boolean") {
+              modelAir = resolved;
             }
           } catch {}
           if (modelAir === null) {

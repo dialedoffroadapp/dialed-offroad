@@ -18,6 +18,9 @@ export type GuestBike = {
   model: string;
   year: number;
   nickname: string | null;
+  /** The rider's air-or-coil answer for a region-ambiguous model year
+   *  (2016 SX/SX-F, FC/TC); migrates to bikes.air_fork_override at sign-up. */
+  airFork?: boolean | null;
 };
 
 /** Same id shape garage.tsx mints (NOT a uuid — see asUuidOrNull callers). */
@@ -53,6 +56,8 @@ export type UpsertQuizBikeInput = {
   year: number;
   /** The bike this quiz run created earlier (re-answering Q2 replaces it). */
   previousId?: string | null;
+  /** Air (true) or coil (false) for an ambiguous model year; undefined = not asked. */
+  airFork?: boolean | null;
 };
 
 /**
@@ -63,7 +68,8 @@ export type UpsertQuizBikeInput = {
  * Returns the bike id (local id or uuid).
  */
 export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string> {
-  const { make, model, year, previousId } = input;
+  const { make, model, year, previousId, airFork } = input;
+  const override = typeof airFork === "boolean" ? { air_fork_override: airFork } : {};
 
   const { data: sessionData } = await supabase.auth.getSession();
   const userId = sessionData?.session?.user?.id;
@@ -73,13 +79,13 @@ export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string
     if (previousId && isUuid(previousId)) {
       const { error } = await supabase
         .from("bikes")
-        .update({ make, model, year, model_id })
+        .update({ make, model, year, model_id, ...override })
         .eq("id", previousId);
       if (!error) return previousId;
     }
     const { data, error } = await supabase
       .from("bikes")
-      .insert({ user_id: userId, make, model, year, nickname: null, model_id })
+      .insert({ user_id: userId, make, model, year, nickname: null, model_id, ...override })
       .select("id")
       .single();
     if (!error && (data as any)?.id) return (data as any).id as string;
@@ -107,6 +113,7 @@ export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string
     model,
     year,
     nickname: idx >= 0 ? bikes[idx].nickname ?? null : null,
+    airFork: typeof airFork === "boolean" ? airFork : idx >= 0 ? bikes[idx].airFork ?? null : null,
   };
   if (idx >= 0) bikes[idx] = row;
   else bikes.push(row);

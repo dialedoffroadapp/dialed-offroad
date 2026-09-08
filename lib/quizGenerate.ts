@@ -5,7 +5,8 @@
 // pending-tune write + funnel event), with the quiz answers as the input.
 // tune.tsx is deliberately untouched; keep the two in step when it changes.
 import { generateTune, type ZeroTuneResult } from "./ai";
-import { computeSpringCheck, fetchModelSpecs, type ModelSpecs } from "./modelSpecs";
+import { readGuestBikes } from "./guestGarage";
+import { computeSpringCheck, effectiveAirFork, fetchModelSpecs, type ModelSpecs } from "./modelSpecs";
 import { writePendingTune } from "./onboarding";
 import { claimBaselineCredit, refundBaselineCredit, type ClaimResult } from "./freeTune";
 import { deriveIsPro } from "./proUtils";
@@ -15,7 +16,7 @@ import {
   terrainLabel,
   type QuizAnswers,
 } from "./quizOnboarding";
-import { resolveSagBounds } from "./sagBounds";
+import { platformSagBounds, resolveSagBounds } from "./sagBounds";
 import { supabase } from "./supabase";
 import { getOrCreateFunnelId, logEvent } from "./usage";
 import { isUuid } from "./uuid";
@@ -94,18 +95,32 @@ export async function generateQuizTune(params: {
       model: input.model ?? null,
       year: input.year ?? null,
     });
-    const sagBounds = resolveSagBounds(modelSpecs);
+    // Unmatched bikes take the platform manual's sag when the make and
+    // platform are known (research 2026-09-07), else the consolidated default.
+    const platformSag = platformSagBounds(input.make, input.model);
+    const sagBounds = resolveSagBounds(modelSpecs, platformSag);
     const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
     if (modelSpecs?.id) input.model_id = modelSpecs.id;
 
-    const specAirFork =
-      typeof modelSpecs?.has_air_fork === "boolean" ? modelSpecs.has_air_fork : undefined;
-    const effectiveAirFork = specAirFork ?? input.wants_air_fork ?? false;
+    // Fork type: the catalog flag, else the rider's air-or-coil answer for a
+    // region-ambiguous model year (the quiz asked; stored on the bike), else
+    // the toggle. The guest bike carries the answer until sign-up.
+    let override: boolean | null = typeof answers.airForkOverride === "boolean" ? answers.airForkOverride : null;
+    if (override === null && answers.bikeLocalId) {
+      if (isUuid(answers.bikeLocalId)) {
+        const { data } = await supabase.from("bikes").select("air_fork_override").eq("id", answers.bikeLocalId).maybeSingle();
+        override = typeof (data as any)?.air_fork_override === "boolean" ? (data as any).air_fork_override : null;
+      } else {
+        override = (await readGuestBikes()).find((b) => b.id === answers.bikeLocalId)?.airFork ?? null;
+      }
+    }
+    const specAirFork = effectiveAirFork(modelSpecs, override);
+    const effectiveAir = specAirFork ?? input.wants_air_fork ?? false;
     if (specAirFork !== undefined) input.wants_air_fork = specAirFork;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tune: ZeroTuneResult = await Promise.race([
-      generateTune(input, sagBounds, specAirFork),
+      generateTune(input, sagBounds, specAirFork, modelSpecs?.stock_air_bar ?? null),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
           () => reject(new QuizGenerateError("timeout", "This is taking longer than expected. Try again")),
@@ -131,7 +146,7 @@ export async function generateQuizTune(params: {
       rideStyle: input.rider.style,
       goals: input.rider.goals,
       zeroed: true,
-      wantsAirFork: effectiveAirFork,
+      wantsAirFork: effectiveAir,
       make: input.make,
       model: input.model,
       year: input.year,
@@ -156,7 +171,7 @@ export async function generateQuizTune(params: {
           track: undefined,
           temp_f: undefined,
           elev_ft: undefined,
-          wants_air_fork: effectiveAirFork,
+          wants_air_fork: effectiveAir,
           rider_weight_lbs: input.rider.weight_lbs,
           goals: input.rider.goals,
           issues: input.rider.issues,
@@ -168,6 +183,8 @@ export async function generateQuizTune(params: {
           sag_bounds: [sagBounds.min, sagBounds.max],
           fork_type: modelSpecs?.fork_type ?? null,
           shock_type: modelSpecs?.shock_type ?? null,
+          stock_air_bar: modelSpecs?.stock_air_bar ?? null,
+          sag_source: modelSpecs?.stock_sag_mm != null ? "model" : platformSag ? "platform" : "default",
         },
         // Quiz provenance (display + analysis only; readers ignore it).
         quiz: {

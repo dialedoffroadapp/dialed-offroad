@@ -16,6 +16,7 @@
 // Callers own everything provider-specific: establishing the session,
 // deciding isNewAccount (email uses the identities[] enumeration-protection
 // heuristic, OAuth uses created_at ≈ last_sign_in_at), and the toast copy.
+import { readGuestBikes } from "./guestGarage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { normalizeBikeStrings, resolveModelId } from "./bikes";
 import {
@@ -195,12 +196,18 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
             pendingBike.model,
             pendingBike.year
           );
+          // The guest bike's air-or-coil answer (ambiguous 2016 rows) rides
+          // along as bikes.air_fork_override.
+          const guestAirFork = pending.bikeId
+            ? (await readGuestBikes()).find((b) => b.id === pending.bikeId)?.airFork ?? null
+            : null;
           const { data: insertedBike, error: bikeInsertErr } = await supabase
             .from("bikes")
             .insert({
               user_id: userId,
               ...pendingBike,
               model_id,
+              ...(typeof guestAirFork === "boolean" ? { air_fork_override: guestAirFork } : {}),
             })
             .select("id")
             .single();

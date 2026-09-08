@@ -195,7 +195,11 @@ export async function generateTune(
   // authoritative on the edge; the rider's explicit toggle decides for
   // unmatched bikes. There is no name-based guess any more (decision 1,
   // 2026-09-05): an unmatched bike with the toggle off is coil.
-  hasAirFork?: boolean
+  hasAirFork?: boolean,
+  // WP's published base pressure for the model (bike_models.stock_air_bar,
+  // research 2026-09-07): the engine's air base for this bike. The per-weight
+  // slope stays the engine's own rule, never WP's.
+  stockAirBar?: number | null
 ): Promise<ZeroTuneResult> {
   // Pre-auth attribution (Workstream C): signed-out callers send the device's
   // anon id so the server-side tune_calls row can be claimed after signup.
@@ -247,7 +251,7 @@ export async function generateTune(
       wants_air_fork: input.wants_air_fork ?? undefined,
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
-      guardrails: defaultGuardrails(sagBounds, hasAirFork),
+      guardrails: defaultGuardrails(sagBounds, hasAirFork, stockAirBar),
 
       // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
       // by generation. Omitted (not null) when unavailable.
@@ -433,7 +437,7 @@ async function fetchLastOutcome(
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
+function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean, stockAirBar?: number | null) {
   return {
     clicks_min: 0,
     clicks_max: 30,
@@ -445,8 +449,10 @@ function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
     sag_min_mm: sag.min,
     sag_max_mm: sag.max,
     sag_target_mm: sag.target,
-    // Air fork defaults the backend can scale by weight if applicable:
-    aer_pressure_bar_default: 10.6, // ≈154 psi baseline for ~185 lb
+    // Air fork base the backend scales by weight: the model's WP base
+    // pressure when the catalog has one (research 2026-09-07), else 10.6.
+    // The slope is our own rule (the contract PR makes it discipline-specific).
+    aer_pressure_bar_default: typeof stockAirBar === "number" && Number.isFinite(stockAirBar) ? stockAirBar : 10.6,
     aer_pressure_bar_per_10lb: 0.2, // ~+/-0.2 bar per 10 lb delta
     // Spec-verified fork type — authoritative over toggle/heuristic on the
     // edge; omitted entirely when the bike is unmatched.

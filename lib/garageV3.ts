@@ -71,7 +71,7 @@ export async function loadBikes(userId: string): Promise<HomeBike[]> {
   try {
     const { data } = await supabase
       .from("bikes")
-      .select("id, make, model, year, nickname, model_id, is_primary")
+      .select("id, make, model, year, nickname, model_id, is_primary, air_fork_override")
       .eq("user_id", userId)
       .order("is_primary", { ascending: false })
       .order("created_at", { ascending: true });
@@ -83,6 +83,7 @@ export async function loadBikes(userId: string): Promise<HomeBike[]> {
       nickname: b.nickname ?? null,
       model_id: b.model_id ?? null,
       is_primary: !!b.is_primary,
+      air_fork_override: typeof b.air_fork_override === "boolean" ? b.air_fork_override : null,
     }));
   } catch {
     return [];

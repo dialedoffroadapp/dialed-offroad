@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeOut, SlideInRight } from "react-native-reanimated";
 import { QuizChip } from "../../components/quiz/QuizChip";
+import { fetchModelSpecs } from "../../lib/modelSpecs";
 import { QuizChoiceCard } from "../../components/quiz/QuizChoiceCard";
 import { useToast } from "../../components/Toast";
 import { QuizShell } from "../../components/quiz/QuizShell";
@@ -45,7 +46,7 @@ import {
 } from "../../lib/quizOnboarding";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
-type Phase = "brand" | "model";
+type Phase = "brand" | "model" | "fork";
 
 const yearAnswerId = (model: string, year: number) => `${model}::${year}`;
 const splitYearAnswer = (id: string): { model: string; year: number } => {
@@ -67,6 +68,10 @@ export default function QuizBikeScreen() {
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [olderOpen, setOlderOpen] = useState(false);
   const touchedRef = useRef(false);
+  // Set by the year commit when the catalog row is region-ambiguous (2016
+  // SX/SX-F, FC/TC shipped air in the EU and coil in the US and Australia):
+  // the fork phase asks and stores the answer on the bike.
+  const forkAskRef = useRef<{ make: string; model: string; year: number; bikeId: string } | null>(null);
 
   // Returning with a persisted brand lands on 2b with the model expanded.
   useEffect(() => {
@@ -141,6 +146,15 @@ export default function QuizBikeScreen() {
         year: y,
         previousId: answers.bikeLocalId ?? null,
       });
+      forkAskRef.current = null;
+      try {
+        const specs = await fetchModelSpecs({ id: null, model_id: null, make: mk, model: mo, year: y });
+        if (specs?.fork_type_ambiguous && typeof answers.airForkOverride !== "boolean") {
+          forkAskRef.current = { make: mk, model: mo, year: y, bikeId };
+        }
+      } catch {
+        // offline: no catalog answer; the toggle path decides later
+      }
       await setAnswers({
         make: mk,
         model: mo,
@@ -184,8 +198,31 @@ export default function QuizBikeScreen() {
         answer: { make: mk, model: mo, year: y, catalog_match: catalogMatch },
       });
     },
-    onAdvance: () => router.push(nextQuizRoute("bike", answers) as never),
+    onAdvance: () => (forkAskRef.current ? setPhase("fork") : router.push(nextQuizRoute("bike", answers) as never)),
     onError: () => toast.show("Couldn't save your bike. Check your signal and tap the year again.", { kind: "error" }),
+  });
+
+  /* ------------------------------ 2c: fork -------------------------------- */
+  // Only for region-ambiguous model years. The answer lives on the bike
+  // (bikes.air_fork_override, or the guest bike until sign-up) and on the
+  // answers store for this run.
+  const fork = useAnswerRhythm<"air" | "coil">({
+    initial: typeof answers.airForkOverride === "boolean" ? (answers.airForkOverride ? "air" : "coil") : null,
+    onCommit: async (id) => {
+      const ask = forkAskRef.current;
+      const airFork = id === "air";
+      await upsertQuizBike({
+        make: ask?.make ?? answers.make ?? "",
+        model: ask?.model ?? answers.model ?? "",
+        year: ask?.year ?? answers.year ?? 0,
+        previousId: ask?.bikeId ?? answers.bikeLocalId ?? null,
+        airFork,
+      });
+      await setAnswers({ airForkOverride: airFork });
+      await logQuizEvent("quiz_step_answered", { step: "bike", answer: { fork: id, make: ask?.make, model: ask?.model, year: ask?.year } });
+    },
+    onAdvance: () => router.push(nextQuizRoute("bike", answers) as never),
+    onError: () => toast.show("Couldn't save your fork. Tap it again.", { kind: "error" }),
   });
 
   /* ------------------------------- derived -------------------------------- */
@@ -451,6 +488,26 @@ export default function QuizBikeScreen() {
       </View>
     );
   };
+
+  if (phase === "fork") {
+    const bikeLabel = [forkAskRef.current?.year ?? answers.year, forkAskRef.current?.make ?? answers.make, forkAskRef.current?.model ?? answers.model].filter(Boolean).join(" ");
+    return (
+      <QuizShell
+        step="bike"
+        title="Air or coil fork?"
+        subtitle={`${bikeLabel} shipped both ways: Europe got the WP AER 48 air fork, the US and Australia kept the WP 4CS coil. Look at the left fork cap: a small valve cap means air.`}
+        showBack
+        onBack={() => setPhase("model")}
+        ghostNext={!!fork.selected}
+        echo={fork.selected ? (fork.selected === "air" ? "Air fork it is" : "Coil fork it is") : null}
+      >
+        <View style={{ gap: 10 }}>
+          <QuizChip label="Air fork (WP AER 48)" selected={fork.selected === "air"} dimmed={fork.isDimmed("air")} onPress={() => fork.choose("air")} />
+          <QuizChip label="Coil fork (WP 4CS)" selected={fork.selected === "coil"} dimmed={fork.isDimmed("coil")} onPress={() => fork.choose("coil")} />
+        </View>
+      </QuizShell>
+    );
+  }
 
   return (
     <QuizShell
