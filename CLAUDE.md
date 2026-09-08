@@ -952,6 +952,23 @@ that change none of those skip it.)*
   walkthrough (`circuitStep` / `circuitUnit`, `formatSetting(v, key,
   unit)`, HSC row hidden); a tune's `hsc_turns` may be null.
 
+- **Suspension reference follow-up (2026-09-08, River's prompt
+  `claude-code-prompt-2026-09-07-suspension-followup.md`; the report file
+  `docs/suspension-reference-2026-09-07.md` it says is in the repo is NOT
+  there, nor in Downloads or on the remote, so section 1 (the tuner rows for
+  migration `20260907220000`, the not-found list, the 4a tally) is still
+  owed; `docs/catalog-gaps.md` carries it):** migration `20260907230000`
+  (applied on dev-3-0, staged): the Sherco split at 2022 collapsed, the
+  KYB figures (13/13, LSC 14, HSC 1.5, reb 13) now sit on the three Factory
+  KYB rows from 2019 with the Factory-line source, no SEF-R figure on any
+  row; Beta RR Race (KYB stands), RM-Z250 (KYB shock stands) logged as
+  source conflicts, nothing written; `app_config`
+  `weight_slope_cap_hsc_quarter_turns` (2). Engine (contract, deployed to
+  dev-3-0): the intensity term is STYLE ONLY (its skill part is gone; the
+  per-class offset is the one skill term), HSC's weight term capped in
+  quarter turns behind the new key; shadow re-run beside the first run in
+  the resolution doc.
+
 ## Sprint focus (in order)
 
 1. Results page

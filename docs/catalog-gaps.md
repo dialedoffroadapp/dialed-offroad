@@ -2,16 +2,19 @@
 
 Rows the next research pass should target. Kept current by hand after each catalog migration; the second report of 2026-09-07 (`docs/suspension-reference-resolution-2026-09-07.md`) left every row below with null stock clickers, no placeholder. `null_clickers` = no `stock_fork_comp` on the row after migration `20260907210000`.
 
-## Not written on purpose (flagged, needs River or a matching row)
+## Not written on purpose (source conflicts, logged per the 2026-09-08 follow-up)
 
-- Beta RR Race 250 / 300 2020+: the report gives Sachs figures (fork 16/14, shock 15/12/15) for the 2020 Race Edition; the catalog rows carry KYB 48 coil. Fork family mismatch, nothing written.
+- Beta RR Race Edition 2020: the catalog's KYB 48 coil stands; the report's Sachs row (fork 16/14, shock 15/12/15) is a source conflict, logged, nothing written.
 - Beta RR-S 2020 (Sachs 10/10): no catalog row (the RR-S is the four-stroke dual-sport line); the RR 2T 250/300 Sachs rows are a different model.
-- Sherco 2019 to 2021: the report's Sachs figures (fork 12/12, shock LSC 15, HSC 2 turns, rebound 13) are for the SEF-R (Racing) line; the catalog rows are the Factory line on KYB from 2019. Not written; the 2022+ KYB values were written to the Factory rows with the model line named in the note (flagged).
-- Suzuki RM-Z250 2019+: the report says it shares the BFRC shock; the catalog row says KYB linkage, and the RM-Z450 tuner values it would share live in the report file, not the prompt. Nothing written.
-- Tuner-sourced 1a rows named by the prompt (Honda CRF, Suzuki RM-Z450, Yamaha YZ250F, Kawasaki KX450 2016 to 2018, Stark): their numbers are in the report file `suspension-reference-2026-09-07.md`, which was not in Downloads when this pass ran. Write them from the file with tag tuner.
-- The report's own "not found" list: append it here from the file.
+- Suzuki RM-Z250 2019+: the catalog's KYB linkage shock stands; the report's BFRC sharing is a source conflict, logged, nothing written.
 
-## Rows without stock clickers after 20260907210000
+## Owed from the report file (not in Downloads or the repo as of 2026-09-08)
+
+- Tuner clicker rows for migration 20260907220000 with the report's source strings: Honda CRF450R 2017 to 2020 and 2021 to 2024, Honda CRF250R 2022 to 2025, Suzuki RM-Z450 2018+ (fork comp 6 out; shock LSC and rebound in turns, replacing the quarter-turn placeholder), Yamaha YZ250F 2014+, Kawasaki KX450 2016 to 2018, Kawasaki KX250F 2006 to 2019 (15/15), Stark Varg MX 2023+. Each row's fork family is checked against the catalog before writing; a mismatch is a flag.
+- The report's own "not found" list, verbatim, as the next research targets.
+- The 4a source tally for the rutted hardpack rule's comment.
+
+## Rows without stock clickers after 20260907230000
 
 ### Beta (5)
 
@@ -107,12 +110,6 @@ Rows the next research pass should target. Kept current by hand after each catal
 - Kawasaki KX450 2016
 - Kawasaki KX450 2019
 - Kawasaki KX450 2021
-
-### Sherco (3)
-
-- Sherco SE 250 Factory 2019
-- Sherco SE 300 Factory 2019
-- Sherco SEF 300 Factory 2019
 
 ### Stark (1)
 
