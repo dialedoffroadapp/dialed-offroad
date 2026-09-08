@@ -11,6 +11,8 @@ import React, { useCallback, useRef, useState } from "react";
 import { LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { WhyCard } from "../../components/v3/WhyCard";
+import { whyTextFor } from "../../lib/whyCopy";
 import { DialedMeterCard, LockedTuneCard, TuneValuesCard } from "../../components/quiz/TuneCards";
 import { fetchModelSpecs } from "../../lib/modelSpecs";
 import { stockDeltaLine, type StockDelta } from "../../lib/stockCopy";
@@ -20,7 +22,7 @@ import { paywallHref } from "../../lib/paywall";
 import { deriveIsPro } from "../../lib/proUtils";
 import { hasPurchasedThisSession } from "../../lib/purchases";
 import { useQuiz } from "../../lib/quizContext";
-import { bikeDisplayName, defaultSetupTerrainLabel, logQuizEvent, nextQuizRoute, resetQuizForNextRun, type TuneLike } from "../../lib/quizOnboarding";
+import { bikeDisplayName, defaultSetupTerrainLabel, logQuizEvent, nextQuizRoute, resetQuizForNextRun, type TuneLike, engineClassForQuizSkill, terrainLabel } from "../../lib/quizOnboarding";
 import { autoCreateBaselineFromPendingTune } from "../../lib/autoBaseline";
 import { createNamedSetup, defaultSetupName } from "../../lib/bikeSetups";
 import { hasBaselineForBike } from "../../lib/freeTune";
@@ -249,33 +251,16 @@ export default function QuizRevealScreen() {
             <Text style={[styles.ctaText, displayFont("bold")]}>Start free trial to reveal</Text>
           </Pressable>
         ) : (
-          <View>
-            <Pressable
-              onPress={onWhy}
-              accessibilityRole="button"
-              accessibilityState={{ expanded: whyOpen }}
-              style={styles.why}
-            >
-              <Text style={styles.whyText}>Why this setup?</Text>
-              <Ionicons name={whyOpen ? "chevron-up" : "chevron-down"} size={16} color={Q.BLUE} />
-            </Pressable>
-            {whyOpen ? (
-              <Animated.View entering={FadeIn.duration(160)} style={styles.whyBox}>
-                {notes.length > 0 ? (
-                  notes.map((n, i) => (
-                    <View key={i} style={styles.whyRow}>
-                      <View style={styles.whyDot} />
-                      <Text style={styles.whyLine}>{n}</Text>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.whyLine}>
-                    Built from your weight, your riding, and what we know about this bike. Ride it, then tell us what it did.
-                  </Text>
-                )}
-              </Animated.View>
-            ) : null}
-          </View>
+          <WhyCard
+            text={whyTextFor({
+              notes,
+              weightLbs: answers.weightLbs ?? null,
+              riderClass: answers.skill ? engineClassForQuizSkill(answers.skill) : null,
+              terrain: answers.terrainMain ? terrainLabel(answers.discipline ?? "mx", answers.terrainMain) : null,
+            })}
+            colors={{ bg: Q.PANEL, border: Q.BORDER, text: Q.TEXT, muted: Q.STEEL, link: Q.BLUE }}
+            onExpand={onWhy}
+          />
         )}
 
         <View style={styles.meter}>

@@ -20,6 +20,8 @@ import { mostChangedCircuits, VersionGraph } from "../components/garage/VersionG
 import { Accent, Button, Card, Chip, Eyebrow, H1, Label, Row, Small } from "../components/v3/primitives";
 import { headingFont, interFont, useV3Fonts, V3 } from "../components/v3/theme";
 import { ADJUSTERS, whyForYou, type AdjusterKey } from "../lib/adjusterCopy";
+import { WhyCard } from "../components/v3/WhyCard";
+import { whyTextFor } from "../lib/whyCopy";
 import { saveBikeExtras } from "../lib/bikeExtras";
 import { createManualVersion, runningSetup, switchRunningSetup, type SetupWithVersions } from "../lib/bikeSetups";
 import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../lib/garageV3";
@@ -331,6 +333,17 @@ export default function SetupSheetScreen() {
             </View>
           </View>
         ))}
+
+        {v ? (
+          <WhyCard
+            text={whyTextFor({
+              notes: v.notes,
+              weightLbs: (v.context as any)?.rider?.weight_lbs ?? (v.recommended_settings as any)?.context?.rider_weight_lbs ?? null,
+              skill: (v.context as any)?.rider?.skill ?? null,
+              terrain: setup.terrain ?? v.terrain ?? null,
+            })}
+          />
+        ) : null}
 
         <Card style={{ paddingVertical: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }} onPress={() => router.push({ pathname: "/garage-bike", params: { bikeId: bike.id } } as never)} accessibilityLabel="Tires">
           <View style={styles.name}>
