@@ -69,7 +69,7 @@ export function GarageV3() {
             <Pressable
               onPress={() => {
                 const b = state.bikes[0];
-                void startGarageQuizFlow("regenerate", { bikeId: b.id, make: b.make ?? undefined, model: b.model ?? undefined, year: b.year ?? undefined }).then((first) => router.push(first as never));
+                void startGarageQuizFlow("regenerate", { bikeId: b.id, discipline: b.discipline ?? null, make: b.make ?? undefined, model: b.model ?? undefined, year: b.year ?? undefined }).then((first) => router.push(first as never));
               }}
               hitSlop={10}
               accessibilityRole="button"

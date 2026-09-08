@@ -26,6 +26,8 @@ export type GuestBike = {
    *  bikes.tire_system_front/rear at sign-up. Absent = unknown. */
   tireSystemFront?: TireSystem | null;
   tireSystemRear?: TireSystem | null;
+  /** The rider's answer to "What do you mostly ride this bike on?" (2026-09-08). */
+  discipline?: "mx" | "offroad" | null;
 };
 
 /** Same id shape garage.tsx mints (NOT a uuid — see asUuidOrNull callers). */
@@ -65,6 +67,8 @@ export type UpsertQuizBikeInput = {
   airFork?: boolean | null;
   /** What is in each tire; undefined = not asked (stays as it was). */
   tireSystems?: { front: TireSystem; rear: TireSystem } | null;
+  /** What the rider mostly rides it on; undefined = not asked (stays as it was). */
+  discipline?: "mx" | "offroad" | null;
 };
 
 /**
@@ -75,7 +79,8 @@ export type UpsertQuizBikeInput = {
  * Returns the bike id (local id or uuid).
  */
 export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string> {
-  const { make, model, year, previousId, airFork, tireSystems } = input;
+  const { make, model, year, previousId, airFork, tireSystems, discipline } = input;
+  const disc = discipline === "mx" || discipline === "offroad" ? { discipline } : {};
   const override = typeof airFork === "boolean" ? { air_fork_override: airFork } : {};
   // "unknown" is the column default: sent only when the rider chose, so a
   // project without migration 20260907180000 never sees the columns.
@@ -89,13 +94,13 @@ export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string
     if (previousId && isUuid(previousId)) {
       const { error } = await supabase
         .from("bikes")
-        .update({ make, model, year, model_id, ...override, ...tires })
+        .update({ make, model, year, model_id, ...override, ...tires, ...disc })
         .eq("id", previousId);
       if (!error) return previousId;
     }
     const { data, error } = await supabase
       .from("bikes")
-      .insert({ user_id: userId, make, model, year, nickname: null, model_id, ...override, ...tires })
+      .insert({ user_id: userId, make, model, year, nickname: null, model_id, ...override, ...tires, ...disc })
       .select("id")
       .single();
     if (!error && (data as any)?.id) return (data as any).id as string;
@@ -126,6 +131,7 @@ export async function upsertQuizBike(input: UpsertQuizBikeInput): Promise<string
     airFork: typeof airFork === "boolean" ? airFork : idx >= 0 ? bikes[idx].airFork ?? null : null,
     tireSystemFront: tireSystems ? tireSystems.front : idx >= 0 ? bikes[idx].tireSystemFront ?? null : null,
     tireSystemRear: tireSystems ? tireSystems.rear : idx >= 0 ? bikes[idx].tireSystemRear ?? null : null,
+    discipline: discipline === "mx" || discipline === "offroad" ? discipline : idx >= 0 ? bikes[idx].discipline ?? null : null,
   };
   if (idx >= 0) bikes[idx] = row;
   else bikes.push(row);

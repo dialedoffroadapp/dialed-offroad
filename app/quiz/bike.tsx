@@ -23,25 +23,10 @@ import { catalogHasModel, normalizeBikeStrings } from "../../lib/bikes";
 import { upsertQuizBike } from "../../lib/guestGarage";
 import { useOnboarding } from "../../lib/onboarding";
 import { useQuiz, useQuizStepView } from "../../lib/quizContext";
-import {
-  brandColor,
-  crossBrandModelHits,
-  filterModels,
-  groupModelsForDiscipline,
-  logQuizEvent,
-  disciplineFromBike,
-  modelListSubline,
-  nextQuizRoute,
-  QUIZ_MORE_BRANDS,
-  QUIZ_OLDER_YEARS,
-  QUIZ_PRIMARY_BRANDS,
-  QUIZ_YEAR_CHIPS,
-  searchBrands,
-  searchCatalog,
-} from "../../lib/quizOnboarding";
+import { brandColor, crossBrandModelHits, filterModels, groupModelsForDiscipline, logQuizEvent, disciplineFromBike, modelListSubline, nextQuizRoute, QUIZ_MORE_BRANDS, QUIZ_OLDER_YEARS, QUIZ_PRIMARY_BRANDS, QUIZ_YEAR_CHIPS, searchBrands, searchCatalog, DISCIPLINE_OPTIONS, type QuizDiscipline } from "../../lib/quizOnboarding";
 import { getOrCreateFunnelId, logEvent } from "../../lib/usage";
 
-type Phase = "brand" | "model" | "fork" | "tires";
+type Phase = "brand" | "model" | "fork" | "tires" | "discipline";
 
 const yearAnswerId = (model: string, year: number) => `${model}::${year}`;
 const splitYearAnswer = (id: string): { model: string; year: number } => {
@@ -74,6 +59,10 @@ export default function QuizBikeScreen() {
     rear: answers.tireSystemRear ?? "unknown",
   });
   const [tiresSaving, setTiresSaving] = useState(false);
+  // Add a bike's discipline question (2026-09-08): the platform only preselects
+  // the highlight; the rider taps Continue. Nothing is inferred.
+  const [disciplinePick, setDisciplinePick] = useState<QuizDiscipline | null>(null);
+  const [disciplineSaving, setDisciplineSaving] = useState(false);
 
   // Returning with a persisted brand lands on 2b with the model expanded.
   useEffect(() => {
@@ -147,6 +136,9 @@ export default function QuizBikeScreen() {
         model: mo,
         year: y,
         previousId: answers.bikeLocalId ?? null,
+        // Onboarding asked the discipline first (Q1): it lives on the bike.
+        // Add a bike asks it as its own step below, so nothing is assumed.
+        ...(answers.flow !== "add_bike" && answers.discipline ? { discipline: answers.discipline } : {}),
       });
       forkAskRef.current = null;
       bikeRef.current = { make: mk, model: mo, year: y, bikeId };
@@ -536,7 +528,9 @@ export default function QuizBikeScreen() {
         // never blocks: the default is unknown either way
       }
       setTiresSaving(false);
-      router.push(nextQuizRoute("bike", answers) as never);
+      // Add a bike: the discipline question comes next; other flows already have it.
+      if (answers.flow === "add_bike") setPhase("discipline");
+      else router.push(nextQuizRoute("bike", answers) as never);
     };
     return (
       <QuizShell
@@ -552,6 +546,61 @@ export default function QuizBikeScreen() {
         }
       >
         <TireSystemPicker front={tireSystems.front} rear={tireSystems.rear} onChange={setTireSystems} />
+      </QuizShell>
+    );
+  }
+
+  if (phase === "discipline") {
+    const b = bikeRef.current;
+    const preselect = disciplinePick ?? (disciplineFromBike(b?.make ?? answers.make, b?.model ?? answers.model) as QuizDiscipline | null);
+    const continueDiscipline = async () => {
+      if (disciplineSaving || !preselect) return;
+      setDisciplineSaving(true);
+      try {
+        await upsertQuizBike({
+          make: b?.make ?? answers.make ?? "",
+          model: b?.model ?? answers.model ?? "",
+          year: b?.year ?? answers.year ?? 0,
+          previousId: b?.bikeId ?? answers.bikeLocalId ?? null,
+          discipline: preselect,
+        });
+        // The answer becomes the quiz's discipline for this bike (the terrain tiles follow it).
+        await setAnswers(answers.discipline && answers.discipline !== preselect ? { discipline: preselect, terrainMain: undefined, terrainSecondary: undefined } : { discipline: preselect });
+        await logQuizEvent("quiz_step_answered", { step: "bike", answer: { discipline: preselect, preselected: disciplinePick === null } });
+      } catch {
+        toast.show("Couldn't save that. Check your signal and tap Continue again.", { kind: "error" });
+        setDisciplineSaving(false);
+        return;
+      }
+      setDisciplineSaving(false);
+      router.push(nextQuizRoute("bike", { ...answers, discipline: preselect }) as never);
+    };
+    return (
+      <QuizShell
+        step="bike"
+        title="What do you mostly ride this bike on?"
+        subtitle="The platform suggests one; you decide. It sets the terrain tiles and the tire numbers for this bike."
+        showBack
+        onBack={() => setPhase("tires")}
+        footerSlot={
+          <Pressable onPress={() => void continueDiscipline()} disabled={disciplineSaving || !preselect} accessibilityRole="button" style={[styles.tiresContinue, !preselect && { opacity: 0.5 }]}>
+            <Text style={styles.tiresContinueText}>Continue</Text>
+          </Pressable>
+        }
+      >
+        <View style={{ gap: 12 }}>
+          {DISCIPLINE_OPTIONS.map((opt) => (
+            <QuizChoiceCard
+              key={opt.id}
+              label={opt.label}
+              subtitle={opt.subtitle}
+              selected={preselect === opt.id}
+              dimmed={false}
+              onPress={() => setDisciplinePick(opt.id)}
+              testID={`quiz-bike-discipline-${opt.id}`}
+            />
+          ))}
+        </View>
       </QuizShell>
     );
   }

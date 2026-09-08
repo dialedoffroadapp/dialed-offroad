@@ -369,6 +369,7 @@ export default function SetupSheetScreen() {
                   year: bike.year ?? undefined,
                   setupId: setup.id,
                   terrain: setup.terrain ?? v?.terrain ?? null,
+                  discipline: bike.discipline ?? null,
                 }).then((first) => router.push(first as never))
               }
               style={{ marginTop: 10 }}

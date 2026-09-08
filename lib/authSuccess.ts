@@ -214,6 +214,7 @@ export async function completeAuthSuccess(params: AuthSuccessParams): Promise<vo
               model_id,
               ...(typeof guestAirFork === "boolean" ? { air_fork_override: guestAirFork } : {}),
               ...guestTires,
+              ...(guestBike?.discipline === "mx" || guestBike?.discipline === "offroad" ? { discipline: guestBike.discipline } : {}),
             })
             .select("id")
             .single();

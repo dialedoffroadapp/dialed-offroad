@@ -573,11 +573,15 @@ export async function startGarageQuizFlow(
     setupId?: string | null;
     /** Regenerate: the running setup's terrain, preselected on the tiles. */
     terrain?: string | null;
+    /** The bike's stored discipline (bikes.discipline); wins over the answers
+     *  store and the platform classifier. Add a bike never seeds one: the
+     *  quiz asks (2026-09-08, no discipline assumptions). */
+    discipline?: QuizDiscipline | null;
   }
 ): Promise<string> {
   const a = await readQuizAnswers();
   const now = new Date().toISOString();
-  const discipline = a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined;
+  const discipline = flow === "add_bike" ? undefined : p.discipline ?? a.discipline ?? disciplineFromBike(p.make, p.model) ?? undefined;
   const preselect = flow === "regenerate" ? terrainIdFor(discipline ?? "mx", p.terrain) : undefined;
   const terrainMain = flow === "new_setup" ? undefined : preselect ?? a.terrainMain;
   const terrainSecondary = flow === "new_setup" ? [] : (a.terrainSecondary ?? []).filter((t) => t !== terrainMain);
@@ -614,10 +618,11 @@ export async function startGarageQuizFlow(
  *  into a fresh baseline for a known garage bike (audit item 10). Reads the
  *  bike row so the discipline and engine input are never missing. */
 export async function startRegenerateQuizFlow(bikeId: string): Promise<string> {
-  let make: string | undefined, model: string | undefined, year: number | undefined, terrain: string | undefined;
+  let make: string | undefined, model: string | undefined, year: number | undefined, terrain: string | undefined, discipline: QuizDiscipline | null = null;
   try {
-    const { data } = await supabase.from("bikes").select("make, model, year").eq("id", bikeId).maybeSingle();
+    const { data } = await supabase.from("bikes").select("make, model, year, discipline").eq("id", bikeId).maybeSingle();
     make = (data as any)?.make ?? undefined;
+    discipline = (data as any)?.discipline === "mx" || (data as any)?.discipline === "offroad" ? (data as any).discipline : null;
     model = (data as any)?.model ?? undefined;
     year = typeof (data as any)?.year === "number" ? (data as any).year : undefined;
     // The default lineage's running terrain, preselected on the tiles.
@@ -633,7 +638,7 @@ export async function startRegenerateQuizFlow(bikeId: string): Promise<string> {
   } catch {
     // offline: the answers store may still carry the bike from the last run
   }
-  return startGarageQuizFlow("regenerate", { bikeId, make, model, year, terrain });
+  return startGarageQuizFlow("regenerate", { bikeId, make, model, year, terrain, discipline });
 }
 
 /** "Dunes" for the new-setup name ("Dunes setup"), from the main terrain tile. */

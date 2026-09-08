@@ -189,7 +189,7 @@ export function HomeV3() {
     if (!bike) return router.push("/(tabs)/garage" as never);
     // No running version yet: the Tune flow (relocated into Garage, 3.0) builds the baseline.
     if (!running) {
-      void startGarageQuizFlow("regenerate", { bikeId: bike.id, make: bike.make ?? undefined, model: bike.model ?? undefined, year: bike.year ?? undefined }).then((first) => router.push(first as never));
+      void startGarageQuizFlow("regenerate", { bikeId: bike.id, discipline: bike.discipline ?? null, make: bike.make ?? undefined, model: bike.model ?? undefined, year: bike.year ?? undefined }).then((first) => router.push(first as never));
       return;
     }
     if (needsSetOnBike) {

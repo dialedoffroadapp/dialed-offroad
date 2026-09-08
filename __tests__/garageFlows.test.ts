@@ -27,10 +27,10 @@ test("new_setup on a fresh install seeds the discipline from the bike and asks o
   expect(nextQuizRoute("reveal", a)).toBe("/garage-bike?bikeId=11111111-2222-4333-8444-555555555555");
 });
 
-test("add_bike keeps the rider's own discipline when present", async () => {
+test("add_bike seeds NO discipline: the bike screen asks it after the fork question (device pass finding 3, 2026-09-08)", async () => {
   await AsyncStorage.setItem("dialed_quiz_answers_v1", JSON.stringify({ version: 1, discipline: "mx", startedAt: "x", updatedAt: "x" }));
   await startGarageQuizFlow("add_bike", {});
-  expect((await readQuizAnswers()).discipline).toBe("mx");
+  expect((await readQuizAnswers()).discipline).toBeUndefined();
 });
 
 test("regenerate: terrain tiles first with the running setup's terrain preselected; missing facts after; next version on that setup", async () => {
