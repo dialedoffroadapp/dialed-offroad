@@ -10,6 +10,8 @@ export const CONFIG_DEFAULTS = {
   trial_days: 21,
   lifetime_price_usd: 129,
   lifetime_min_ride_days: 3,
+  /** Free refinements per bike before the refine gate fires (0 = always Pro). */
+  free_refinements_per_bike: 1,
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;

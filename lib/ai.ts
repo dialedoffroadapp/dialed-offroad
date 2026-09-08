@@ -105,6 +105,10 @@ export type ZeroTuneResult = {
   engine_source?: EngineSource;
   notes_source?: NotesSource;
   tire_psi_delta?: number;
+  /** Free refinements left on this bike AFTER this call is counted (refine
+   *  path only, 2026-09-07). Absent on baselines, conditions asks and when
+   *  the server could not read the allowance. */
+  refine_allowance_remaining?: number;
 };
 
 /* ------------------------------------------------------------------ */
@@ -260,6 +264,10 @@ export type Tune2Result = {
   spring_check?: SpringCheck;
   engine_source?: EngineSource;
   tire_psi_delta?: number;
+  /** Free refinements left on this bike AFTER this call is counted (refine
+   *  path only, 2026-09-07). Absent on baselines, conditions asks and when
+   *  the server could not read the allowance. */
+  refine_allowance_remaining?: number;
 };
 
 // Engine v2 adaptive step: what the last refinement did and how it went.
@@ -497,6 +505,9 @@ export async function generateTuneTwo(params: {
       // Contract v3: the setup lineage (captured) and the conditions stage.
       setup_id: isUuid(setupId) ? setupId : undefined,
       conditions: conditions ?? undefined,
+      // The garage bike (uuid only): the server's free-refinement allowance is
+      // counted per bike (2026-09-07). Guest and legacy ids stay off the wire.
+      ...(typeof bikeId === "string" && isUuid(bikeId) ? { bike_id: bikeId } : {}),
     },
   };
 
@@ -741,6 +752,7 @@ function normalizeResult(
     spring_check: result?.spring_check,
     engine_source: result?.engine_source,
     tire_psi_delta: typeof result?.tire_psi_delta === "number" ? result.tire_psi_delta : undefined,
+    refine_allowance_remaining: typeof result?.refine_allowance_remaining === "number" ? result.refine_allowance_remaining : undefined,
   };
 }
 
@@ -783,5 +795,6 @@ function normalizeTune2Result(result: Partial<Tune2Result>, bounds: SagBounds = 
     spring_check: result?.spring_check,
     engine_source: result?.engine_source,
     tire_psi_delta: typeof result?.tire_psi_delta === "number" ? result.tire_psi_delta : undefined,
+    refine_allowance_remaining: typeof result?.refine_allowance_remaining === "number" ? result.refine_allowance_remaining : undefined,
   };
 }

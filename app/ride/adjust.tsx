@@ -23,6 +23,8 @@ import { CIRCUIT_LABELS, directionLine, fetchAdjustResult, type AdjustChange } f
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { readOpenSession, rideEffective, setAbsolute, type RideSession } from "../../lib/rideDay";
 import { finishQuickRefine } from "../../lib/rideEnd";
+import { isEntitled, resolveEntitlement } from "../../lib/entitlement";
+import { showProGate } from "../../lib/proGate";
 import { useToast } from "../../components/Toast";
 import { qualifierLabel, symptomById, type SymptomLevel } from "../../lib/rideSymptoms";
 import { logEvent } from "../../lib/usage";
@@ -46,6 +48,8 @@ export default function RideAdjustScreen() {
   const [freeText, setFreeText] = useState<string>("");
   const [reasoning, setReasoning] = useState<string | null>(null);
   const [asked, setAsked] = useState(0);
+  // Server-counted free refinements left after this call (null = not said).
+  const [allowanceRemaining, setAllowanceRemaining] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -69,6 +73,7 @@ export default function RideAdjustScreen() {
         const list = res.changes;
         if (!alive) return;
         setReasoning(res.reasoning);
+        setAllowanceRemaining(res.allowanceRemaining);
         void logEvent("adjust_shown", { moto: Number(moto ?? 0), changes: list.length, symptom_id: symptom, qualifier: qualifier || null, circuits: list.map((c) => c.circuit), source: res.source, has_free_text: !!text });
         if (list.length === 0) {
           setError("The engine would leave it where it is for that one. Ride it again, or adjust by hand.");
@@ -79,6 +84,14 @@ export default function RideAdjustScreen() {
         }
       } catch (e: any) {
         if (!alive) return;
+        if (typeof e?.message === "string" && e.message.includes("no_trial")) {
+          // The server counted a refinement this device had not seen: the
+          // free one is used. The gate names the action; back to the sheet.
+          showProGate({ trigger: "refine", bikeId: open.bike.id, onDismiss: () => router.back() });
+          setError("Your free refinement is used. Refining again is Pro.");
+          setPhase("error");
+          return;
+        }
         setError(e?.message?.includes("Sign in") ? "Sign in to get suggestions." : "Suggestions need signal. Adjust by hand, or try again when you have bars.");
         setPhase("error");
       }
@@ -102,10 +115,20 @@ export default function RideAdjustScreen() {
     if (!s.quick) return router.replace("/ride/mode" as never);
     if (finishing) return;
     setFinishing(true);
-    void finishQuickRefine(s).then((r) => {
+    void finishQuickRefine(s).then(async (r) => {
       if (r.queued) toast.show("Saved on phone. Syncs when you have bars.", { kind: "info" });
       else if (r.version) toast.show(`Saved as v${r.version.version_number}`, { kind: "success" });
-      router.replace({ pathname: "/setup-sheet", params: { bikeId: s.bike.id, setupId: s.setupId ?? "default" } } as never);
+      // A free rider's completed refinement consumed the allowance the server
+      // reported; the sheet shows the one line when none is left.
+      let freeUsed = false;
+      if ((r.version || r.queued) && allowanceRemaining !== null) {
+        const entitled = isEntitled(await resolveEntitlement().catch(() => null));
+        if (!entitled) {
+          freeUsed = allowanceRemaining === 0;
+          void logEvent("free_refine_used", { bike_id: s.bike.id, setup_id: s.setupId, remaining: allowanceRemaining });
+        }
+      }
+      router.replace({ pathname: "/setup-sheet", params: { bikeId: s.bike.id, setupId: s.setupId ?? "default", ...(freeUsed ? { freeRefineUsed: "1" } : {}) } } as never);
     });
   };
   const chip = symptom ? symptomById(symptom) : null;

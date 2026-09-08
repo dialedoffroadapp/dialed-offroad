@@ -4,6 +4,7 @@
 // versions, and the entry to Setup History. Reached by tapping a bike in the
 // Garage; the old per-bike overflow actions (delete) live in the header menu.
 
+import { gateRefine } from "../lib/refineAllowance";
 import { showProGate } from "../lib/proGate";
 import { isEntitled, resolveEntitlement } from "../lib/entitlement";
 import { Ionicons } from "@expo/vector-icons";
@@ -143,10 +144,15 @@ export default function BikeHomeScreen() {
 
   const onRefine = () => {
     if (!current) return;
-    router.push({
-      pathname: "/tune-feedback",
-      params: buildRefineParams(current, bikeTitle),
-    } as any);
+    // One free refinement per bike (2026-09-07); the debrief's submit gate
+    // reads the same allowance.
+    void gateRefine(String(bikeId ?? "")).then((ok) => {
+      if (!ok) return;
+      router.push({
+        pathname: "/tune-feedback",
+        params: buildRefineParams(current, bikeTitle),
+      } as any);
+    });
   };
 
   const onNewTune = () => {

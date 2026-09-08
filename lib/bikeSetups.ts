@@ -152,11 +152,16 @@ export async function createManualVersion(params: {
   parentId?: string | null;
   /** Extra columns (e.g. ride_day_id once migration 20260904120000 lands). */
   extra?: Record<string, unknown>;
+  /** "manual" (ride-day settle, hand edits) or "refinement" (a quick refine's
+   *  Done: the engine-driven change set). The free-refinement allowance
+   *  counts "refinement" rows (2026-09-07). */
+  source?: "manual" | "refinement";
 }): Promise<SetupVersionRow> {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth?.user?.id;
   if (!userId) throw new Error("Not signed in");
-  const base: Record<string, unknown> = { user_id: userId, bike_id: params.bikeId, source: "manual" };
+  const source = params.source ?? "manual";
+  const base: Record<string, unknown> = { user_id: userId, bike_id: params.bikeId, source };
   for (const f of VALUE_FIELDS) base[f] = params.from ? (params.from as any)[f] ?? null : null;
   Object.assign(base, params.patch ?? {});
   base.parent_version_id = params.parentId === undefined ? params.from?.id ?? null : params.parentId;
@@ -169,7 +174,7 @@ export async function createManualVersion(params: {
   Object.assign(base, params.extra ?? {});
   const { data, error } = await supabase.from("setup_versions").insert(base).select("*").single();
   if (error) throw error;
-  void logEvent("version_created", { bike_id: params.bikeId, source: "manual", setup_id: params.setupId ?? null });
+  void logEvent("version_created", { bike_id: params.bikeId, source, setup_id: params.setupId ?? null });
   return data as unknown as SetupVersionRow;
 }
 

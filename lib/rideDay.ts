@@ -271,6 +271,10 @@ export async function settleSessionVersion(s: RideSession): Promise<SetupVersion
       sag_mm: eff.shock_sag,
     },
     terrain: primarySurface(s.conditions) ?? from?.terrain ?? null,
+    // A quick refine IS a refinement (engine-driven, one version at Done):
+    // source "refinement" so the free-refinement allowance and the meter
+    // count it. A ride day's settle stays "manual" (the settle rule).
+    ...(s.quick ? { source: "refinement" as const } : {}),
     note: s.quick
       ? `Refined after a ride: ${changed} ${changed === 1 ? "change" : "changes"}`
       : `Ride day settled${s.trackName ? ` at ${s.trackName}` : ""}: ${s.motos.length} ${s.motos.length === 1 ? "moto" : "motos"}, ${changed} ${changed === 1 ? "change" : "changes"}`,
