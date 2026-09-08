@@ -109,9 +109,15 @@ export default function SetupSheetScreen() {
   const forkSpring: RowDef = airFork
     ? { key: "fork_air", icon: "speedometer-outline", field: "fork_air_bar", digits: 2, step: 0.1, min: 5, max: 15 }
     : { key: "fork_spring", icon: "reload-outline", field: null, digits: 1, step: 0.1, min: 3, max: 7 };
+  // BFRC (second report, 2026-09-07): LSC and rebound in quarter turns, no HSC row.
+  const turnsShock = specs?.shock_adjust_unit === "turns";
+  const shockRows: RowDef[] = SHOCK_ROWS.filter((d) => d.key !== "shock_hsc" || specs?.has_shock_hsc !== false).map((d) =>
+    turnsShock && (d.key === "shock_lsc" || d.key === "shock_reb") ? { ...d, digits: 2, step: 0.25, min: 0, max: 5 } : d
+  );
+  const unitOf = (key: AdjusterKey, unit: string) => (turnsShock && (key === "shock_lsc" || key === "shock_reb") ? "turns" : unit);
   const rows: { title: string; icon: React.ComponentProps<typeof Ionicons>["name"]; defs: RowDef[] }[] = [
     { title: `Fork${specs?.fork_type ? ` · ${specs.fork_type}` : ""}`, icon: "arrow-down-outline", defs: [forkSpring, ...FORK_ROWS] },
-    { title: `Shock${specs?.shock_type ? ` · ${specs.shock_type}` : ""}`, icon: "arrow-up-outline", defs: SHOCK_ROWS },
+    { title: `Shock${specs?.shock_type ? ` · ${specs.shock_type}` : ""}`, icon: "arrow-up-outline", defs: shockRows },
   ];
   const bikeTitle = [bike.year, bike.make, bike.model].filter(Boolean).join(" ");
   const asc = [...setup.versions].reverse();
@@ -266,10 +272,10 @@ export default function SetupSheetScreen() {
                       </View>
                       <Text style={[styles.num, interFont(700), open && { color: V3.blue }]}>
                         {fmt(val, d.digits)}
-                        {meta.unit !== "clicks" || delta !== null ? (
+                        {unitOf(d.key, meta.unit) !== "clicks" || delta !== null ? (
                           <Text style={[styles.unit, interFont(400)]}>
-                            {meta.unit !== "clicks" ? ` ${meta.unit === "turns" ? "t" : meta.unit}` : ""}
-                            {delta !== null ? `${meta.unit !== "clicks" ? " · " : " "}${delta > 0 ? "+" : "−"}${fmt(Math.abs(delta), d.digits)}${!isRunning && d.key === "fork_air" ? " vs " + (runningS?.name ?? "running") : ""}` : ""}
+                            {unitOf(d.key, meta.unit) !== "clicks" ? ` ${unitOf(d.key, meta.unit) === "turns" ? "t" : unitOf(d.key, meta.unit)}` : ""}
+                            {delta !== null ? `${unitOf(d.key, meta.unit) !== "clicks" ? " · " : " "}${delta > 0 ? "+" : "−"}${fmt(Math.abs(delta), d.digits)}${!isRunning && d.key === "fork_air" ? " vs " + (runningS?.name ?? "running") : ""}` : ""}
                           </Text>
                         ) : null}
                       </Text>

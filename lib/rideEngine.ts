@@ -13,7 +13,7 @@
 import { generateTuneTwo, type TireInput, type Tune2Context } from "./ai";
 import { asTireSurface, type TirePlanOutput } from "./tirePlanCore";
 import type { CircuitKey } from "./currentSetup";
-import { retuneRules, todaysSetupRules, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
+import { retuneRules, todaysSetupRules, type RetuneContext, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
 import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
 import type { RideBike } from "./rideDay";
 import { diffChanges, snapshotToTune } from "./rideAdjust";
@@ -42,13 +42,15 @@ export type SuggestParams = {
   /** Retune tile (mid-day); absent = today's setup (morning). */
   tile?: Exclude<RetuneTile, "new_track"> | null;
   priorTweaks?: { circuit: CircuitKey; delta: number }[];
+  /** Track state, logged bottoming, skill and discipline for the retune rules (second report, 2026-09-07). */
+  retuneContext?: RetuneContext | null;
   /** What is in each tire and the saved pressures, for the engine's tire output. */
   tires?: TireInput | null;
 };
 
 function rulesFor(p: SuggestParams): RuleResult {
   return p.tile
-    ? retuneRules(p.tile, p.effective, p.hasAirFork, p.priorTweaks ?? [])
+    ? retuneRules(p.tile, p.effective, p.hasAirFork, p.priorTweaks ?? [], p.retuneContext ?? {})
     : todaysSetupRules(p.conditions, p.effective, p.setupName, p.hasAirFork);
 }
 

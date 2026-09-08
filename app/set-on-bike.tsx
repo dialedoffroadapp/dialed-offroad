@@ -36,7 +36,7 @@ const BEAT_MS = 1100;
 
 type CardDef = { key: AdjusterKey; value: string; unit: string; group: "Fork" | "Shock" };
 
-function cardsFor(v: SetupVersionRow, airFork: boolean): CardDef[] {
+function cardsFor(v: SetupVersionRow, airFork: boolean, specs: { shock_adjust_unit?: "clicks" | "turns" | null; has_shock_hsc?: boolean | null } | null): CardDef[] {
   const out: CardDef[] = [];
   for (const key of WALKTHROUGH_ORDER) {
     let value: string | null = null;
@@ -50,7 +50,11 @@ function cardsFor(v: SetupVersionRow, airFork: boolean): CardDef[] {
       : v.shock_reb_clicks;
     value = typeof raw === "number" ? formatSetting(raw, key) : null;
     if (value === null) continue;
-    out.push({ key, value, unit: ADJUSTERS[key].unit, group: key.startsWith("fork_") ? "Fork" : "Shock" });
+    // BFRC (second report, 2026-09-07): LSC and rebound are turns; no HSC card.
+    const turnsShock = specs?.shock_adjust_unit === "turns";
+    if (key === "shock_hsc" && specs?.has_shock_hsc === false) continue;
+    const unit = turnsShock && (key === "shock_lsc" || key === "shock_reb") ? "turns" : ADJUSTERS[key].unit;
+    out.push({ key, value, unit, group: key.startsWith("fork_") ? "Fork" : "Shock" });
   }
   return out;
 }
@@ -92,7 +96,7 @@ export default function SetOnBikeScreen() {
   }, [bikeId, setupId]);
 
   const airFork = data ? (effectiveAirFork(data.specs, data.bike.air_fork_override) ?? (version?.fork_air_bar !== null && version?.fork_air_bar !== undefined)) : false;
-  const cards = useMemo(() => (version ? cardsFor(version, airFork) : []), [version, airFork]);
+  const cards = useMemo(() => (version ? cardsFor(version, airFork, data?.specs ?? null) : []), [version, airFork, data?.specs]);
   const fork = forkFamilyFor(data?.specs?.fork_type ?? null, airFork);
   const shock = shockFamilyFor(data?.specs?.shock_type ?? null);
 
@@ -150,7 +154,7 @@ export default function SetOnBikeScreen() {
 
   const card = cards[i];
   const meta = ADJUSTERS[card.key];
-  const copy = locationCopy(card.key, card.value, card.unit, fork, shock);
+  const copy = locationCopy(card.key, card.value, card.unit, fork, shock, { make: data?.bike?.make ?? null, year: data?.bike?.year ?? null });
   const photo = adjusterPhoto(card.key, fork, shock);
   const familyLabel = card.group === "Fork" ? FORK_FAMILY_LABEL[fork] : data.specs?.shock_type ?? "your shock";
   const bikeTitle = [data.bike.year, data.bike.make, data.bike.model].filter(Boolean).join(" ");

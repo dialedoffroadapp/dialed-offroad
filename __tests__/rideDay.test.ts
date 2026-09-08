@@ -102,9 +102,12 @@ describe("conditions rule base (deterministic, v1 text)", () => {
   test("retune: just watered reverses the morning's chop softening (mockup 07: 14 → 13)", () => {
     const eff = { ...base, fork_comp: 14 };
     const r = retuneRules("watered", eff, true, [{ circuit: "fork_comp", delta: 1 }]);
-    expect(r.deltas).toEqual([expect.objectContaining({ circuit: "fork_comp", delta: -1 })]);
+    // Second report (2026-09-07, sub-task 4b): no take-back; compression stays soft on wet dirt.
+    expect(r.deltas).toEqual([]);
     expect(r.tirePsiDelta).toBe(-0.5);
-    expect(retuneRules("roughed", eff, true, []).deltas[0]).toEqual(expect.objectContaining({ circuit: "fork_comp", delta: -1 }));
+    // 4c: roughed softens fork comp for MX (the default); firmer only off-road, after bottoming, or for a pro.
+    expect(retuneRules("roughed", eff, true, []).deltas[0]).toEqual(expect.objectContaining({ circuit: "fork_comp", delta: 1 }));
+    expect(retuneRules("roughed", eff, true, [], { discipline: "offroad" }).deltas[0]).toEqual(expect.objectContaining({ circuit: "fork_comp", delta: -1 }));
     expect(retuneRules("heating", eff, true, []).deltas[0]).toEqual(expect.objectContaining({ circuit: "fork_air", delta: -0.1 }));
     expect(retuneRules("heating", eff, false, []).deltas[0]).toEqual(expect.objectContaining({ circuit: "fork_comp", delta: -1 }));
   });

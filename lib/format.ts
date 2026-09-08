@@ -36,8 +36,10 @@ export function formatValue(v: number | null | undefined, decimals: number): str
   return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
 }
 
-export function formatSetting(v: number | null | undefined, key: SettingKey): string {
-  return formatValue(v, displayDecimals(key));
+/** `unit` "turns" on a shock click circuit (BFRC) shows two decimals. */
+export function formatSetting(v: number | null | undefined, key: SettingKey, unit?: string | null): string {
+  const decimals = unit === "turns" && (key === "shock_lsc" || key === "shock_reb") ? 2 : displayDecimals(key);
+  return formatValue(v, decimals);
 }
 
 /** Round a value or delta to the circuit's step precision before STORING it

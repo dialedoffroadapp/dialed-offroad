@@ -899,7 +899,7 @@ export default function TuneScreen() {
 
       const GENERATE_TIMEOUT_MS = 30_000;
       const s: ZeroTuneResult = await Promise.race([
-        generateTune(input, sagBounds, specAirFork, modelSpecs?.stock_air_bar ?? null),
+        generateTune(input, sagBounds, specAirFork, modelSpecs?.stock_air_bar ?? null, { unit: modelSpecs?.shock_adjust_unit ?? null, hasHsc: modelSpecs?.has_shock_hsc ?? null }),
         new Promise<never>((_resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error("This is taking longer than expected. Try again")),

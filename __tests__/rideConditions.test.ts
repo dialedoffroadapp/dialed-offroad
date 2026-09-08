@@ -4,7 +4,7 @@ jest.mock("../lib/ai", () => ({ generateTuneTwo: jest.fn() }));
 
 /* eslint-disable import/first */
 import { generateTuneTwo } from "../lib/ai";
-import { tirePressureForToday, todaysSetupRules } from "../lib/conditionsRules";
+import { retuneRules, tirePressureForToday, todaysSetupRules } from "../lib/conditionsRules";
 import { conditionsComplete, conditionsSummary, normalizeConditions, primarySurface, surfacesOf } from "../lib/rideConditions";
 import { suggestForConditions } from "../lib/rideEngine";
 
@@ -66,4 +66,30 @@ test("engine-first: no free text → rules with engineSkipped; free text → eng
   const d = await suggestForConditions({ ...common, freeText: "harsh" });
   expect(d.source).toBe("rules");
   expect(d.engineSkipped).toBe("offline_or_error");
+});
+
+
+// Second report (2026-09-07, sub-task 4): the two flipped retune rules.
+test("watered: no take-back; choppy frees fork rebound and shock LSC; logged bottoming firms compression", () => {
+  const eff = { fork_comp: 13, fork_reb: 12, fork_air: 10.6, shock_lsc: 12, shock_hsc: 1.5, shock_reb: 14, shock_sag: 105 };
+  const prior = [{ circuit: "fork_comp" as const, delta: 1 }];
+  expect(retuneRules("watered", eff, true, prior, { state: "fresh" }).deltas).toEqual([]);
+  expect(retuneRules("watered", eff, true, prior, { state: "choppy" }).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_reb", 1], ["shock_lsc", 1]]);
+  expect(retuneRules("watered", eff, true, prior, { state: "choppy", bottoming: true }).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", -1]]);
+  expect(retuneRules("watered", eff, true, prior, {}).tirePsiDelta).toBe(-0.5);
+});
+
+test("roughed: MX softens fork compression; off-road, bottoming or a pro keep the firmer click", () => {
+  const eff = { fork_comp: 13, fork_reb: 12, fork_air: 10.6, shock_lsc: 12, shock_hsc: 1.5, shock_reb: 14, shock_sag: 105 };
+  expect(retuneRules("roughed", eff, true, [], { discipline: "mx" }).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", 1]]);
+  expect(retuneRules("roughed", eff, true, [], {}).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", 1]]);
+  expect(retuneRules("roughed", eff, true, [], { discipline: "offroad" }).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", -1]]);
+  expect(retuneRules("roughed", eff, true, [], { discipline: "mx", bottoming: true }).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", -1]]);
+  expect(retuneRules("roughed", eff, true, [], { discipline: "mx", skill: "pro" }).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_comp", -1]]);
+  expect(retuneRules("roughed", eff, true, [], { discipline: "mx", skill: "intermediate" }).note).toMatch(/Let the front follow/);
+});
+
+test("rutted hardpack keeps its faster-rebound click (research supports it)", () => {
+  const eff = { fork_comp: 13, fork_reb: 12, fork_air: 10.6, shock_lsc: 12, shock_hsc: 1.5, shock_reb: 14, shock_sag: 105 };
+  expect(todaysSetupRules({ surfaces: ["hardpack"], state: "rutted", temp: "mild", watered: false }, eff, "MX", true).deltas.map((d) => [d.circuit, d.delta])).toEqual([["fork_reb", 1]]);
 });

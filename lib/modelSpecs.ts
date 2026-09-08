@@ -44,6 +44,12 @@ export type ModelSpecs = {
   stock_shock_comp?: number | null;
   stock_shock_reb?: number | null;
   stock_shock_hsc_turns?: number | null;
+  /** Second report (migration 20260907210000): where the stock clickers came
+   *  from. "inferred" rows are never surfaced as stock. */
+  stock_clicker_tag?: "factory" | "tuner" | "inferred" | null;
+  /** BFRC: shock LSC and rebound are continuous turns; no high-speed adjuster. */
+  shock_adjust_unit?: "clicks" | "turns" | null;
+  has_shock_hsc?: boolean | null;
 };
 
 /** The fork type for THIS bike: the verified catalog flag when it is a
@@ -63,7 +69,8 @@ const SPEC_COLS =
   "fork_type, shock_type, has_air_fork, spec_verified";
 const PROVENANCE_COLS =
   ", sag_window_verified, sag_window_source, weight_range_verified, fork_type_ambiguous, fork_type_verified, stock_air_bar, " +
-  "stock_static_sag_mm, stock_fork_comp, stock_fork_reb, stock_shock_comp, stock_shock_reb, stock_shock_hsc_turns";
+  "stock_static_sag_mm, stock_fork_comp, stock_fork_reb, stock_shock_comp, stock_shock_reb, stock_shock_hsc_turns, " +
+  "stock_clicker_tag, shock_adjust_unit, has_shock_hsc";
 
 // Per-bike, per-session cache (bikes barely change mid-session; keyed by uuid or
 // the make|model|year identity for guest-local bikes).
