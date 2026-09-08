@@ -837,35 +837,28 @@ export type DrumrollFacts = {
   weightLbs?: number | null;
   terrainLabel?: string | null;
   skill?: QuizSkillId | null;
+  /** The engine's engine_source once it answered (llm swaps the last line). */
+  engineSource?: string | null;
 };
 
+/** The build stages the checklist tracks, in line order. lib/quizGenerate.ts
+ *  reports each one as it completes (device pass finding 5, 2026-09-08): a
+ *  line checks off when its stage reports back, never on a timer. */
+export const QUIZ_BUILD_STAGES = ["specs", "spring", "clickers", "conditions", "sag", "why"] as const;
+export type QuizBuildStage = (typeof QUIZ_BUILD_STAGES)[number];
+
+/** Six lines, each true for the deterministic engine. The two lines that
+ *  were not ("Cross-checked thousands of real rider tunes", "Balancing for
+ *  your pace") are gone. When the engine reports engine_source llm the last
+ *  line reads "Building your setup" (the why is not written by a rule). */
 export function drumrollChecklist(f: DrumrollFacts): string[] {
-  const fork = f.forkType?.trim();
-  const shock = f.shockType?.trim();
-  const specLine =
-    fork && shock
-      ? `Read your ${fork} fork and ${shock} shock specs`
-      : fork
-        ? `Read your ${fork} fork and shock specs`
-        : "Read your fork and shock baseline specs";
   const weightLine =
     typeof f.weightLbs === "number" && Number.isFinite(f.weightLbs)
-      ? `Set spring rates for ${Math.round(f.weightLbs)} lbs geared up`
-      : "Set spring rates for your geared-up weight";
-  const terrainLine = f.terrainLabel
-    ? `Dialing clickers for ${f.terrainLabel.toLowerCase()}...`
-    : "Dialing clickers for your terrain...";
-  const skillLine = f.skill
-    ? `Balancing for ${SKILL_PHRASE[f.skill]}`
-    : "Balancing for your pace";
-  return [
-    specLine,
-    weightLine,
-    "Cross-checked thousands of real rider tunes",
-    terrainLine,
-    skillLine,
-    "Setting your race sag target",
-  ];
+      ? `Checking spring rates for ${Math.round(f.weightLbs)} lb`
+      : "Checking spring rates for your weight";
+  const terrainLine = f.terrainLabel ? `Setting clickers for ${f.terrainLabel.toLowerCase()}` : "Setting clickers for your terrain";
+  const whyLine = f.engineSource === "llm" ? "Building your setup" : "Writing the why";
+  return ["Reading your fork and shock specs", weightLine, terrainLine, "Applying today's conditions", "Setting your race sag target", whyLine];
 }
 
 /* ---------------------------------- Meter -------------------------------- */

@@ -11,12 +11,7 @@ import { computeSpringCheck, effectiveAirFork, fetchModelSpecs, type ModelSpecs 
 import { writePendingTune } from "./onboarding";
 import { claimBaselineCredit, refundBaselineCredit, type ClaimResult } from "./freeTune";
 import { deriveIsPro } from "./proUtils";
-import {
-  bikeDisplayName,
-  buildQuizTuneInput,
-  terrainLabel,
-  type QuizAnswers,
-} from "./quizOnboarding";
+import { bikeDisplayName, buildQuizTuneInput, terrainLabel, type QuizAnswers, type QuizBuildStage } from "./quizOnboarding";
 import { platformSagBounds, resolveSagBounds } from "./sagBounds";
 import { supabase } from "./supabase";
 import { getOrCreateFunnelId, logEvent } from "./usage";
@@ -53,8 +48,17 @@ export async function generateQuizTune(params: {
   onboardingStep: string;
   onboardingActive: boolean;
   lastUpdatedAt: string;
+  /** Each build stage as it completes (the drumroll checks its line off then). */
+  onStage?: (stage: QuizBuildStage) => void;
 }): Promise<QuizGenerateResult> {
   const { answers, onboardingStep, onboardingActive, lastUpdatedAt } = params;
+  const report = (s: QuizBuildStage) => {
+    try {
+      params.onStage?.(s);
+    } catch {
+      // presentation only
+    }
+  };
   const input = buildQuizTuneInput(answers);
   if (!input) throw new QuizGenerateError("invalid_answers", "Some answers are missing.");
   // The edge's per-bike rule keys on the garage bike; guest-local ids stay off the wire.
@@ -98,9 +102,11 @@ export async function generateQuizTune(params: {
     });
     // Unmatched bikes take the platform manual's sag when the make and
     // platform are known (research 2026-09-07), else the consolidated default.
+    report("specs");
     const platformSag = platformSagBounds(input.make, input.model);
     const sagBounds = resolveSagBounds(modelSpecs, platformSag);
     const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
+    report("spring");
     // rider.profile_id (2026-09-08): the active rider profile, when the rider has one.
     const profileId = await activeRiderProfileId().catch(() => undefined);
     if (profileId) input.rider.profile_id = profileId;
@@ -133,6 +139,11 @@ export async function generateQuizTune(params: {
       }),
     ]).finally(() => {
       if (timer) clearTimeout(timer);
+      // The engine answers clickers, conditions, sag and the why together.
+      report("clickers");
+      report("conditions");
+      report("sag");
+      report("why");
     });
 
     if (springCheck) tune.spring_check = springCheck;
