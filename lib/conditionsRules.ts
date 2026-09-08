@@ -131,13 +131,27 @@ export function previewValue(v: number | null, delta: number, decimals: number):
 
 /* ------------------------- Tire pressure (today) ------------------------- */
 // Today's setup ALWAYS produces a tire pressure (2026-09-04): the rider's
-// saved value when present, else a rule-base starting point per PRIMARY
-// surface. DRAFT defaults for River's review; front / rear psi.
-export const TIRE_DEFAULT_PSI: Record<Surface, { front: number; rear: number; reason: string }> = {
-  hardpack: { front: 13.5, rear: 13, reason: "No tire pressure saved. Hardpack starting point: 13.5 front, 13 rear. Firm enough to keep the carcass from folding on slick corners." },
-  loam: { front: 13, rear: 12.5, reason: "No tire pressure saved. Loam starting point: 13 front, 12.5 rear. A touch lower for bite in the soft top layer." },
-  sand: { front: 12.5, rear: 12, reason: "No tire pressure saved. Sand starting point: 12.5 front, 12 rear. Lower pressure floats and hooks up." },
-  mud: { front: 12.5, rear: 12, reason: "No tire pressure saved. Mud starting point: 12.5 front, 12 rear. Lower pressure opens the knobs for grip." },
+// saved value when present, else a starting point per PRIMARY surface and
+// discipline. The defaults are Dunlop's published guidance (research
+// 2026-09-07, TIRE_PRESSURE_SOURCE); the watered-track half psi is our own
+// rule. Front / rear psi. Dunlop's desert and rock range (14 to 16) has no
+// surface of its own here; the off-road hardpack copy names it.
+export const TIRE_PRESSURE_SOURCE =
+  "Dunlop Motorcycle Tires, Geomax off-road tire pressure guidance (MX hardpack and intermediate 12 front / 12.5 rear, four-stroke front 13 to 14; soft 12 / 12; sand 11 to 12; mud 12 / 10; off-road 13 / 14; desert and rocks 14 to 16), read 2026-09-07";
+export type TireDiscipline = "mx" | "offroad";
+export const TIRE_DEFAULT_PSI: Record<TireDiscipline, Record<Surface, { front: number; rear: number; reason: string }>> = {
+  mx: {
+    hardpack: { front: 12, rear: 12.5, reason: "No tire pressure saved. Dunlop starting point for hardpack and intermediate MX: 12 front, 12.5 rear. Four-strokes often run 13 to 14 up front." },
+    loam: { front: 12, rear: 12, reason: "No tire pressure saved. Dunlop starting point for soft MX terrain: 12 front, 12 rear. A touch of give for bite in the top layer." },
+    sand: { front: 12, rear: 11.5, reason: "No tire pressure saved. Dunlop's sand range is 11 to 12. We start at 12 front, 11.5 rear so the tire floats and hooks up." },
+    mud: { front: 12, rear: 10, reason: "No tire pressure saved. Dunlop starting point for mud: 12 front, 10 rear. The low rear opens the knobs for grip." },
+  },
+  offroad: {
+    hardpack: { front: 13, rear: 14, reason: "No tire pressure saved. Dunlop starting point for off-road: 13 front, 14 rear. Rocks and desert run 14 to 16 to protect the tube." },
+    loam: { front: 13, rear: 14, reason: "No tire pressure saved. Dunlop starting point for off-road: 13 front, 14 rear. Drop a psi where the ground is soft and the rocks are gone." },
+    sand: { front: 12, rear: 12, reason: "No tire pressure saved. Dunlop's sand range is 11 to 12. We start at 12 front, 12 rear with a tube in mind." },
+    mud: { front: 12, rear: 10, reason: "No tire pressure saved. Dunlop starting point for mud: 12 front, 10 rear. The low rear opens the knobs for grip." },
+  },
 };
 
 export type TirePlan = {
@@ -152,7 +166,8 @@ export type TirePlan = {
 export function tirePressureForToday(
   c: RideConditions,
   saved: { front: number | null; rear: number | null },
-  psiDelta: number
+  psiDelta: number,
+  discipline: TireDiscipline | null = "mx"
 ): TirePlan {
   const hasSaved = typeof saved.front === "number" || typeof saved.rear === "number";
   if (hasSaved) {
@@ -162,6 +177,6 @@ export function tirePressureForToday(
   }
   const surface = primarySurface(c);
   if (!surface) return { front: null, rear: null, changed: false, reason: null, source: "none" };
-  const d = TIRE_DEFAULT_PSI[surface];
+  const d = TIRE_DEFAULT_PSI[discipline ?? "mx"][surface];
   return { front: d.front + psiDelta, rear: d.rear + psiDelta, changed: true, reason: d.reason, source: "default" };
 }

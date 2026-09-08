@@ -14,6 +14,7 @@ import { V3 } from "../../components/v3/theme";
 import { Cta, RideH1, RideScreenBg, RowSet, ValueRow } from "../../components/ride/ridePrimitives";
 import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
 import { previewValue, tirePressureForToday } from "../../lib/conditionsRules";
+import { disciplineFromBike } from "../../lib/discipline";
 import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { CIRCUIT_STEPS, snapshotFromVersion, type CircuitKey } from "../../lib/currentSetup";
@@ -103,7 +104,7 @@ export default function RideTodayScreen() {
   const tiresR = extras.tireRearPsi;
   // Always a tire pressure: saved value (plus any rule delta), else the
   // per-surface default, shown as a changed row with its reason.
-  const tires = tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta);
+  const tires = tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta, disciplineFromBike(draft.bike?.make, draft.bike?.model));
 
   const onStart = async () => {
     if (starting) return;

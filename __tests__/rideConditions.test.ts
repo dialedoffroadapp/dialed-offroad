@@ -30,9 +30,13 @@ test("tire pressure: saved value wins; else a per-surface default rendered as ch
   expect(tirePressureForToday({ surfaces: ["sand"], state: "fresh", temp: "mild", watered: false }, { front: 14, rear: 13 }, 0)).toMatchObject({ front: 14, rear: 13, changed: false, source: "saved" });
   expect(tirePressureForToday({ surfaces: ["sand"], state: "fresh", temp: "mild", watered: true }, { front: 14, rear: 13 }, -0.5)).toMatchObject({ front: 13.5, rear: 12.5, changed: true, source: "saved" });
   const d = tirePressureForToday({ surfaces: ["sand", "mud"], state: "fresh", temp: "mild", watered: false }, { front: null, rear: null }, 0);
-  expect(d).toMatchObject({ front: 12.5, rear: 12, changed: true, source: "default" });
-  expect(d.reason).toMatch(/Sand starting point/);
+  expect(d).toMatchObject({ front: 12, rear: 11.5, changed: true, source: "default" });
+  expect(d.reason).toMatch(/Dunlop's sand range/);
   expect(tirePressureForToday({ surfaces: [], state: null, temp: null, watered: null }, { front: null, rear: null }, 0).source).toBe("none");
+  // Off-road bikes start from Dunlop's off-road numbers; mud is the same both ways.
+  expect(tirePressureForToday({ surfaces: ["hardpack"], state: "fresh", temp: "mild", watered: false }, { front: null, rear: null }, 0, "offroad")).toMatchObject({ front: 13, rear: 14, source: "default" });
+  expect(tirePressureForToday({ surfaces: ["mud"], state: "fresh", temp: "mild", watered: false }, { front: null, rear: null }, 0, "offroad")).toMatchObject({ front: 12, rear: 10 });
+  expect(tirePressureForToday({ surfaces: ["hardpack"], state: "fresh", temp: "mild", watered: false }, { front: null, rear: null }, 0, null)).toMatchObject({ front: 12, rear: 12.5 });
 });
 
 test("engine-first: no free text → rules with engineSkipped; free text → engine; engine no-change → rules", async () => {
