@@ -64,7 +64,9 @@ export function coreTodaysSetupRules(c: CoreConditions, base: CoreSnapshot, setu
     push({ circuit: "fork_comp", delta: +1, reason: "Choppy hardpack: a click softer keeps the fork moving over the chop." });
     themes.push("dirt");
   } else if (surface === "hardpack" && c.state === "rutted") {
-    // Second report (2026-09-07, sub-task 4a): supported, no change.
+    // Second report (2026-09-07, sub-task 4a): supported, no change. Tally:
+    // faster rebound 4 (Keefer Inc, PulpMX, MXA, Vital MX) to slower plus
+    // more LSC 2 (Teknik, MXA rut-hold-up note).
     push({ circuit: "fork_reb", delta: +1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts." });
     themes.push("dirt");
   } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
@@ -137,7 +139,9 @@ export function coreRetuneRules(
   } else if (tile === "roughed") {
     // Second report (2026-09-07, sub-task 4c, flipped): MX softens fork
     // compression a click as the track roughs up; the old firmer click stays
-    // only off-road, after logged bottoming, or for an A/pro rider.
+    // only off-road, after logged bottoming, or for an A/pro rider. Tally:
+    // soften 4 (Vital MX, Keefer Inc, PulpMX, Click Suspension) to firm 3
+    // (Teknik, MXA, Troll Training), the closest of the three.
     title = "Retuned for a rough track";
     const firmer = ctx.discipline === "offroad" || ctx.bottoming === true || ctx.skill === "pro";
     if (has(effective, "fork_comp")) {

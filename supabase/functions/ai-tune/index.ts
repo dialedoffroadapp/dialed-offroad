@@ -90,6 +90,10 @@ type ZeroInput = {
       shock_adjust_unit?: "clicks" | "turns";
       has_shock_hsc?: boolean;
       shock_turns_max?: number;
+      // The catalog's stock turns for a turns shock (RM-Z450: MXA, tuner):
+      // the baseline anchors on them instead of a quarter turn per click.
+      shock_stock_lsc_turns?: number;
+      shock_stock_reb_turns?: number;
     };
 
     // ----------------- Tune Two specific fields (optional) -----------------
@@ -674,13 +678,23 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline, tuning: En
   lscBase += steps * tuning.skill_offset_comp_per_step;
   rebBase += steps * tuning.skill_offset_reb_per_step;
 
-  // BFRC (turns shock): LSC and rebound in quarter turns, one click reads as
-  // a quarter turn (the HSC convention), no HSC. Anchoring on the RM-Z450's
-  // stock turns waits for the report's tuner values (flagged).
+  // BFRC (turns shock): LSC and rebound in quarter turns, no HSC. When the
+  // catalog sends the row's stock turns (RM-Z450 1.25 / 2, MXA), the
+  // baseline is the stock value plus the formula's move from its own click
+  // base at a quarter turn per click (follow-up, 2026-09-08). Without stock
+  // turns the older placeholder stands: a quarter turn per formula click.
   if (z.guardrails?.shock_adjust_unit === "turns") {
     const tmax = z.guardrails?.shock_turns_max ?? 4;
-    const lsc_clicks = quarterTurns(clamp(lscBase * 0.25, 0.25, tmax));
-    const reb_clicks = quarterTurns(clamp(rebBase * 0.25, 0.25, tmax));
+    const lscClickBase = discipline === "mx" ? 12 : discipline === "enduro" ? 14 : 13;
+    const rebClickBase = discipline === "mx" ? 14 : discipline === "enduro" ? 16 : 15;
+    const stockLsc = z.guardrails?.shock_stock_lsc_turns;
+    const stockReb = z.guardrails?.shock_stock_reb_turns;
+    const lsc_clicks = typeof stockLsc === "number" && Number.isFinite(stockLsc)
+      ? quarterTurns(clamp(stockLsc + (lscBase - lscClickBase) * 0.25, 0, tmax))
+      : quarterTurns(clamp(lscBase * 0.25, 0.25, tmax));
+    const reb_clicks = typeof stockReb === "number" && Number.isFinite(stockReb)
+      ? quarterTurns(clamp(stockReb + (rebBase - rebClickBase) * 0.25, 0, tmax))
+      : quarterTurns(clamp(rebBase * 0.25, 0.25, tmax));
     return { lsc_clicks, reb_clicks, hsc_turns: z.guardrails?.has_shock_hsc === false ? null : Number(clampFloat(hscBaseTurns, 0.75, 2.0).toFixed(2)) };
   }
 
@@ -1929,8 +1943,9 @@ export function conditionsRuleDeltas(
     // Second report (2026-09-07, sub-task 4b, adopted): hold compression soft
     // (no take-back); if the track is choppy, fork rebound +1 out and shock
     // LSC +1 out; firm compression only when the rider reported bottoming.
-    // Tally: the report's sources favor softening on a wet, choppy track
-    // (the earlier take-back rule stood alone). prior_tweaks is ignored.
+    // Tally: keep it soft plus faster rebound 4 (Vital MX end-of-day thread,
+    // Keefer Inc, PulpMX, Click Suspension) to firm back up 2 (Teknik, some
+    // MXA hold-up advice). prior_tweaks is ignored.
     if (tile === "watered") {
       void prior;
       if (c.retune.bottoming === true) {
@@ -1943,7 +1958,10 @@ export function conditionsRuleDeltas(
     } else if (tile === "roughed") {
       // Second report (2026-09-07, sub-task 4c, flipped): MX softens fork
       // compression a click as the track roughs up; the old firmer click stays
-      // only off-road, after logged bottoming, or for an A/pro rider.
+      // only off-road, after logged bottoming, or for an A/pro rider. Tally:
+      // soften 4 (Vital MX rough-track threads, Keefer Inc, PulpMX, Click
+      // Suspension) to firm 3 (Teknik, MXA hold-up advice, Troll Training),
+      // the closest of the three.
       const firmer = c.retune.discipline === "offroad" || c.retune.bottoming === true || c.retune.skill === "pro";
       if (has("fork_comp")) {
         if (firmer) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Braking and acceleration bumps forming: a click firmer fork comp holds it up. Rebound stays.", label: "roughed up" });
@@ -1965,9 +1983,11 @@ export function conditionsRuleDeltas(
     push({ circuit: "fork_comp", delta: 1, reason: "Choppy hardpack: a click softer keeps the fork moving over the chop.", label: "choppy hardpack" });
   } else if (surface === "hardpack" && c.state === "rutted") {
     // Second report (2026-09-07, sub-task 4a): the research SUPPORTS this rule
-    // (fork rebound one click out on rutted hardpack); no change. The first
-    // report read ruts as wanting more rebound damping; the second's tally
-    // favors the faster rebound. The counts live in the report file.
+    // (fork rebound one click out on rutted hardpack); no change. Tally:
+    // faster rebound 4 (Keefer Inc, PulpMX, MXA hardpack traction guidance,
+    // Vital MX rider threads) to slower rebound plus more LSC 2 (Teknik
+    // offroad guide, MXA rut-hold-up note). It flips only when the fork packs
+    // or deflects out of the rut: then add shock LSC, not slower rebound.
     push({ circuit: "fork_reb", delta: 1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts.", label: "rutted hardpack" });
   } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
     const label = surface === "sand" ? "sand" : "deep loam";

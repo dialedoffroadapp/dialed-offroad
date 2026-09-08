@@ -126,3 +126,21 @@ Deno.test("HSC weight cap: the turn-scale weight term stops at the quarter-turn 
   const half = formulaBaseline(base({ rider: rider({ weight_lbs: 260 }) }) as any, { ...ENGINE_TUNING_DEFAULTS, weight_slope_cap_hsc_quarter_turns: 0.5 }).partial.shock!;
   assertEquals(half.hsc_turns, 1.25);
 });
+
+Deno.test("BFRC anchor (follow-up): with the catalog's stock turns the baseline is stock plus the formula's move at a quarter turn per click", () => {
+  // RM-Z450 (MXA): LSC 1.25 turns, rebound 2 turns. A 185 lb intermediate on
+  // MX sits on the formula's click base, so the baseline IS the stock turns.
+  const anchored = { ...BFRC, shock_stock_lsc_turns: 1.25, shock_stock_reb_turns: 2 };
+  const mid = formulaBaseline(base({ rider: rider({ weight_lbs: 185 }), guardrails: anchored }) as any).partial.shock!;
+  assertEquals(mid.lsc_clicks, 1.25);
+  assertEquals(mid.reb_clicks, 2);
+  assertEquals(mid.hsc_turns, null);
+  // A pro (class A, -4 clicks of LSC and -2 of rebound) reads a turn firmer on LSC and half a turn on rebound.
+  const pro = formulaBaseline(base({ rider: rider({ weight_lbs: 185, skill: "pro" }), guardrails: anchored }) as any).partial.shock!;
+  assertEquals(pro.lsc_clicks, 0.25);
+  assertEquals(pro.reb_clicks, 1.5);
+  // Without stock turns the placeholder stands (a quarter turn per formula click).
+  const placeholder = formulaBaseline(base({ rider: rider({ weight_lbs: 185 }), guardrails: BFRC }) as any).partial.shock!;
+  assertEquals(placeholder.lsc_clicks, 3);
+  assertEquals(placeholder.reb_clicks, 3.5);
+});
