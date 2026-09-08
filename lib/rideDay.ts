@@ -70,7 +70,7 @@ export type RidePending = PendingAdjust & {
   afterMoto: number;
 };
 
-export type RideBike = { id: string; make: string | null; model: string | null; year: number | null; nickname: string | null; model_id: string | null };
+export type RideBike = { id: string; make: string | null; model: string | null; year: number | null; nickname: string | null; model_id: string | null; discipline?: "mx" | "offroad" | null };
 
 export type RideDraft = {
   bike: RideBike | null;

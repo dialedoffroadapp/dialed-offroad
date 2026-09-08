@@ -29,6 +29,7 @@ const cases: { name: string; input: Parameters<typeof tirePlan>[1]; front: numbe
   { name: "offroad mud", input: { discipline: "offroad", surface: "mud" }, front: 12, rear: 10, source: "dunlop_default" },
   { name: "no surface: hardpack, and the reason says so", input: { discipline: "mx" }, front: 12, rear: 12.5, source: "dunlop_default", reason: /^No surface given/ },
   { name: "no discipline: mx", input: { surface: "sand" }, front: 12, rear: 11.5, source: "dunlop_default" },
+  { name: "device pass finding 2: a TX 300 on singletrack (off-road, no surface word) is 13 / 14, not the MX 12 / 12.5", input: { discipline: "offroad", surface: null }, front: 13, rear: 14, source: "dunlop_default" },
   { name: "watered: half a psi out of the default", input: { discipline: "mx", surface: "hardpack", watered: true }, front: 11.5, rear: 12, source: "conditions_adjusted", reason: /Watered track: 0\.5 psi out/ },
   { name: "rider-saved wins over the default", input: { discipline: "mx", surface: "sand", savedFront: 14, savedRear: 13 }, front: 14, rear: 13, source: "rider_saved", reason: /^Your saved pressure/ },
   { name: "rider-saved, conditions still adjust", input: { discipline: "mx", surface: "sand", savedFront: 14, savedRear: 13, watered: true }, front: 13.5, rear: 12.5, source: "conditions_adjusted" },

@@ -12,6 +12,7 @@
 // contract change (engine + tests + tuneNotes), owed to River first.
 import { generateTuneTwo, type TireInput, type Tune2Context } from "./ai";
 import { asTireSurface, type TirePlanOutput } from "./tirePlanCore";
+import { disciplineForBike } from "./discipline";
 import type { CircuitKey } from "./currentSetup";
 import { retuneRules, todaysSetupRules, type RetuneContext, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
 import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
@@ -69,6 +70,9 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
       track: p.trackName ?? undefined,
       temp_f: tempBandToF(p.conditions.temp),
       wants_air_fork: p.hasAirFork,
+      // The bike's discipline rides to the engine (finding 2: without it the
+      // tire table fell to MX for a TX 300 on singletrack).
+      rider: { discipline: disciplineForBike(p.bike) ?? undefined },
       ...(p.tires ? { tires: p.tires } : {}),
     };
     const result = await generateTuneTwo({
@@ -92,7 +96,7 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
             rear: typeof result.tire_rear_psi === "number" ? result.tire_rear_psi : null,
             reason: result.tire_reason,
             source: result.tire_source,
-            discipline: "mx",
+            discipline: disciplineForBike(p.bike) ?? "mx",
             surface: asTireSurface(surfaces[0]) ?? "hardpack",
             delta: rules.tirePsiDelta,
             systemFront: p.tires?.system_front ?? "unknown",

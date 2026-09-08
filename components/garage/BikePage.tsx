@@ -24,7 +24,8 @@ import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../.
 import { shortDate } from "../../lib/homeCopy";
 import { gateIfLocked, showProGate } from "../../lib/proGate";
 import { tireCell } from "../../lib/tirePlanCore";
-import { clearTirePlan } from "../../lib/tirePlanStore";
+import { clearTirePlan, garageTirePlan } from "../../lib/tirePlanStore";
+import { disciplineForBike } from "../../lib/discipline";
 import { logEvent } from "../../lib/usage";
 import { upsertQuizBike } from "../../lib/guestGarage";
 import { shouldShowAirForkBanner } from "../../lib/modelSpecs";
@@ -48,6 +49,8 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
   // Air-or-coil banner (2026-09-08): dismiss is this visit only.
   const [forkBannerDismissed, setForkBannerDismissed] = useState(false);
   const [forkBannerBusy, setForkBannerBusy] = useState(false);
+  // The Tires sheet shows the tune's numbers (finding 2): computed when it opens.
+  const [tirePlanShown, setTirePlanShown] = useState<{ front: number | null; rear: number | null; subtitle: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -99,6 +102,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
     const run = running?.running ?? null;
     const first = await startGarageQuizFlow("new_setup", {
       bikeId: bike.id,
+      discipline: bike.discipline ?? null,
       make: bike.make ?? undefined,
       model: bike.model ?? undefined,
       year: bike.year ?? undefined,
@@ -192,7 +196,13 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
 
         <View style={styles.tiles}>
           <Tile label="Engine hrs" value={hoursValue} sub={extras.hours !== null ? `oil at ${trim(nextOilAt(extras))}` : "tap to set"} onPress={() => setHoursOpen(true)} muted={extras.hours === null} />
-          <Tile label="Tires" value={tiresValue} sub={extras.tireFrontPsi !== null || extras.tireSystemFront === "mousse" ? "psi front / rear" : "tap to set"} onPress={() => void gateIfLocked({ trigger: "tire_pressure", bikeId: bike.id, hasBaseline: versions.length > 0 }).then((ok) => ok && setTiresOpen(true))} muted={extras.tireFrontPsi === null && extras.tireSystemFront !== "mousse"} />
+          <Tile label="Tires" value={tiresValue} sub={extras.tireFrontPsi !== null || extras.tireSystemFront === "mousse" ? "psi front / rear" : "tap to set"} onPress={() => void gateIfLocked({ trigger: "tire_pressure", bikeId: bike.id, hasBaseline: versions.length > 0 }).then(async (ok) => {
+            if (!ok) return;
+            const running = runningSetup(setups);
+            const plan = await garageTirePlan({ bikeId: bike.id, discipline: disciplineForBike(bike), terrain: running?.running?.terrain ?? running?.terrain ?? null, setupName: running?.name ?? null, systems: { front: extras.tireSystemFront, rear: extras.tireSystemRear }, saved: { front: extras.tireFrontPsi, rear: extras.tireRearPsi } });
+            setTirePlanShown(plan);
+            setTiresOpen(true);
+          })} muted={extras.tireFrontPsi === null && extras.tireSystemFront !== "mousse"} />
         </View>
 
         <Label style={{ marginBottom: 8 }}>Setups</Label>
@@ -285,6 +295,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
         rear={extras.tireRearPsi}
         systemFront={extras.tireSystemFront}
         systemRear={extras.tireSystemRear}
+        plan={tirePlanShown}
         onSave={async (p) => {
           setTiresOpen(false);
           const next = await saveBikeExtras(bike.id, { tireFrontPsi: p.front, tireRearPsi: p.rear, tireSystemFront: p.systemFront, tireSystemRear: p.systemRear });

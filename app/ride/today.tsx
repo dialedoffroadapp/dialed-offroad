@@ -16,7 +16,7 @@ import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeE
 import { planToTirePlan, previewValue, tirePressureForToday } from "../../lib/conditionsRules";
 import { tireCell } from "../../lib/tirePlanCore";
 import { rememberTirePlan } from "../../lib/tirePlanStore";
-import { disciplineFromBike } from "../../lib/discipline";
+import { disciplineForBike } from "../../lib/discipline";
 import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { CIRCUIT_STEPS, snapshotFromVersion, type CircuitKey } from "../../lib/currentSetup";
@@ -110,7 +110,7 @@ export default function RideTodayScreen() {
   // Engine tire fields when it answered (2026-09-07), else the same table offline.
   const tires = rules.tires
     ? planToTirePlan(rules.tires, { front: tiresF, rear: tiresR })
-    : tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta, disciplineFromBike(draft.bike?.make, draft.bike?.model), { front: extras.tireSystemFront, rear: extras.tireSystemRear });
+    : tirePressureForToday(draft.conditions, { front: tiresF, rear: tiresR }, rules.tirePsiDelta, disciplineForBike(draft.bike), { front: extras.tireSystemFront, rear: extras.tireSystemRear });
   if (tires.plan && draft.bike) void rememberTirePlan(draft.bike.id, tires.plan, rules.tires ? "engine" : "rules");
 
   const onStart = async () => {

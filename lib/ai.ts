@@ -199,6 +199,10 @@ export type Tune2Context = {
     skill?: "beginner" | "intermediate" | "pro";
     style?: "short_motos" | "long_enduro";
     goals?: string[];
+    /** The bike's discipline (bikes.discipline, else the classifier): the
+     *  engine's tire table and, on the contract branch, its math read it.
+     *  Dropping it was the 12 / 12.5 on a TX 300 bug (finding 2). */
+    discipline?: "mx" | "offroad";
   };
   wants_air_fork?: boolean;
   /** What is in each tire and the rider's saved pressures (engine tire
@@ -362,6 +366,7 @@ export async function generateTuneTwo(params: {
         weight_lbs: isFiniteNumber(context?.rider?.weight_lbs)
           ? context?.rider?.weight_lbs
           : undefined,
+        discipline: context?.rider?.discipline === "mx" || context?.rider?.discipline === "offroad" ? context.rider.discipline : undefined,
         skill: context?.rider?.skill ?? "intermediate",
         style: context?.rider?.style ?? "short_motos",
         goals: (context?.rider?.goals || []).slice(0, 8),

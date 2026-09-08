@@ -10,7 +10,7 @@ import { BottomSheet } from "../v3/BottomSheet";
 import { Button, Chip, Label, Small, Sub } from "../v3/primitives";
 import { headingFont, interFont, V3 } from "../v3/theme";
 import { BIKE_BRANDS, BIKE_CATALOG } from "../../constants/bike-catalog";
-import type { TireSystem } from "../../lib/tirePlanCore";
+import { TIRE_SYSTEM_LABEL, type TireSystem } from "../../lib/tirePlanCore";
 import { TireSystemPicker } from "./TireSystemPicker";
 
 export function DecimalStepper({
@@ -102,6 +102,12 @@ export function HoursSheet({
   );
 }
 
+/** The Tires sheet SHOWS the tune's pressures (finding 2, 2026-09-08): the
+ *  engine's numbers for the running setup pre-fill the steppers with a
+ *  subtitle naming the tune and the conditions; the rider's saved pressure,
+ *  when there is one, shows instead and stays rider_saved on the next call.
+ *  The tube system reads as a chip per end with an Edit link; "Not sure"
+ *  reads "Unknown, tap to set". The picker is never the default view. */
 export function TiresSheet({
   open,
   onClose,
@@ -109,6 +115,7 @@ export function TiresSheet({
   rear,
   systemFront = "unknown",
   systemRear = "unknown",
+  plan,
   onSave,
 }: {
   open: boolean;
@@ -117,14 +124,24 @@ export function TiresSheet({
   rear: number | null;
   systemFront?: TireSystem;
   systemRear?: TireSystem;
+  /** The tune's tire numbers for the running setup and the line that says where they came from. */
+  plan?: { front: number | null; rear: number | null; subtitle: string } | null;
   onSave: (p: { front: number | null; rear: number | null; systemFront: TireSystem; systemRear: TireSystem }) => void;
 }) {
-  const [f, setF] = useState(front ?? 12);
-  const [r, setR] = useState(rear ?? 12.5);
+  const hasSaved = typeof front === "number" || typeof rear === "number";
+  const [f, setF] = useState(front ?? plan?.front ?? 12);
+  const [r, setR] = useState(rear ?? plan?.rear ?? 12);
   const [sys, setSys] = useState<{ front: TireSystem; rear: TireSystem }>({ front: systemFront, rear: systemRear });
+  const [editSystems, setEditSystems] = useState(false);
+  const subtitle = hasSaved ? "Your saved pressure. The engine keeps it on the next tune." : plan?.subtitle ?? "Cold pressures, before the first moto.";
+  const chip = (end: "front" | "rear", s: TireSystem) => (
+    <View style={styles.sysChip}>
+      <Small style={{ color: V3.white }}>{end === "front" ? "Front" : "Rear"}: {s === "unknown" ? "Unknown, tap to set" : TIRE_SYSTEM_LABEL[s]}</Small>
+    </View>
+  );
   return (
     <BottomSheet open={open} onClose={onClose} title="Tires">
-      <Sub style={{ marginTop: 0, marginBottom: 14 }}>Cold pressures, before the first moto.</Sub>
+      <Sub style={{ marginTop: 0, marginBottom: 14 }} testID="tires-subtitle">{subtitle}</Sub>
       {sys.front === "mousse" ? <Small style={{ marginBottom: 8 }}>Front is a mousse: no pressure to set.</Small> : (
         <DecimalStepper value={f} onChange={setF} step={0.5} min={2} max={30} unit="psi" label="Front" />
       )}
@@ -133,8 +150,20 @@ export function TiresSheet({
           <DecimalStepper value={r} onChange={setR} step={0.5} min={2} max={30} unit="psi" label="Rear" />
         )}
       </View>
-      <Label style={{ marginTop: 18, marginBottom: 8 }}>What is in them</Label>
-      <TireSystemPicker front={sys.front} rear={sys.rear} onChange={setSys} colors={{ text: V3.white, muted: V3.steel, border: V3.line, on: V3.white, onText: V3.carbon }} />
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 18, marginBottom: 8 }}>
+        <Label style={{ marginBottom: 0 }}>What is in them</Label>
+        <Pressable onPress={() => setEditSystems((e) => !e)} accessibilityRole="button" hitSlop={8} testID="tires-edit-systems">
+          <Small style={{ color: V3.blue }}>{editSystems ? "Done" : "Edit"}</Small>
+        </Pressable>
+      </View>
+      {editSystems ? (
+        <TireSystemPicker front={sys.front} rear={sys.rear} onChange={setSys} colors={{ text: V3.white, muted: V3.steel, border: V3.line, on: V3.white, onText: V3.carbon }} />
+      ) : (
+        <Pressable onPress={() => setEditSystems(true)} accessibilityRole="button" style={{ flexDirection: "row", gap: 8 }}>
+          {chip("front", sys.front)}
+          {chip("rear", sys.rear)}
+        </Pressable>
+      )}
       <Button
         label="Save"
         style={{ marginTop: 18 }}
@@ -299,6 +328,7 @@ export function FixNumberSheet({
 }
 
 const styles = StyleSheet.create({
+  sysChip: { borderWidth: 1, borderColor: V3.line, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: V3.carbon, borderRadius: 14, padding: 8 },
   stepBtn: { width: 56, height: 56, borderRadius: 28, backgroundColor: V3.panel2, alignItems: "center", justifyContent: "center" },
   stepValue: { color: V3.white, fontSize: 30 },

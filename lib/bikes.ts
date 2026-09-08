@@ -15,17 +15,19 @@ export type BikeRow = {
   updated_at?: string | null;
   /** Rider's air-or-coil answer for a region-ambiguous model year (null = not asked). */
   air_fork_override?: boolean | null;
+  /** What the rider mostly rides this bike on (Add a bike, 2026-09-08); null = not asked. */
+  discipline?: "mx" | "offroad" | null;
 };
 
 type BikeSelect =
-  "id, user_id, make, model, year, nickname, is_primary, created_at, updated_at, air_fork_override";
+  "id, user_id, make, model, year, nickname, is_primary, created_at, updated_at, air_fork_override, discipline";
 
 /** List the current user's bikes, primary first. */
 export async function listBikes(): Promise<BikeRow[]> {
   const { data, error } = await supabase
     .from("bikes")
     .select<BikeSelect>( // just to help IDEs
-      "id, user_id, make, model, year, nickname, is_primary, created_at, updated_at, air_fork_override"
+      "id, user_id, make, model, year, nickname, is_primary, created_at, updated_at, air_fork_override, discipline"
     )
     .order("is_primary", { ascending: false })
     .order("created_at", { ascending: false });
