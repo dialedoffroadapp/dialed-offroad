@@ -5,6 +5,7 @@
 // pending-tune write + funnel event), with the quiz answers as the input.
 // tune.tsx is deliberately untouched; keep the two in step when it changes.
 import { generateTune, type ZeroTuneResult } from "./ai";
+import { activeRiderProfileId } from "./riderProfile";
 import { readGuestBikes } from "./guestGarage";
 import { computeSpringCheck, effectiveAirFork, fetchModelSpecs, type ModelSpecs } from "./modelSpecs";
 import { writePendingTune } from "./onboarding";
@@ -100,6 +101,9 @@ export async function generateQuizTune(params: {
     const platformSag = platformSagBounds(input.make, input.model);
     const sagBounds = resolveSagBounds(modelSpecs, platformSag);
     const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
+    // rider.profile_id (2026-09-08): the active rider profile, when the rider has one.
+    const profileId = await activeRiderProfileId().catch(() => undefined);
+    if (profileId) input.rider.profile_id = profileId;
     if (modelSpecs?.id) input.model_id = modelSpecs.id;
 
     // Fork type: the catalog flag, else the rider's air-or-coil answer for a

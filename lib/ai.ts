@@ -38,6 +38,9 @@ async function edgeErrorMessage(
 /* Base Tune (Tune One)                                               */
 /* ------------------------------------------------------------------ */
 
+const UUID_RE_AI = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isUuidString = (v: unknown): v is string => typeof v === "string" && UUID_RE_AI.test(v);
+
 export type ZeroTuneInput = {
   // free text (still useful for model-aware priors)
   make?: string;
@@ -68,6 +71,8 @@ export type ZeroTuneInput = {
     style: "short_motos" | "long_enduro";
     goals: string[]; // e.g., ["stability","comfort"]
     issues?: string; // free text problems
+    /** The active rider profile (rider_profiles.id, 2026-09-08); uuid only, omitted otherwise. */
+    profile_id?: string;
   };
 
   // UI toggles / flags
@@ -203,6 +208,8 @@ export type Tune2Context = {
      *  engine's tire table and, on the contract branch, its math read it.
      *  Dropping it was the 12 / 12.5 on a TX 300 bug (finding 2). */
     discipline?: "mx" | "offroad";
+    /** The active rider profile (rider_profiles.id, 2026-09-08); uuid only. */
+    profile_id?: string;
   };
   wants_air_fork?: boolean;
   /** What is in each tire and the rider's saved pressures (engine tire
@@ -272,6 +279,7 @@ export async function generateTune(
           ? input.rider.weight_lbs
           : undefined,
         skill: input.rider.skill,
+        ...(isUuidString(input.rider.profile_id) ? { profile_id: input.rider.profile_id } : {}),
         style: input.rider.style,
         // keep prompt tight but still let the rider stack a few goals
         goals: (input.rider.goals || []).slice(0, 8),
@@ -368,6 +376,7 @@ export async function generateTuneTwo(params: {
           : undefined,
         discipline: context?.rider?.discipline === "mx" || context?.rider?.discipline === "offroad" ? context.rider.discipline : undefined,
         skill: context?.rider?.skill ?? "intermediate",
+        ...(isUuidString(context?.rider?.profile_id) ? { profile_id: context?.rider?.profile_id } : {}),
         style: context?.rider?.style ?? "short_motos",
         goals: (context?.rider?.goals || []).slice(0, 8),
         // issues not used in Tune Two; feedback.symptoms is the main signal

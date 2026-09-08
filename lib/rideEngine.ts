@@ -13,6 +13,7 @@
 import { generateTuneTwo, type TireInput, type Tune2Context } from "./ai";
 import { asTireSurface, type TirePlanOutput } from "./tirePlanCore";
 import { disciplineForBike } from "./discipline";
+import { activeRiderProfileId } from "./riderProfile";
 import type { CircuitKey } from "./currentSetup";
 import { retuneRules, todaysSetupRules, type RetuneContext, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
 import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
@@ -72,7 +73,7 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
       wants_air_fork: p.hasAirFork,
       // The bike's discipline rides to the engine (finding 2: without it the
       // tire table fell to MX for a TX 300 on singletrack).
-      rider: { discipline: disciplineForBike(p.bike) ?? undefined },
+      rider: { discipline: disciplineForBike(p.bike) ?? undefined, profile_id: await activeRiderProfileId().catch(() => undefined) },
       ...(p.tires ? { tires: p.tires } : {}),
     };
     const result = await generateTuneTwo({

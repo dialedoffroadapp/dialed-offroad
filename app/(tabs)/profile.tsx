@@ -31,6 +31,7 @@ import {
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useToast } from "../../components/Toast";
+import { RiderProfileCard } from "../../components/profile/RiderProfileCard";
 import type { ThemeTokens } from "../../constants/theme";
 import {
   hasPurchasedThisSession,
@@ -591,6 +592,9 @@ export default function ProfileScreen() {
                 )}
               </Pressable>
             </View>
+
+            {/* ── Rider card (rider profiles, 2026-09-08) ── */}
+            <RiderProfileCard style={{ marginTop: 12 }} />
 
             {/* ── Account card (2×2 grid) ── */}
             <View style={[styles.card, { marginTop: 12 }]}>

@@ -654,9 +654,13 @@ function isQuestionStep(x: unknown): x is QuizRouteStep {
   return typeof x === "string" && (QUESTION_STEPS as readonly string[]).includes(x);
 }
 
-/** Whether a flow still has to ask this question (rider facts persist). */
+/** Whether a flow still has to ask this question (rider facts persist).
+ *  Add a bike always visits the skill step: with the facts known it is the
+ *  rider confirmation ("Still 160 lb, C class? Yes / Change", rider profiles
+ *  2026-09-08), so a kid's bike never inherits the parent's numbers unasked. */
 function flowStepNeeded(step: QuizRouteStep, a: QuizAnswers): boolean {
-  return step === "skill" ? !a.skill : step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
+  if (step === "skill") return !a.skill || a.flow === "add_bike";
+  return step === "terrain" ? !a.terrainMain : step === "weight" ? typeof a.weightLbs !== "number" : false;
 }
 
 /** The questions a garage flow will ask, in order: the flow's anchor question
