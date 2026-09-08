@@ -965,8 +965,13 @@ that change none of those skip it.)*
   `docs/catalog-gaps.md`; the 4a/4b/4c tallies are in the rule comments on
   both sides. The engine's BFRC baseline anchors on
   `guardrails.shock_stock_lsc_turns/reb_turns` (sent from the catalog) and
-  keeps the quarter-turn-per-click placeholder only without them.
-  Section 2 and 3:** migration `20260907230000`
+  keeps the quarter-turn-per-click placeholder only without them. River's
+  calls on the leftovers (migration `20260907240000`): WP linkage shock
+  maxima LSC 18 / HSC 2 turns / rebound 20 and WP PDS HSC 1.75 as tuner
+  (Slavens, Vital MX; `click_range_verified` stays false), the KX250 2020
+  KYB boundary is a gap-sweep item ("verify from a 2020 and 2021 owner's
+  manual"), 15/15 noted as confirmed for 2017 to 2019 only; RM-Z250 and
+  Beta stay logged. Section 2 and 3:** migration `20260907230000`
   (applied on dev-3-0, staged): the Sherco split at 2022 collapsed, the
   KYB figures (13/13, LSC 14, HSC 1.5, reb 13) now sit on the three Factory
   KYB rows from 2019 with the Factory-line source, no SEF-R figure on any
