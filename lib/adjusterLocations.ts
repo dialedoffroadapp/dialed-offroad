@@ -1,8 +1,19 @@
 // lib/adjusterLocations.ts
 // "Set it on the bike" walkthrough copy: WHERE each adjuster is (keyed by
 // fork family for fork rows, shock family for shock rows, generic fallback)
-// and HOW to set it (count-from-closed convention). DRAFT for River's review
-// (2026-09-04); photo slots are placeholders until shot. NO em dashes.
+// and HOW to set it (count-from-closed convention). Photo slots are
+// placeholders until shot. NO em dashes.
+//
+// Sources (research 2026-09-07): WP fork rows follow the WP XACT PRO 7448
+// manual and the KTM SX / SX-F owner's manuals (2017+): on AER 48 and XACT
+// air forks the air valve is under the cap of the LEFT leg and BOTH the
+// compression and rebound adjusters are under the cap of the RIGHT leg; no
+// adjuster sits at the axle. XPLOR: compression cap on the left leg, rebound
+// cap on the right, no adjusters at the bottom. WP shocks: low- and
+// high-speed compression on the reservoir, rebound at the bottom of the
+// shock. Count-from-closed is the KTM and WP convention (turn in until it
+// stops, then count clicks out). The kyb_sss, kyb_psf2, showa, ohlins,
+// sachs and generic rows are still DRAFT (unsourced) for River's review.
 import type { AdjusterKey } from "./adjusterCopy";
 
 export type ForkFamily = "wp_xact_air" | "wp_aer_air" | "wp_xact_spring" | "wp_xplor" | "kyb_sss" | "kyb_psf2" | "showa" | "ohlins" | "sachs" | "generic";
@@ -53,22 +64,22 @@ export type LocationCopy = { where: string; how: string; photo: string };
 
 const FORK_WHERE: Record<ForkFamily, Partial<Record<AdjusterKey, string>>> = {
   wp_xact_air: {
-    fork_air: "Left fork leg, top cap. The Schrader valve sits under a small screw cap in the center of the cap; the compression clicker is on the right leg, not here.",
-    fork_comp: "Right fork leg, top cap. The compression adjuster is the center screw with a slot, marked COMP. Two-way XACT forks put rebound down at the axle.",
-    fork_reb: "Right fork leg, bottom of the leg by the axle. The rebound screw sits in the axle lug, marked REB, and points down. Older XACT air forks put it under the top cap of the right leg instead.",
+    fork_air: "Left fork leg, top cap. The Schrader valve sits under a small screw cap in the center of the cap. Nothing else is adjusted on this leg; both clickers are on the right leg.",
+    fork_comp: "Right fork leg, top cap. The outer adjuster marked COMP. Rebound is the screw in the center of the same cap. Nothing is adjusted at the bottom of an XACT air leg.",
+    fork_reb: "Right fork leg, top cap. The center screw marked REB, inside the compression ring. Both fork clickers live under this one cap; there is no adjuster at the axle.",
   },
   wp_aer_air: {
     fork_air: "Left fork leg, top cap. Unscrew the small plastic cap to find the Schrader valve. Nothing else is adjusted on this leg.",
-    fork_comp: "Right fork leg, top cap. The center slotted screw marked COMP.",
-    fork_reb: "Right fork leg, bottom of the leg by the axle. The rebound screw sits in the axle lug, marked REB, and points down. On AER 48 the top of the right leg is compression only.",
+    fork_comp: "Right fork leg, top cap. The outer adjuster marked COMP. Rebound is the screw in the center of the same cap.",
+    fork_reb: "Right fork leg, top cap. The center screw marked REB, inside the compression ring. On AER 48 both clickers are up top on the right leg; nothing is adjusted at the axle.",
   },
   wp_xact_spring: {
     fork_comp: "Top cap of each leg. The center slotted screw is compression; both legs carry one, set them the same.",
     fork_reb: "Bottom of each leg, in the axle lug, marked REB. Both legs, same number.",
   },
   wp_xplor: {
-    fork_comp: "Left fork leg, top cap, the center screw marked COMP. XPLOR splits the circuits: left leg is compression.",
-    fork_reb: "Right fork leg, top cap, the center screw marked REB. Both adjusters are up top on XPLOR, one per leg.",
+    fork_comp: "Left fork leg, top cap, the center screw marked COMP. XPLOR splits the circuits: left leg is compression. Nothing is adjusted at the bottom of either leg.",
+    fork_reb: "Right fork leg, top cap, the center screw marked REB. Both adjusters are up top on XPLOR, one per leg; nothing at the axle.",
   },
   kyb_sss: {
     fork_comp: "Bottom of each fork leg, the slotted screw in the axle lug. On KYB SSS compression is at the bottom, both legs, same number.",

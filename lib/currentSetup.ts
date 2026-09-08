@@ -40,8 +40,10 @@ export type CurrentSetupState = {
 };
 
 /** Per-circuit step size and clamp range for the +/- adjusters. Clicks move by
- *  1, HSC by a quarter turn (hardware granularity), air by 0.1 bar, sag by
- *  1 mm. Ranges are wide sanity bounds, not model guardrails — the screen must
+ *  1, HSC by a quarter turn (OUR stepper granularity: WP publishes high-speed
+ *  compression in turns and the adjuster turns continuously, so a quarter
+ *  turn is a display and storage step, not a claimed detent), air by 0.1
+ *  bar, sag by 1 mm. Ranges are wide sanity bounds, not model guardrails — the screen must
  *  work offline where guardrails may be unknown. */
 export const CIRCUIT_STEPS: Record<CircuitKey, { step: number; min: number; max: number; decimals: number }> = {
   fork_comp: { step: 1, min: 0, max: 40, decimals: 0 },
