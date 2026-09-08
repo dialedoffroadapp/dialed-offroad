@@ -252,7 +252,7 @@ Deno.test("3. harsh_braking_bumps + where=landings → bottoms_landings logic", 
   // and NO fork comp softening (which the default harsh case would apply).
   assertEquals(out.fork.comp_clicks, PREV_AIR.fork.comp_clicks);
   assert(out.shock.lsc_clicks < PREV_AIR.shock.lsc_clicks, "LSC should firm up");
-  assert(out.shock.hsc_turns < PREV_AIR.shock.hsc_turns, "HSC should firm up");
+  assert((out.shock.hsc_turns as number) < PREV_AIR.shock.hsc_turns, "HSC should firm up");
   assert(
     out.fork.air_pressure_bar! > PREV_AIR.fork.air_pressure_bar,
     "air should rise for bottoming"
@@ -750,12 +750,23 @@ Deno.test("17. conditions stage: rules run server-side, through conflict resolut
   assertEquals(b.tire_psi_delta, -0.5);
   assert(b.notes.some((n) => n.startsWith("Tires: -0.50 psi")));
 
-  // Retune tile: roughed up → -1 fork comp; watered reverses a morning softening.
+  // Retune tiles (second report, 2026-09-07, sub-task 4): roughed softens
+  // fork comp for MX (firmer only off-road, after bottoming, or for a pro);
+  // watered never takes back a morning softening; choppy frees rebound and LSC.
   const c = coil({ retune: { tile: "roughed" } });
-  assertEquals(c.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 1);
+  assertEquals(c.fork.comp_clicks, PREV_COIL.fork.comp_clicks + 1);
+  const c2 = coil({ retune: { tile: "roughed", discipline: "offroad" } });
+  assertEquals(c2.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 1);
+  const c3 = coil({ retune: { tile: "roughed", skill: "pro" } });
+  assertEquals(c3.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 1);
   const d = coil({ retune: { tile: "watered", prior_tweaks: [{ circuit: "fork_comp", delta: 2 }] } });
-  assertEquals(d.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 2);
+  assertEquals(d.fork.comp_clicks, PREV_COIL.fork.comp_clicks);
   assertEquals(d.tire_psi_delta, -0.5);
+  const d2 = coil({ retune: { tile: "watered", state: "choppy" } });
+  assertEquals(d2.fork.reb_clicks, PREV_COIL.fork.reb_clicks + 1);
+  assertEquals(d2.shock.lsc_clicks, PREV_COIL.shock.lsc_clicks + 1);
+  const d3 = coil({ retune: { tile: "watered", state: "choppy", bottoming: true } });
+  assertEquals(d3.fork.comp_clicks, PREV_COIL.fork.comp_clicks - 1);
 
   // Conditions and a symptom fighting over fork comp: the symptom (severity 6)
   // outranks conditions (5); sand's -1 shrinks harsh's +2 to +1, with a note.
@@ -994,7 +1005,7 @@ Deno.test("24. deterministic mode: the formula's numbers ship, the model only ex
 
   // Clamp detection: a 260 lb pro on an air fork lands on the MX air ceiling (11.8 bar).
   const heavy = formulaBaseline({ ...input, rider: { ...input.rider, weight_lbs: 260 } } as any);
-  assertEquals(heavy.clampHits, ["fork_air"]);
+  assert(heavy.clampHits.includes("fork_air"), JSON.stringify(heavy.clampHits)); // the skill offset (pro = class A) may add click clamps
   assertEquals(heavy.partial.fork!.air_pressure_bar, 11.8);
   assertEquals(formula.clampHits, []); // 205 lb pro: inside every window
 });

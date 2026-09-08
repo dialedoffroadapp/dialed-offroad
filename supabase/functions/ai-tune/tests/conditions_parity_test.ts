@@ -37,10 +37,15 @@ Deno.test("conditions parity: retune tiles match retuneRules, prior tweaks inclu
     const snapshot: any = { fork_comp: 13, fork_reb: 10, fork_air: hasAir ? 10.4 : null, shock_lsc: 10, shock_hsc: 1.5, shock_reb: 12, shock_sag: 105 };
     const effective: any = { fork_comp: 13, fork_reb: 10, shock_lsc: 10, shock_reb: 12, shock_hsc: 1.5, fork_air: hasAir ? 10.4 : null };
     for (const tile of ["watered", "roughed", "heating"] as const) {
-      for (const prior of [[], [{ circuit: "fork_comp" as const, delta: 1 }], [{ circuit: "fork_reb" as const, delta: 1 }]]) {
-        const client = retuneRules(tile, snapshot, hasAir, prior);
-        const server = conditionsRuleDeltas({ retune: { tile, prior_tweaks: prior } }, effective, hasAir);
-        assertEquals(server.deltas.map((d) => [d.circuit, d.delta, d.reason]), client.deltas.map((d) => [d.circuit, d.delta, d.reason]), `${tile} ${JSON.stringify(prior)} air=${hasAir}`);
+      for (const prior of [[], [{ circuit: "fork_comp" as const, delta: 1 }], [{ circuit: "fork_reb" as const, delta: 1 }]])
+      for (const state of ["fresh", "choppy", "rutted", null] as const)
+      for (const bottoming of [true, false, null] as const)
+      for (const skill of ["beginner", "intermediate", "pro", null] as const)
+      for (const discipline of ["mx", "offroad", null] as const) {
+        const ctx = { state, bottoming, skill, discipline };
+        const client = retuneRules(tile, snapshot, hasAir, prior, ctx);
+        const server = conditionsRuleDeltas({ retune: { tile, prior_tweaks: prior, ...ctx } }, effective, hasAir);
+        assertEquals(server.deltas.map((d) => [d.circuit, d.delta, d.reason]), client.deltas.map((d) => [d.circuit, d.delta, d.reason]), `${tile} ${JSON.stringify(prior)} ${JSON.stringify(ctx)} air=${hasAir}`);
         assertEquals(server.tirePsiDelta, client.tirePsiDelta);
       }
     }

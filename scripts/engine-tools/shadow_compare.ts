@@ -32,6 +32,10 @@ const handler = makeHandler({
   refundClaim: () => Promise.resolve(),
   baselineEngine: () => Promise.resolve("llm"),
   explain: () => Promise.resolve(null),
+  // Second report (2026-09-07): the app_config defaults (weight cap 3, skill
+  // offsets -2 / -1); null would mean the same defaults.
+  engineTuning: () => Promise.resolve(null),
+  refineAllowance: () => Promise.resolve({ entitled: true, used: 0, free: 1, remaining: 1 }),
 });
 
 type Circuit = "fork_comp" | "fork_reb" | "shock_lsc" | "shock_hsc" | "shock_reb" | "shock_sag" | "fork_air";

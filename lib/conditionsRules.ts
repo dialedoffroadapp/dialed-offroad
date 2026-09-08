@@ -16,7 +16,7 @@
 //   mud                      → suggest only; bigger change, compression up
 //   heat                     → thins oil, raises air pressure (mockup 04 copy)
 //   always                   → one change at a time, re-test, ask again
-import { coreRetuneRules, coreTodaysSetupRules } from "./conditionsRulesCore";
+import { coreRetuneRules, coreTodaysSetupRules, type CoreRetuneTile } from "./conditionsRulesCore";
 import type { CircuitKey } from "./currentSetup";
 import { primarySurface, type RideConditions, type Surface } from "./rideConditions";
 import type { SettingsSnapshot } from "./setupVersions";
@@ -69,7 +69,7 @@ export function retuneRules(
   priorTweaks: { circuit: CircuitKey; delta: number }[],
   ctx: RetuneContext = {}
 ): RuleResult {
-  return coreRetuneRules(tile, effective, hasAirFork, priorTweaks, ctx) as RuleResult;
+  return coreRetuneRules(tile as CoreRetuneTile, effective, hasAirFork, priorTweaks, ctx) as RuleResult;
 }
 
 export const RETUNE_TILES: { id: RetuneTile; label: string; icon: string }[] = [

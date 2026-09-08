@@ -56,6 +56,11 @@ type ZeroInput = {
       // the Tune tab and the ride day infer it from the bike.
       discipline?: "mx" | "offroad";
       skill: "beginner" | "intermediate" | "pro";
+      // Rider class for the skill offset (second report, 2026-09-07): the
+      // clicker axis is speed, not weight. Optional; derived from skill when
+      // absent (beginner = novice, intermediate = c, pro = a). The quiz sends
+      // fast = b.
+      class?: "novice" | "c" | "b" | "a";
       style: "short_motos" | "long_enduro";
       goals: string[];
       issues?: string;
@@ -79,6 +84,12 @@ type ZeroInput = {
       // Fork air clamp (contract v3, decision 1): 7 to 14 bar unless sent.
       air_min_bar?: number;
       air_max_bar?: number;
+      // BFRC (second report, 2026-09-07): shock LSC and rebound are continuous
+      // turns, no high-speed adjuster. Outputs and refinement deltas for those
+      // two circuits are then in quarter turns; hsc_turns is null.
+      shock_adjust_unit?: "clicks" | "turns";
+      has_shock_hsc?: boolean;
+      shock_turns_max?: number;
     };
 
     // ----------------- Tune Two specific fields (optional) -----------------
@@ -162,7 +173,7 @@ type ZeroResult = {
   fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number };
   shock: {
     lsc_clicks: number;
-    hsc_turns: number;
+    hsc_turns: number | null; // null on a shock with no high-speed adjuster (BFRC)
     reb_clicks: number;
     sag_mm: number;
   };
@@ -298,10 +309,18 @@ type Tune2Conditions = {
   state?: "fresh" | "choppy" | "rutted" | null;
   temp_band?: "cold" | "mild" | "hot" | null;
   watered?: boolean | null;
-  /** Mid-day retune tile; prior_tweaks lets "watered" reverse a morning softening. */
+  /** Mid-day retune tile. Second report (2026-09-07, sub-task 4): "watered"
+   *  holds compression soft and, when the track is choppy, frees rebound and
+   *  shock LSC; "roughed" softens fork compression for MX unless the rider is
+   *  off-road, logged bottoming, or rides A/pro. state, bottoming, skill and
+   *  discipline carry that context; prior_tweaks is kept for the wire. */
   retune?: {
     tile: "watered" | "roughed" | "heating";
     prior_tweaks?: { circuit: string; delta: number }[];
+    state?: "fresh" | "choppy" | "rutted" | null;
+    bottoming?: boolean | null;
+    skill?: "beginner" | "intermediate" | "pro" | null;
+    discipline?: "mx" | "offroad" | null;
   } | null;
 };
 
@@ -587,9 +606,16 @@ function baselineSagMm(z: ZeroInput["input"], discipline: Discipline): number {
 }
 
 // Fork clickers baseline
-function baselineForkClicks(z: ZeroInput["input"], discipline: Discipline) {
+/** The weight slope's contribution, capped per click circuit (sub-task 2). */
+function cappedWeight(wf: number, slope: number, tuning: EngineTuning): number {
+  const cap = Math.max(0, tuning.weight_slope_cap_clicks);
+  return clamp(wf * slope, -cap, cap);
+}
+
+function baselineForkClicks(z: ZeroInput["input"], discipline: Discipline, tuning: EngineTuning = ENGINE_TUNING_DEFAULTS) {
   const wf = weightFactor(z);
   const intensity = intensityFactor(z);
+  const steps = classStepsFor(z);
 
   // midpoints from ZERO (fully closed)
   let compBase =
@@ -606,9 +632,14 @@ function baselineForkClicks(z: ZeroInput["input"], discipline: Discipline) {
       ? 14 // a touch freer
       : 13;
 
-  // heavier + more intense → stiffer + more rebound control (fewer clicks out)
-  compBase -= wf * 0.4 + intensity * 0.6;
-  rebBase -= wf * 0.3 + intensity * 0.5;
+  // heavier + more intense → stiffer + more rebound control (fewer clicks out).
+  // Second report (2026-09-07): weight's clicker contribution is capped (tuners
+  // move weight with springs); skill is the clicker axis, so a per-class
+  // offset (negative = firmer / slower) rides on top of the intensity term.
+  compBase -= cappedWeight(wf, 0.4, tuning) + intensity * 0.6;
+  rebBase -= cappedWeight(wf, 0.3, tuning) + intensity * 0.5;
+  compBase += steps * tuning.skill_offset_comp_per_step;
+  rebBase += steps * tuning.skill_offset_reb_per_step;
 
   const comp_clicks = clampInt(compBase, 6, 24);
   const reb_clicks = clampInt(rebBase, 6, 24);
@@ -617,9 +648,10 @@ function baselineForkClicks(z: ZeroInput["input"], discipline: Discipline) {
 }
 
 // Shock clickers baseline
-function baselineShock(z: ZeroInput["input"], discipline: Discipline) {
+function baselineShock(z: ZeroInput["input"], discipline: Discipline, tuning: EngineTuning = ENGINE_TUNING_DEFAULTS) {
   const wf = weightFactor(z);
   const intensity = intensityFactor(z);
+  const steps = classStepsFor(z);
 
   let lscBase = discipline === "mx" ? 12 : discipline === "enduro" ? 14 : 13;
 
@@ -632,14 +664,28 @@ function baselineShock(z: ZeroInput["input"], discipline: Discipline) {
       ? 1.6
       : 1.5;
 
-  // Scale: heavier + more intense → more control
-  lscBase -= wf * 0.3 + intensity * 0.4;
-  rebBase -= wf * 0.4 + intensity * 0.6;
+  // Scale: heavier + more intense → more control. The weight term is capped
+  // on the click circuits (second report); HSC's turn-scale weight term is
+  // left as is (a click cap has no turn equivalent; flagged).
+  lscBase -= cappedWeight(wf, 0.3, tuning) + intensity * 0.4;
+  rebBase -= cappedWeight(wf, 0.4, tuning) + intensity * 0.6;
   hscBaseTurns -= wf * 0.03 + intensity * 0.05;
+  lscBase += steps * tuning.skill_offset_comp_per_step;
+  rebBase += steps * tuning.skill_offset_reb_per_step;
+
+  // BFRC (turns shock): LSC and rebound in quarter turns, one click reads as
+  // a quarter turn (the HSC convention), no HSC. Anchoring on the RM-Z450's
+  // stock turns waits for the report's tuner values (flagged).
+  if (z.guardrails?.shock_adjust_unit === "turns") {
+    const tmax = z.guardrails?.shock_turns_max ?? 4;
+    const lsc_clicks = quarterTurns(clamp(lscBase * 0.25, 0.25, tmax));
+    const reb_clicks = quarterTurns(clamp(rebBase * 0.25, 0.25, tmax));
+    return { lsc_clicks, reb_clicks, hsc_turns: z.guardrails?.has_shock_hsc === false ? null : Number(clampFloat(hscBaseTurns, 0.75, 2.0).toFixed(2)) };
+  }
 
   const lsc_clicks = clampInt(lscBase, 6, 20);
   const reb_clicks = clampInt(rebBase, 8, 22);
-  const hsc_turns = Number(clampFloat(hscBaseTurns, 0.75, 2.0).toFixed(2));
+  const hsc_turns = z.guardrails?.has_shock_hsc === false ? null : Number(clampFloat(hscBaseTurns, 0.75, 2.0).toFixed(2));
 
   return { lsc_clicks, reb_clicks, hsc_turns };
 }
@@ -721,6 +767,9 @@ function shapeCircuits(
   const airMin = g?.air_min_bar ?? AIR_MIN_BAR_DEFAULT;
   const airMax = g?.air_max_bar ?? AIR_MAX_BAR_DEFAULT;
   const allowNull = !!opts.allowNull;
+  const turnsShock = g?.shock_adjust_unit === "turns";
+  const tmax = g?.shock_turns_max ?? 4;
+  const noHsc = g?.has_shock_hsc === false;
 
   const clicks = (v: unknown, def: number): CircuitValue => {
     const n = finiteOrNull(v);
@@ -742,15 +791,23 @@ function shapeCircuits(
     return clamp(Math.round(n), sagMin, sagMax);
   };
 
+  // BFRC: LSC and rebound are turns (quarter-turn steps inside 0 to
+  // shock_turns_max); a refinement keeps an unmoved value as sent.
+  const shockTurns = (v: unknown, def: number): CircuitValue => {
+    const n = finiteOrNull(v);
+    if (n === null) return allowNull ? null : quarterTurns(clamp(def, 0, tmax));
+    const clamped = clamp(n, 0, tmax);
+    return allowNull ? Number(clamped.toFixed(2)) : quarterTurns(clamped);
+  };
   const out: { fork: PreviousTune["fork"]; shock: PreviousTune["shock"] } = {
     fork: {
       comp_clicks: clicks(partial.fork?.comp_clicks, 12),
       reb_clicks: clicks(partial.fork?.reb_clicks, 12),
     },
     shock: {
-      lsc_clicks: clicks(partial.shock?.lsc_clicks, 12),
-      hsc_turns: hsc(partial.shock?.hsc_turns, 1.5),
-      reb_clicks: clicks(partial.shock?.reb_clicks, 14),
+      lsc_clicks: turnsShock ? shockTurns(partial.shock?.lsc_clicks, 3) : clicks(partial.shock?.lsc_clicks, 12),
+      hsc_turns: noHsc ? null : hsc(partial.shock?.hsc_turns, 1.5),
+      reb_clicks: turnsShock ? shockTurns(partial.shock?.reb_clicks, 3.5) : clicks(partial.shock?.reb_clicks, 14),
       sag_mm: sag(partial.shock?.sag_mm, g?.sag_target_mm ?? 105),
     },
   };
@@ -1236,7 +1293,7 @@ function buildExplainPrompts(z: ZeroInput["input"], tune: Partial<ZeroResult>, d
     `Rider: ${z.rider.weight_lbs ? `${z.rider.weight_lbs} lb` : "weight not given"}, skill=${z.rider.skill}, style=${z.rider.style}`,
     `Goals: ${(z.rider.goals || []).join(", ") || "none given"}`,
     `Issues: ${z.rider.issues || "none described"}`,
-    `Tune (final, clicks out from closed): fork compression ${f.comp_clicks}, fork rebound ${f.reb_clicks}${air}; shock low-speed ${s.lsc_clicks}, high-speed ${s.hsc_turns} turns, rebound ${s.reb_clicks}, sag ${s.sag_mm} mm.`,
+    `Tune (final, clicks out from closed): fork compression ${f.comp_clicks}, fork rebound ${f.reb_clicks}${air}; shock low-speed ${s.lsc_clicks}${z.guardrails?.shock_adjust_unit === "turns" ? " turns" : ""}, ${typeof s.hsc_turns === "number" ? `high-speed ${s.hsc_turns} turns` : "no high-speed adjuster on this shock"}, rebound ${s.reb_clicks}${z.guardrails?.shock_adjust_unit === "turns" ? " turns" : ""}, sag ${s.sag_mm} mm.`,
     ...(tireLine ? [tireLine] : []),
     "Explain this tune to the rider. Respond ONLY with the JSON object.",
   ].join("\n");
@@ -1385,7 +1442,7 @@ function buildPersonalBaselineNotes(
 export function formulaClampHits(
   z: ZeroInput["input"],
   discipline: Discipline,
-  tune: { fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number }; shock: { lsc_clicks: number; reb_clicks: number; hsc_turns: number; sag_mm: number } }
+  tune: { fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number }; shock: { lsc_clicks: number; reb_clicks: number; hsc_turns: number | null; sag_mm: number } }
 ): string[] {
   const hits: string[] = [];
   const at = (v: number | undefined, lo: number, hi: number) => typeof v === "number" && (Math.abs(v - lo) < 1e-9 || Math.abs(v - hi) < 1e-9);
@@ -1393,7 +1450,7 @@ export function formulaClampHits(
   if (at(tune.fork.reb_clicks, 6, 24)) hits.push("fork_reb");
   if (at(tune.shock.lsc_clicks, 6, 20)) hits.push("shock_lsc");
   if (at(tune.shock.reb_clicks, 8, 22)) hits.push("shock_reb");
-  if (at(tune.shock.hsc_turns, 0.75, 2.0)) hits.push("shock_hsc");
+  if (typeof tune.shock.hsc_turns === "number" && at(tune.shock.hsc_turns, 0.75, 2.0)) hits.push("shock_hsc");
   const g = z.guardrails;
   if (g && typeof g.sag_target_mm === "number") {
     if (at(tune.shock.sag_mm, g.sag_min_mm ?? 95, g.sag_max_mm ?? 112) && tune.shock.sag_mm !== g.sag_target_mm) hits.push("shock_sag");
@@ -1408,21 +1465,21 @@ export function formulaClampHits(
  *  formula produces for this input, with the discipline it used and the
  *  circuits that landed on a clamp. The handler's deterministic mode ships
  *  these numbers; the LLM path merges the model's numbers over them. */
-export function formulaBaseline(z: ZeroInput["input"]): { partial: Partial<ZeroResult>; discipline: Discipline; clampHits: string[] } {
-  const partial = buildFallback(z);
+export function formulaBaseline(z: ZeroInput["input"], tuning: EngineTuning = ENGINE_TUNING_DEFAULTS): { partial: Partial<ZeroResult>; discipline: Discipline; clampHits: string[] } {
+  const partial = buildFallback(z, tuning);
   const discipline = inferDiscipline(z);
   return { partial, discipline, clampHits: formulaClampHits(z, discipline, partial as any) };
 }
 
-function buildFallback(z: ZeroInput["input"]): Partial<ZeroResult> {
+function buildFallback(z: ZeroInput["input"], tuning: EngineTuning = ENGINE_TUNING_DEFAULTS): Partial<ZeroResult> {
   const discipline = inferDiscipline(z);
 
   // Catalog flag, else the rider's toggle. Never the model name.
   const specAER = z.guardrails?.has_air_fork;
   const hasAER = resolveAirFork(z);
 
-  const forkClicks = baselineForkClicks(z, discipline);
-  const shockClicks = baselineShock(z, discipline);
+  const forkClicks = baselineForkClicks(z, discipline, tuning);
+  const shockClicks = baselineShock(z, discipline, tuning);
   const sag_mm = baselineSagMm(z, discipline);
   const air_pressure_bar = baselineAirBar(z, discipline, hasAER);
 
@@ -1810,7 +1867,14 @@ export function sanitizeConditions(raw: unknown): Tune2Conditions | undefined {
           .filter((t: any) => t && typeof t.circuit === "string" && Number.isFinite(Number(t.delta)))
           .map((t: any) => ({ circuit: t.circuit, delta: Number(t.delta) }))
       : [];
-    retune = { tile: r.retune.tile, prior_tweaks: prior };
+    retune = {
+      tile: r.retune.tile,
+      prior_tweaks: prior,
+      state: ["fresh", "choppy", "rutted"].includes(r.retune.state) ? r.retune.state : null,
+      bottoming: typeof r.retune.bottoming === "boolean" ? r.retune.bottoming : null,
+      skill: ["beginner", "intermediate", "pro"].includes(r.retune.skill) ? r.retune.skill : null,
+      discipline: ["mx", "offroad"].includes(r.retune.discipline) ? r.retune.discipline : null,
+    };
   }
   if (!surfaces.length && !state && !temp_band && watered === null && !retune) return undefined;
   return { surfaces, state, temp_band, watered, retune };
@@ -1861,14 +1925,29 @@ export function conditionsRuleDeltas(
     let tirePsiDelta = 0;
     const tile = c.retune.tile;
     const prior = Array.isArray(c.retune.prior_tweaks) ? c.retune.prior_tweaks : [];
+    // Second report (2026-09-07, sub-task 4b, adopted): hold compression soft
+    // (no take-back); if the track is choppy, fork rebound +1 out and shock
+    // LSC +1 out; firm compression only when the rider reported bottoming.
+    // Tally: the report's sources favor softening on a wet, choppy track
+    // (the earlier take-back rule stood alone). prior_tweaks is ignored.
     if (tile === "watered") {
-      const softened = prior.find((t) => t.circuit === "fork_comp" && typeof t.delta === "number" && t.delta > 0);
-      if (softened && has("fork_comp")) {
-        deltas.push({ circuit: "fork_comp", delta: -softened.delta, reason: "Fresh water means grip. Take back the morning's chop softening.", label: "just watered" });
+      void prior;
+      if (c.retune.bottoming === true) {
+        if (has("fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Wet dirt but it bottomed: a click firmer fork comp. Compression stays soft otherwise.", label: "just watered" });
+      } else if (c.retune.state === "choppy") {
+        if (has("fork_reb")) deltas.push({ circuit: "fork_reb", delta: 1, reason: "Wet and choppy: a click faster fork rebound so the front recovers between hits. Compression stays soft.", label: "just watered" });
+        if (has("shock_lsc")) deltas.push({ circuit: "shock_lsc", delta: 1, reason: "A click softer shock LSC for grip on the wet chop.", label: "just watered" });
       }
       tirePsiDelta = -0.5;
     } else if (tile === "roughed") {
-      if (has("fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Braking and acceleration bumps forming: a click firmer fork comp holds it up. Rebound stays.", label: "roughed up" });
+      // Second report (2026-09-07, sub-task 4c, flipped): MX softens fork
+      // compression a click as the track roughs up; the old firmer click stays
+      // only off-road, after logged bottoming, or for an A/pro rider.
+      const firmer = c.retune.discipline === "offroad" || c.retune.bottoming === true || c.retune.skill === "pro";
+      if (has("fork_comp")) {
+        if (firmer) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Braking and acceleration bumps forming: a click firmer fork comp holds it up. Rebound stays.", label: "roughed up" });
+        else deltas.push({ circuit: "fork_comp", delta: 1, reason: "Braking and acceleration bumps forming: a click softer fork comp keeps the wheel on the ground. Rebound stays.", label: "roughed up" });
+      }
     } else if (tile === "heating") {
       if (hasAirFork && has("fork_air")) deltas.push({ circuit: "fork_air", delta: -0.1, reason: "Fork's warming up and pressure climbs with it. Bleed 0.1 bar.", label: "heating up" });
       else if (has("fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Hot oil damps less. A click firmer makes up the difference.", label: "heating up" });
@@ -1884,6 +1963,10 @@ export function conditionsRuleDeltas(
   if (surface === "hardpack" && c.state === "choppy") {
     push({ circuit: "fork_comp", delta: 1, reason: "Choppy hardpack: a click softer keeps the fork moving over the chop.", label: "choppy hardpack" });
   } else if (surface === "hardpack" && c.state === "rutted") {
+    // Second report (2026-09-07, sub-task 4a): the research SUPPORTS this rule
+    // (fork rebound one click out on rutted hardpack); no change. The first
+    // report read ruts as wanting more rebound damping; the second's tally
+    // favors the faster rebound. The counts live in the report file.
     push({ circuit: "fork_reb", delta: 1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts.", label: "rutted hardpack" });
   } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
     const label = surface === "sand" ? "sand" : "deep loam";
@@ -2552,10 +2635,20 @@ export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
   const applied = (c: Circuit, d: number): CircuitValue => (known(c) ? (prevOf[c] as number) + d : null);
   const forkComp = applied("fork_comp", dForkComp);
   const forkReb = applied("fork_reb", dForkReb);
-  const shockLSC = applied("shock_lsc", dShockLSC);
-  const shockReb = applied("shock_reb", dShockReb);
+  // BFRC (second report, section 4): a click delta on LSC or rebound becomes a
+  // quarter turn on a turns shock, and the result snaps to quarter turns.
+  const turnsShock = input.guardrails?.shock_adjust_unit === "turns";
+  const appliedShockClick = (c: "shock_lsc" | "shock_reb", d: number): CircuitValue => {
+    if (!turnsShock) return applied(c, d);
+    if (!known(c)) return null;
+    if (d === 0) return prevOf[c];
+    return quarterTurns((prevOf[c] as number) + d * 0.25);
+  };
+  const shockLSC = appliedShockClick("shock_lsc", dShockLSC);
+  const shockReb = appliedShockClick("shock_reb", dShockReb);
   // HSC lands on a quarter turn when it moves (decision 4); untouched stays.
-  const shockHSC = dShockHSC !== 0 && known("shock_hsc") ? quarterTurns((prevOf.shock_hsc as number) + dShockHSC) : applied("shock_hsc", dShockHSC);
+  const noHsc = input.guardrails?.has_shock_hsc === false;
+  const shockHSC = noHsc ? null : dShockHSC !== 0 && known("shock_hsc") ? quarterTurns((prevOf.shock_hsc as number) + dShockHSC) : applied("shock_hsc", dShockHSC);
   if (air !== undefined) {
     air += dAir;
   }
@@ -2680,6 +2773,9 @@ export type HandlerDeps = {
   claimBaseline: (userId: string, bikeId: string | null) => Promise<ClaimOutcome | null>;
   /** Exact inverse of a consumed server claim, after a generation throw. */
   refundClaim: (userId: string) => Promise<void>;
+  /** app_config engine tuning keys (weight cap, skill offsets). null =
+   *  unreadable; the defaults apply. */
+  engineTuning?: () => Promise<Partial<EngineTuning> | null>;
   /** The free-refinement allowance (2026-09-07): server_refine_allowance.
    *  entitled = trial_active or pro; used = this user's setup_versions rows
    *  with source "refinement" on the bike; free = app_config
@@ -2690,6 +2786,25 @@ export type HandlerDeps = {
 export type RefineAllowance = { entitled: boolean; used: number; free: number; remaining: number };
 
 export type BaselineEngine = "llm" | "deterministic";
+
+/** app_config engine tuning (second report, 2026-09-07, sub-task 2): the
+ *  weight slope's total contribution per click circuit is capped, and a
+ *  skill offset (per class step C to B to A; novice 0) moves compression and
+ *  rebound. All three are remote so River tunes them without a deploy. */
+export type EngineTuning = {
+  weight_slope_cap_clicks: number;
+  skill_offset_comp_per_step: number;
+  skill_offset_reb_per_step: number;
+};
+export const ENGINE_TUNING_DEFAULTS: EngineTuning = {
+  weight_slope_cap_clicks: 3,
+  skill_offset_comp_per_step: -2,
+  skill_offset_reb_per_step: -1,
+};
+export function classStepsFor(z: { rider: { skill?: string; class?: string } }): number {
+  const c = z.rider.class ?? (z.rider.skill === "pro" ? "a" : z.rider.skill === "beginner" ? "novice" : "c");
+  return c === "a" ? 2 : c === "b" ? 1 : 0;
+}
 
 export type OutputMeta = {
   duration_ms: number;
@@ -2733,6 +2848,8 @@ function getServiceClient() {
   }
   return _serviceClient;
 }
+
+let _tuningCache: { value: Partial<EngineTuning>; at: number } | null = null;
 
 export const defaultDeps: HandlerDeps = {
   getUserId: async (req) => {
@@ -2823,6 +2940,23 @@ export const defaultDeps: HandlerDeps = {
   },
 
   explain: (z, tune, discipline, meter) => callExplain(z, tune, discipline, meter),
+
+  engineTuning: async () => {
+    const now = Date.now();
+    if (_tuningCache && now - _tuningCache.at < 60_000) return _tuningCache.value;
+    const { data, error } = await getServiceClient().from("app_config").select("key, value").in("key", Object.keys(ENGINE_TUNING_DEFAULTS));
+    if (error) {
+      console.warn("app_config engine tuning read failed (defaults):", String(error.message ?? error).slice(0, 160));
+      return null;
+    }
+    const out: Partial<EngineTuning> = {};
+    for (const row of (data ?? []) as { key: string; value: unknown }[]) {
+      const n = Number(row.value);
+      if (Number.isFinite(n)) (out as any)[row.key] = n;
+    }
+    _tuningCache = { value: out, at: now };
+    return out;
+  },
 
   claimBaseline: async (userId, bikeId) => {
     const { data, error } = await getServiceClient().rpc("server_claim_baseline", {
@@ -3191,7 +3325,9 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         // explains them (fail-open to the formula's notes); llm = the shipped
         // merge of the model's numbers over the formula.
         const engineMode: BaselineEngine = (await deps.baselineEngine().catch(() => null)) ?? "llm";
-        const formula = formulaBaseline(z);
+        const tuningRaw = deps.engineTuning ? await deps.engineTuning().catch(() => null) : null;
+        const tuning: EngineTuning = { ...ENGINE_TUNING_DEFAULTS, ...(tuningRaw ?? {}) };
+        const formula = formulaBaseline(z, tuning);
         // Tire pressure (engine output, 2026-09-07): the terrain word and what
         // is in the tires; the model may repeat the numbers, never choose them.
         const baselineTires = tireFieldsFor({

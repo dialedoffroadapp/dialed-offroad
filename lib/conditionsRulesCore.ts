@@ -64,6 +64,7 @@ export function coreTodaysSetupRules(c: CoreConditions, base: CoreSnapshot, setu
     push({ circuit: "fork_comp", delta: +1, reason: "Choppy hardpack: a click softer keeps the fork moving over the chop." });
     themes.push("dirt");
   } else if (surface === "hardpack" && c.state === "rutted") {
+    // Second report (2026-09-07, sub-task 4a): supported, no change.
     push({ circuit: "fork_reb", delta: +1, reason: "Rutted hardpack: a click faster rebound so the front recovers between ruts." });
     themes.push("dirt");
   } else if (surface === "sand" || (surface === "loam" && c.state !== "fresh")) {
@@ -98,26 +99,52 @@ export type CoreRetuneTile = "watered" | "roughed" | "heating";
 
 /** Mid-day rules against the CURRENT effective values. `priorTweaks` lets
  *  "just watered" reverse an earlier choppy softening (mockup 07: 14 → 13). */
+/** Ride context the two flipped retune rules read (second report, 2026-09-07). */
+export type CoreRetuneContext = {
+  state?: "fresh" | "choppy" | "rutted" | null;
+  /** The rider logged bottoming this session. */
+  bottoming?: boolean | null;
+  skill?: "beginner" | "intermediate" | "pro" | null;
+  discipline?: "mx" | "offroad" | null;
+};
+
 export function coreRetuneRules(
   tile: CoreRetuneTile,
   effective: CoreSnapshot,
   hasAirFork: boolean,
-  priorTweaks: { circuit: CoreCircuit; delta: number }[]
+  priorTweaks: { circuit: CoreCircuit; delta: number }[],
+  ctx: CoreRetuneContext = {}
 ): CoreRuleResult {
   const deltas: CoreRuleDelta[] = [];
   let tirePsiDelta = 0;
   let title = "";
   let note: string | null = null;
   if (tile === "watered") {
+    // Second report (2026-09-07, sub-task 4b, adopted): hold compression soft
+    // (no take-back); if choppy, fork rebound +1 out and shock LSC +1 out;
+    // firm compression only when the rider reported bottoming. priorTweaks
+    // stays on the signature for the wire; it no longer drives a move.
+    void priorTweaks;
     title = "Retuned for wet dirt";
-    const softened = priorTweaks.find((t) => t.circuit === "fork_comp" && t.delta > 0);
-    if (softened && has(effective, "fork_comp")) deltas.push({ circuit: "fork_comp", delta: -softened.delta, reason: "Fresh water means grip. Take back the morning's chop softening." });
+    if (ctx.bottoming === true) {
+      if (has(effective, "fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Wet dirt but it bottomed: a click firmer fork comp. Compression stays soft otherwise." });
+    } else if (ctx.state === "choppy") {
+      if (has(effective, "fork_reb")) deltas.push({ circuit: "fork_reb", delta: 1, reason: "Wet and choppy: a click faster fork rebound so the front recovers between hits. Compression stays soft." });
+      if (has(effective, "shock_lsc")) deltas.push({ circuit: "shock_lsc", delta: 1, reason: "A click softer shock LSC for grip on the wet chop." });
+    }
     tirePsiDelta = -0.5;
-    note = "Fresh water means grip. Give the front some plushness back.";
+    note = "Fresh water means grip. Hold compression soft.";
   } else if (tile === "roughed") {
+    // Second report (2026-09-07, sub-task 4c, flipped): MX softens fork
+    // compression a click as the track roughs up; the old firmer click stays
+    // only off-road, after logged bottoming, or for an A/pro rider.
     title = "Retuned for a rough track";
-    if (has(effective, "fork_comp")) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Braking and acceleration bumps forming: a click firmer fork comp holds it up. Rebound stays." });
-    note = "Second-moto bumps. Hold the front up, leave rebound alone.";
+    const firmer = ctx.discipline === "offroad" || ctx.bottoming === true || ctx.skill === "pro";
+    if (has(effective, "fork_comp")) {
+      if (firmer) deltas.push({ circuit: "fork_comp", delta: -1, reason: "Braking and acceleration bumps forming: a click firmer fork comp holds it up. Rebound stays." });
+      else deltas.push({ circuit: "fork_comp", delta: 1, reason: "Braking and acceleration bumps forming: a click softer fork comp keeps the wheel on the ground. Rebound stays." });
+    }
+    note = firmer ? "Second-moto bumps. Hold the front up, leave rebound alone." : "Second-moto bumps. Let the front follow them, leave rebound alone.";
   } else if (tile === "heating") {
     title = "Retuned for the heat";
     if (hasAirFork && has(effective, "fork_air")) deltas.push({ circuit: "fork_air", delta: -0.1, reason: "Fork's warming up and pressure climbs with it. Bleed 0.1 bar." });

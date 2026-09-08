@@ -236,7 +236,15 @@ export type Tune2Conditions = {
   state?: "fresh" | "choppy" | "rutted" | null;
   temp_band?: "cold" | "mild" | "hot" | null;
   watered?: boolean | null;
-  retune?: { tile: "watered" | "roughed" | "heating"; prior_tweaks?: { circuit: string; delta: number }[] } | null;
+  /** Second report (2026-09-07): the watered and roughed rules read state, bottoming, skill and discipline. */
+  retune?: {
+    tile: "watered" | "roughed" | "heating";
+    prior_tweaks?: { circuit: string; delta: number }[];
+    state?: "fresh" | "choppy" | "rutted" | null;
+    bottoming?: boolean | null;
+    skill?: "beginner" | "intermediate" | "pro" | null;
+    discipline?: "mx" | "offroad" | null;
+  } | null;
 };
 
 /** Who decided a tune's numbers (contract v3). "spend_limited": OpenAI's hard
@@ -562,7 +570,8 @@ export function completeTune(result: Tune2Result, previous: ZeroTuneResult): Zer
     },
     shock: {
       lsc_clicks: n(result.shock.lsc_clicks, previous.shock.lsc_clicks),
-      hsc_turns: n(result.shock.hsc_turns, previous.shock.hsc_turns),
+      // null on both sides = a shock with no high-speed adjuster (BFRC)
+      hsc_turns: typeof result.shock.hsc_turns === "number" ? result.shock.hsc_turns : previous.shock.hsc_turns,
       reb_clicks: n(result.shock.reb_clicks, previous.shock.reb_clicks),
       sag_mm: n(result.shock.sag_mm, previous.shock.sag_mm),
     },
