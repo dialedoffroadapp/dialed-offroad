@@ -4,8 +4,11 @@
 // seated in full gear; static = A minus B, riding = A minus C. Riding sag is
 // compared with the catalog target and window (lib/sagBounds), static with
 // the catalog's stock_static_sag_mm. Every save is a sag_measurements row
-// (history) and a stamp on the active setup version (migration
-// 20260907190000). A failed write throws for the screen to show (rule a).
+// linked to the setup version it was taken on (migration 20260907190000).
+// setup_versions rows stay immutable (a measurement is a fact about the
+// bike, not a setting change): display, the meter and the recheck read the
+// latest row here. setup_versions.sag_measured (boolean) is deprecated as a
+// value. A failed write throws for the screen to show (rule a).
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { readHistory } from "./rideDay";
 import type { SagBounds } from "./sagBounds";
@@ -89,8 +92,8 @@ export type SagMeasurement = {
   measured_at: string;
 };
 
-/** Insert the measurement, stamp the active version, log the event. Throws
- *  on any failed write so the screen can show it. */
+/** Insert the measurement (linked to the active version) and log the
+ *  event. Throws on a failed write so the screen can show it. */
 export async function saveSagMeasurement(p: { bikeId: string; versionId: string | null; a: number; b: number; c: number; bounds: SagBounds; fromRecheck?: boolean }): Promise<SagMeasurement> {
   const { staticMm, ridingMm } = sagMath({ a: p.a, b: p.b, c: p.c });
   if (staticMm === null || ridingMm === null) throw new Error("Enter all three measurements.");
@@ -111,13 +114,6 @@ export async function saveSagMeasurement(p: { bikeId: string; versionId: string 
   const { data, error } = await supabase.from("sag_measurements").insert(row).select("*").single();
   if (error) throw new Error(`Couldn't save the measurement: ${error.message}`);
   const saved = data as unknown as SagMeasurement;
-  if (row.version_id) {
-    const { error: vErr } = await supabase
-      .from("setup_versions")
-      .update({ sag_measured: true, sag_riding_measured_mm: ridingMm, sag_static_measured_mm: staticMm, sag_measured_at: saved.measured_at })
-      .eq("id", row.version_id);
-    if (vErr) throw new Error(`Saved the measurement, but the setup did not take it: ${vErr.message}`);
-  }
   const inRange = ridingVerdict(ridingMm, p.bounds) === "in_range";
   void logEvent("sag_measured_saved", { bike_id: p.bikeId, version_id: row.version_id, riding_mm: ridingMm, static_mm: staticMm, in_range: inRange });
   if (p.fromRecheck) void logEvent("sag_recheck_completed", { bike_id: p.bikeId });
@@ -136,9 +132,14 @@ export async function readSagHistory(bikeId: string, limit = 10): Promise<SagMea
   }
 }
 
-export async function lastSagMeasuredAt(bikeId: string): Promise<string | null> {
+/** The bike's latest measurement, or null (never measured, offline). */
+export async function latestSagMeasurement(bikeId: string): Promise<SagMeasurement | null> {
   const rows = await readSagHistory(bikeId, 1);
-  return rows[0]?.measured_at ?? null;
+  return rows[0] ?? null;
+}
+
+export async function lastSagMeasuredAt(bikeId: string): Promise<string | null> {
+  return (await latestSagMeasurement(bikeId))?.measured_at ?? null;
 }
 
 /** Due when never measured, or when at least `threshold` ride days have

@@ -892,14 +892,23 @@ that change none of those skip it.)*
   (3) **Sag page** `app/garage/[bikeId]/sag.tsx` (bike page Sag row, reveal
   "Measure it" link, ride-start recheck card): A/B/C method, static = A
   minus B, riding = A minus C, factory vs typical range, `sag_source`,
-  save, last ten, the spring rule. `setup_versions` gains
-  `sag_riding_measured_mm`, `sag_static_measured_mm`, `sag_measured_at` +
-  an own-rows UPDATE policy with a column-scoped grant (the one update the
-  immutable table accepts; both triggers are BEFORE INSERT);
-  `sag_measurements` holds history; `app_config.sag_recheck_ride_days`
-  (5); events `sag_measured_saved`, `sag_recheck_shown`,
-  `sag_recheck_completed` (CHECK now 98). `VERSION_COLUMNS` unchanged.
-  Supersedes the measure-sag walkthrough (design-queue item, decision 7).
+  save, last ten, the spring rule. Every measurement is a
+  `sag_measurements` row linked to the setup version it was taken on;
+  **`setup_versions` stays immutable** (River's call: a measurement is a
+  fact about the bike, not a setting change); display, the meter and the
+  recheck read the latest row (`lib/sag.ts:latestSagMeasurement`).
+  `setup_versions.sag_measured` (boolean) is DEPRECATED as a value: never
+  read `true` as a measurement. `app_config.sag_recheck_ride_days` (5);
+  events `sag_measured_saved`, `sag_recheck_shown`, `sag_recheck_completed`
+  (CHECK now 98). `VERSION_COLUMNS` unchanged. Supersedes the measure-sag
+  walkthrough (design-queue item, decision 7). **River's calls on the
+  flags (2026-09-07):** quick refine settling as `refinement` is correct
+  and stays (manual was hiding refines from the count and the n=1 split;
+  rider-settled = manual OR refinement in every query); the fail-open
+  allowance lookup stays for the beta and is on the audit follow-up list
+  (one retry closes most of it); the Tubliss and mousse starting points in
+  `tire_defaults.json` are tagged tuner, "Dialed pick within the published
+  range"; `bike_id` on refine payloads is uuid only.
 
 ## Sprint focus (in order)
 

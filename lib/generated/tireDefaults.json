@@ -60,10 +60,14 @@
         "min": 3,
         "max": 8
       },
-      "reason": "Low pressure grips at crawl speed and gets vague at high speed."
+      "reason": "Low pressure grips at crawl speed and gets vague at high speed.",
+      "tag": "tuner",
+      "source": "Dialed pick within the published range (Tubliss: rear 3 to 8 psi, front 6 to 10 psi; the 8 front / 6 rear starting points are ours, not Dunlop's), 2026-09-07"
     },
     "mousse": {
-      "reason": "No pressure to set on a mousse. It rides like roughly 12 to 16 psi."
+      "reason": "No pressure to set on a mousse. It rides like roughly 12 to 16 psi.",
+      "tag": "tuner",
+      "source": "Mousse makers publish an equivalent feel of roughly 12 to 16 psi; the line is ours, 2026-09-07"
     }
   }
 }
