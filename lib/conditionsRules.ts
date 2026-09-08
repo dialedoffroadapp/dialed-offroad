@@ -46,13 +46,30 @@ export type RetuneTile = "watered" | "roughed" | "heating" | "new_track";
 
 /** Mid-day rules against the CURRENT effective values. `priorTweaks` lets
  *  "just watered" reverse an earlier choppy softening (mockup 07: 14 → 13). */
+/** Ride context the two flipped retune rules read (second report, 2026-09-07, sub-task 4). */
+export type RetuneContext = {
+  state?: "fresh" | "choppy" | "rutted" | null;
+  /** The rider logged bottoming this session. */
+  bottoming?: boolean | null;
+  skill?: "beginner" | "intermediate" | "pro" | null;
+  discipline?: "mx" | "offroad" | null;
+};
+
+/** Mid-day rules against the CURRENT effective values. Second report
+ *  (2026-09-07): "watered" holds compression soft (no take-back of the
+ *  morning's softening; if choppy, fork rebound and shock LSC a click out;
+ *  firmer only after logged bottoming); "roughed" softens fork compression
+ *  for MX, and keeps the old firmer click only off-road, after bottoming, or
+ *  for an A/pro rider. priorTweaks stays on the signature; it no longer
+ *  drives a move. */
 export function retuneRules(
-  tile: Exclude<RetuneTile, "new_track">,
+  tile: RetuneTile,
   effective: SettingsSnapshot,
   hasAirFork: boolean,
-  priorTweaks: { circuit: CircuitKey; delta: number }[]
+  priorTweaks: { circuit: CircuitKey; delta: number }[],
+  ctx: RetuneContext = {}
 ): RuleResult {
-  return coreRetuneRules(tile, effective, hasAirFork, priorTweaks) as RuleResult;
+  return coreRetuneRules(tile, effective, hasAirFork, priorTweaks, ctx) as RuleResult;
 }
 
 export const RETUNE_TILES: { id: RetuneTile; label: string; icon: string }[] = [

@@ -26,6 +26,8 @@ import SettingStepperRow from "../components/SettingStepperRow";
 import {
   adjust,
   CIRCUIT_STEPS,
+  circuitStep,
+  circuitUnit,
   effectiveSettings,
   loadCachedSetup,
   refreshSetupFromServer,
@@ -120,6 +122,8 @@ export default function CurrentSetupScreen() {
     // 2. Background refresh — every step is allowed to fail quietly offline.
     void (async () => {
       let hasAirFork = cached?.hasAirFork ?? false;
+      // BFRC: turns shock, no HSC row (from the catalog row when matched).
+      let shockGuard: { unit?: "clicks" | "turns" | null; hasHsc?: boolean | null } | null = null;
       try {
         const { data: bike } = await supabase
           .from("bikes")
@@ -148,6 +152,7 @@ export default function CurrentSetupScreen() {
             if (typeof resolved === "boolean") {
               modelAir = resolved;
             }
+            if (specs) shockGuard = { unit: specs.shock_adjust_unit ?? "clicks", hasHsc: specs.has_shock_hsc ?? true };
           } catch {}
           if (modelAir === null) {
             try {
@@ -176,7 +181,7 @@ export default function CurrentSetupScreen() {
         }
       } catch {}
 
-      const fresh = await refreshSetupFromServer(bikeId, hasAirFork);
+      const fresh = await refreshSetupFromServer(bikeId, hasAirFork, shockGuard);
       if (fresh) applyState(fresh);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -267,15 +272,16 @@ export default function CurrentSetupScreen() {
             <SettingStepperRow
               key={r.circuit}
               label={r.label}
-              unit={r.unit}
+              unit={circuitUnit(r.circuit, setup.shockUnit)}
               value={effective[r.circuit]}
-              decimals={CIRCUIT_STEPS[r.circuit].decimals}
+              decimals={circuitStep(r.circuit, setup.shockUnit).decimals}
               pendingDelta={pendingBy[r.circuit] ?? 0}
               onAdjust={(d) => onAdjust(r.circuit, d)}
             />
           ))}
 
-          {/* Advanced: collapsed row holding shock HSC */}
+          {/* Advanced: collapsed row holding shock HSC (none on a BFRC shock) */}
+          {setup.hasShockHsc === false ? null : (
           <Pressable
             onPress={() => setAdvancedOpen((v) => !v)}
             style={[S.advancedRow, { borderColor: C.BORDER }]}
@@ -288,7 +294,8 @@ export default function CurrentSetupScreen() {
               color={C.MUTED}
             />
           </Pressable>
-          {advancedOpen ? (
+          )}
+          {advancedOpen && setup.hasShockHsc !== false ? (
             <SettingStepperRow
               label="Shock HSC"
               unit="turns"

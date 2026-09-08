@@ -13,6 +13,8 @@ import { LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from "
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DialedMeterCard, LockedTuneCard, TuneValuesCard } from "../../components/quiz/TuneCards";
+import { fetchModelSpecs } from "../../lib/modelSpecs";
+import { stockDeltaLine, type StockDelta } from "../../lib/stockCopy";
 import { displayFont, Q } from "../../components/quiz/quizTheme";
 import { readPendingTune, useOnboarding } from "../../lib/onboarding";
 import { paywallHref } from "../../lib/paywall";
@@ -40,6 +42,7 @@ export default function QuizRevealScreen() {
   const [notes, setNotes] = useState<string[]>([]);
   const [whyOpen, setWhyOpen] = useState(false);
   const [meta, setMeta] = useState<any>(null);
+  const [stockLine, setStockLine] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const viewedRef = useRef(false);
@@ -64,6 +67,18 @@ export default function QuizRevealScreen() {
           setTune(null);
           setNotes([]);
         }
+        // vs stock (second report, 2026-09-07): factory or tuner-published
+        // stock clickers only; an inferred row reads as missing.
+        let stockInfo: StockDelta = { line: null, missing: true, tag: null };
+        try {
+          const metaObj = JSON.parse(decodeURIComponent(pending.meta));
+          const rawTune = JSON.parse(decodeURIComponent(pending.r));
+          const specs = await fetchModelSpecs({ id: null, model_id: metaObj?.spec?.model_id ?? null, make: metaObj?.bike?.make ?? null, model: metaObj?.bike?.model ?? null, year: metaObj?.bike?.year ?? null });
+          stockInfo = stockDeltaLine(rawTune, specs);
+        } catch {
+          stockInfo = { line: null, missing: true, tag: null };
+        }
+        if (alive) setStockLine(stockInfo.line);
 
         // Interstitial decliner: still gated. Action-gated riders and anyone
         // who completed onboarding see the numbers.
@@ -84,7 +99,7 @@ export default function QuizRevealScreen() {
         setLocked(isLocked);
         if (!viewedRef.current) {
           viewedRef.current = true;
-          void logQuizEvent("quiz_reveal_viewed", { locked: isLocked, flow: answers.flow ?? "onboarding" });
+          void logQuizEvent("quiz_reveal_viewed", { locked: isLocked, flow: answers.flow ?? "onboarding", stock_missing: stockInfo.missing, stock_tag: stockInfo.tag });
           if (!isLocked && !answers.flow) {
             // Conversion model: the reveal is where a new account's usage-
             // anchored reverse trial starts (idempotent server-side).
@@ -211,6 +226,7 @@ export default function QuizRevealScreen() {
         <Text style={[styles.title, displayFont("black")]}>Your bike, dialed</Text>
 
         <View style={styles.card}>
+          {!locked && tune && stockLine ? <Text style={styles.stockLine}>{stockLine}</Text> : null}
           {locked || !tune ? (
             <LockedTuneCard tune={tune} />
           ) : (
@@ -284,6 +300,7 @@ export default function QuizRevealScreen() {
 }
 
 const styles = StyleSheet.create({
+  stockLine: { color: "#8A93A6", fontSize: 12, marginBottom: 8, letterSpacing: 0.2 },
   root: { flex: 1, backgroundColor: Q.BG },
   content: { paddingHorizontal: 20 },
   eyebrow: { color: Q.STEEL, fontSize: 13, letterSpacing: 1 },

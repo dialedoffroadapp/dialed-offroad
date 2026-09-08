@@ -95,6 +95,7 @@ describe("engine mappings (existing inputs only)", () => {
         discipline: "mx",
         weight_lbs: 175,
         skill: "intermediate",
+        class: "b", // fast = class B (second report, 2026-09-07)
         style: "short_motos",
         goals: ["stability", "jump support"],
         issues: undefined,

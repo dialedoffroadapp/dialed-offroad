@@ -67,6 +67,9 @@ export type ZeroTuneInput = {
      *  the bike (lib/discipline). */
     discipline?: RiderDiscipline;
     skill: "beginner" | "intermediate" | "pro";
+    /** Rider class for the skill offset (second report, 2026-09-07);
+     *  derived from skill by the engine when absent, the quiz sends fast = b. */
+    class?: "novice" | "c" | "b" | "a";
     style: "short_motos" | "long_enduro";
     goals: string[]; // e.g., ["stability","comfort"]
     issues?: string; // free text problems
@@ -88,7 +91,7 @@ export type ZeroTuneResult = {
   };
   shock: {
     lsc_clicks: number;         // low-speed comp clicks out
-    hsc_turns: number;          // high-speed comp turns out
+    hsc_turns: number | null;   // high-speed comp turns out; null on a shock with no HSC adjuster (BFRC)
     reb_clicks: number;         // clicks out
     sag_mm: number;             // target riding sag
   };
@@ -343,7 +346,9 @@ export async function generateTune(
   // WP's published base pressure for the model (bike_models.stock_air_bar,
   // research 2026-09-07): the engine's air base for this bike. The per-weight
   // slope stays the engine's own rule, never WP's.
-  stockAirBar?: number | null
+  stockAirBar?: number | null,
+  // BFRC: turns shock / no HSC, from the catalog row (second report, 2026-09-07).
+  shock?: ShockGuard | null
 ): Promise<ZeroTuneResult> {
   // Pre-auth attribution (Workstream C): signed-out callers send the device's
   // anon id so the server-side tune_calls row can be claimed after signup.
@@ -396,7 +401,7 @@ export async function generateTune(
       wants_air_fork: input.wants_air_fork ?? undefined,
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
-      guardrails: defaultGuardrails(sagBounds, hasAirFork, stockAirBar),
+      guardrails: defaultGuardrails(sagBounds, hasAirFork, stockAirBar, shock),
 
       // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
       // by generation. Omitted (not null) when unavailable.
@@ -644,8 +649,14 @@ async function fetchLastOutcome(
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean, stockAirBar?: number | null) {
+export type ShockGuard = { unit?: "clicks" | "turns" | null; hasHsc?: boolean | null };
+
+function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean, stockAirBar?: number | null, shock?: ShockGuard | null) {
   return {
+    // BFRC (second report, 2026-09-07): turns shock, no HSC; the engine then
+    // answers LSC and rebound in quarter turns and leaves hsc_turns null.
+    ...(shock?.unit === "turns" ? { shock_adjust_unit: "turns" as const } : {}),
+    ...(shock?.hasHsc === false ? { has_shock_hsc: false } : {}),
     clicks_min: 0,
     clicks_max: 30,
     hsc_turns_min: 0,
@@ -737,6 +748,7 @@ function normalizeResult(
   const forkReb = asInt(result?.fork?.reb_clicks, 12);
   const shockLSC = asInt(result?.shock?.lsc_clicks, 12);
   const shockReb = asInt(result?.shock?.reb_clicks, 14);
+  const noHsc = result?.shock?.hsc_turns === null;
   const shockHSC = asFloat(result?.shock?.hsc_turns, 1.5, 1);
   const sag = asInt(result?.shock?.sag_mm, bounds.target);
 
@@ -754,7 +766,7 @@ function normalizeResult(
 
   const shock = {
     lsc_clicks: clamp(shockLSC, 0, 30),
-    hsc_turns: clamp(shockHSC, 0, 3),
+    hsc_turns: noHsc ? null : clamp(shockHSC, 0, 3),
     reb_clicks: clamp(shockReb, 0, 30),
     // Same bounds sent in guardrails — never a wider hardcoded window.
     sag_mm: clamp(sag, bounds.min, bounds.max),

@@ -15,6 +15,8 @@ import { ChoiceChip, Cta, Grid, Hint, RideH1, RideScreenBg, ValueRow } from "../
 import { readBikeExtras, saveBikeExtras, type BikeExtras } from "../../lib/bikeExtras";
 import { previewValue, RETUNE_TILES, type RetuneTile } from "../../lib/conditionsRules";
 import { suggestForConditions, type SuggestResult } from "../../lib/rideEngine";
+import { disciplineFromBike } from "../../lib/discipline";
+import { engineSkillForQuizSkill, readQuizAnswers } from "../../lib/quizOnboarding";
 import { SayItYourWay } from "../../components/ride/SayItYourWay";
 import { CIRCUIT_STEPS, type CircuitKey } from "../../lib/currentSetup";
 import { conditionsSummary } from "../../lib/rideConditions";
@@ -46,6 +48,10 @@ export default function RideRetuneScreen() {
   }, [router]);
 
   const eff = useMemo(() => (s ? rideEffective(s) : null), [s]);
+  const [riderSkill, setRiderSkill] = useState<"beginner" | "intermediate" | "pro" | null>(null);
+  useEffect(() => {
+    void readQuizAnswers().then((a) => setRiderSkill(a.skill ? engineSkillForQuizSkill(a.skill) : null)).catch(() => setRiderSkill(null));
+  }, []);
   useEffect(() => {
     if (!s || !eff || !tile) {
       setResult(null);
@@ -64,6 +70,15 @@ export default function RideRetuneScreen() {
       freeText,
       tile: tile === "new_track" ? null : tile,
       priorTweaks: s.pending.filter((p) => p.kind === "conditions").map((p) => ({ circuit: p.circuit, delta: p.delta })),
+      // Second report (2026-09-07): the watered and roughed rules read the
+      // track state, whether a moto logged bottoming, the rider's skill and
+      // the bike's discipline.
+      retuneContext: {
+        state: s.conditions.state ?? null,
+        bottoming: s.motos.some((m) => m.symptoms.some((sy) => sy.id === "bottoms_landings" || sy.id === "bottoming")),
+        skill: riderSkill,
+        discipline: disciplineFromBike(s.bike.make, s.bike.model),
+      },
     }).then((r) => {
       if (!alive) return;
       setResult(r);

@@ -36,8 +36,25 @@ export type CurrentSetupState = {
   pending: PendingAdjust[];
   /** Fork type for the air-pressure row decision (see resolveShowsAir). */
   hasAirFork: boolean;
+  /** BFRC (second report, 2026-09-07): shock LSC and rebound are turns;
+   *  no high-speed row. Absent = clicks with an HSC row. */
+  shockUnit?: "clicks" | "turns";
+  hasShockHsc?: boolean;
   fetchedAt: string | null;
 };
+
+/** The step, bounds and decimals a circuit uses on THIS bike: shock LSC and
+ *  rebound step by quarter turns on a turns shock (BFRC), clicks otherwise. */
+export function circuitStep(circuit: CircuitKey, shockUnit?: "clicks" | "turns" | null): { step: number; min: number; max: number; decimals: number } {
+  if (shockUnit === "turns" && (circuit === "shock_lsc" || circuit === "shock_reb")) return { step: 0.25, min: 0, max: 4, decimals: 2 };
+  return CIRCUIT_STEPS[circuit];
+}
+
+/** The unit label a circuit shows on THIS bike. */
+export function circuitUnit(circuit: CircuitKey, shockUnit?: "clicks" | "turns" | null): string {
+  if (shockUnit === "turns" && (circuit === "shock_lsc" || circuit === "shock_reb")) return "turns";
+  return circuit === "fork_air" ? "bar" : circuit === "shock_hsc" ? "turns" : circuit === "shock_sag" ? "mm" : "clicks";
+}
 
 /** Per-circuit step size and clamp range for the +/- adjusters. Clicks move by
  *  1, HSC by a quarter turn (OUR stepper granularity: WP publishes high-speed
@@ -132,7 +149,8 @@ export async function loadCachedSetup(
  */
 export async function refreshSetupFromServer(
   bikeId: string,
-  hasAirFork: boolean
+  hasAirFork: boolean,
+  shock?: { unit?: "clicks" | "turns" | null; hasHsc?: boolean | null } | null
 ): Promise<CurrentSetupState | null> {
   let newest: SetupVersionRow | undefined;
   try {
@@ -154,6 +172,8 @@ export async function refreshSetupFromServer(
     pending:
       cached && cached.baseVersionId === newest.id ? cached.pending : [],
     hasAirFork,
+    ...(shock?.unit ? { shockUnit: shock.unit } : cached?.shockUnit ? { shockUnit: cached.shockUnit } : {}),
+    ...(typeof shock?.hasHsc === "boolean" ? { hasShockHsc: shock.hasHsc } : typeof cached?.hasShockHsc === "boolean" ? { hasShockHsc: cached.hasShockHsc } : {}),
     fetchedAt: new Date().toISOString(),
   };
   await writeRaw(state);
@@ -166,7 +186,7 @@ export async function adjust(
   circuit: CircuitKey,
   direction: 1 | -1
 ): Promise<CurrentSetupState> {
-  const { step, min, max, decimals } = CIRCUIT_STEPS[circuit];
+  const { step, min, max, decimals } = circuitStep(circuit, state.shockUnit);
   const current = effectiveSettings(state)[circuit];
   if (typeof current !== "number") return state; // no base value to adjust
   const target = clampRound(current + direction * step, min, max, decimals);

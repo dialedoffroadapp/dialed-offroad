@@ -11,7 +11,7 @@ import { generateTuneTwo, type TireInput, type Tune2Context } from "./ai";
 import { asTireSurface, type TirePlanOutput } from "./tirePlanCore";
 import type { CircuitKey } from "./currentSetup";
 import { disciplineFromBike } from "./discipline";
-import { retuneRules, todaysSetupRules, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
+import { retuneRules, todaysSetupRules, type RetuneContext, type RetuneTile, type RuleDelta, type RuleResult } from "./conditionsRules";
 import { surfacesOf, tempBandToF, type RideConditions } from "./rideConditions";
 import type { RideBike } from "./rideDay";
 import { diffChanges, snapshotToTune, wireConditions } from "./rideAdjust";
@@ -42,13 +42,15 @@ export type SuggestParams = {
   /** Retune tile (mid-day); absent = today's setup (morning). */
   tile?: Exclude<RetuneTile, "new_track"> | null;
   priorTweaks?: { circuit: CircuitKey; delta: number }[];
+  /** Track state, logged bottoming, skill and discipline for the retune rules (second report, 2026-09-07). */
+  retuneContext?: RetuneContext | null;
   /** What is in each tire and the saved pressures, for the engine's tire output. */
   tires?: TireInput | null;
 };
 
 function rulesFor(p: SuggestParams): RuleResult {
   return p.tile
-    ? retuneRules(p.tile, p.effective, p.hasAirFork, p.priorTweaks ?? [])
+    ? retuneRules(p.tile, p.effective, p.hasAirFork, p.priorTweaks ?? [], p.retuneContext ?? {})
     : todaysSetupRules(p.conditions, p.effective, p.setupName, p.hasAirFork);
 }
 
@@ -81,7 +83,9 @@ export async function suggestForConditions(p: SuggestParams): Promise<SuggestRes
       context,
       bikeId: p.bike.id,
       setupId: p.setupId ?? null,
-      conditions: wireConditions(p.conditions, p.tile ? { tile: p.tile, prior_tweaks: p.priorTweaks ?? [] } : null),
+      // The retune context (second report, 2026-09-07) rides to the engine so
+      // the server applies the same watered and roughed rules as the client.
+      conditions: wireConditions(p.conditions, p.tile ? { tile: p.tile, prior_tweaks: p.priorTweaks ?? [], ...(p.retuneContext ?? {}) } : null),
     });
     const changes = diffChanges(p.effective, result, 2);
     const reasoning = Array.isArray(result?.notes) ? (result.notes.find((n: unknown) => typeof n === "string" && n.trim()) as string | undefined) ?? null : null;

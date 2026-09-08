@@ -154,6 +154,23 @@ export function engineSkillForQuizSkill(
   }
 }
 
+/** Rider class for the engine's skill offset (second report, 2026-09-07):
+ *  learning = novice, comfortable = C, fast = B, pro = A. The engine derives
+ *  the same from rider.skill when absent, except fast, which only this
+ *  mapping can name. */
+export function engineClassForQuizSkill(s: QuizSkillId): "novice" | "c" | "b" | "a" {
+  switch (s) {
+    case "learning":
+      return "novice";
+    case "fast":
+      return "b";
+    case "pro":
+      return "a";
+    default:
+      return "c";
+  }
+}
+
 export function engineGoalsFor(d: QuizDiscipline, s: QuizSkillId): string[] {
   if (s === "fast" || s === "pro") {
     return ["stability", d === "mx" ? "jump support" : "grip"];
@@ -702,7 +719,7 @@ export const FORK_AIR_ROW: TuneRow = { key: "fork_air", label: "Fork air", unit:
 /** Minimal shape of the engine result the cards need (ZeroTuneResult). */
 export type TuneLike = {
   fork: { comp_clicks: number; reb_clicks: number; air_pressure_bar?: number };
-  shock: { lsc_clicks: number; hsc_turns: number; reb_clicks: number; sag_mm: number };
+  shock: { lsc_clicks: number; hsc_turns: number | null; reb_clicks: number; sag_mm: number };
 };
 
 export function tuneRowValue(tune: TuneLike, key: TuneRowKey): number | null {
@@ -845,6 +862,7 @@ export function buildQuizTuneInput(a: QuizAnswers): ZeroTuneInput | null {
       // Contract v3 (decision 11): the discipline the rider chose, first-class.
       discipline: a.discipline,
       skill: engineSkillForQuizSkill(a.skill),
+      class: engineClassForQuizSkill(a.skill),
       style: engineStyleForDiscipline(a.discipline),
       goals: engineGoalsFor(a.discipline, a.skill),
       issues: issues && issues.length > 0 ? issues : undefined,

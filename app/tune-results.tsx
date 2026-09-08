@@ -596,10 +596,11 @@ export default function TuneResultScreen() {
     const pushIfChangedTurns = (
       id: string,
       label: string,
-      prevVal: number,
-      nextVal: number
+      prevVal: number | null,
+      nextVal: number | null
     ) => {
-      if (!Number.isFinite(prevVal) || !Number.isFinite(nextVal)) return;
+      // null = no high-speed adjuster on this shock (BFRC): nothing to compare.
+      if (typeof prevVal !== "number" || typeof nextVal !== "number" || !Number.isFinite(prevVal) || !Number.isFinite(nextVal)) return;
       const delta = nextVal - prevVal;
       if (Math.abs(delta) < 0.05) return;
 
