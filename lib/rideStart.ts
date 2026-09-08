@@ -5,7 +5,7 @@
 import { normalizeConditions, surfacesOf } from "./rideConditions";
 import { readNamedSetups, readVersionSetupMap, setupsForBike, type SetupWithVersions } from "./bikeSetups";
 import { loadBikes } from "./garageV3";
-import { fetchModelSpecs } from "./modelSpecs";
+import { effectiveAirFork, fetchModelSpecs } from "./modelSpecs";
 import { readLastRide, type RideBike, type RideDraft } from "./rideDay";
 import { getHistoryWithFeedback } from "./setupVersions";
 
@@ -22,7 +22,7 @@ export async function loadBikeChoices(userId: string): Promise<BikeChoice[]> {
         fetchModelSpecs({ id: b.id, model_id: b.model_id, make: b.make, model: b.model, year: b.year }).catch(() => null),
       ]);
       const setups = setupsForBike(b.id, named, versions, map).filter((s) => s.running);
-      const hasAirFork = typeof specs?.has_air_fork === "boolean" ? specs.has_air_fork : typeof versions[0]?.fork_air_bar === "number";
+      const hasAirFork = effectiveAirFork(specs, b.air_fork_override) ?? typeof versions[0]?.fork_air_bar === "number";
       return { bike: { id: b.id, make: b.make, model: b.model, year: b.year, nickname: b.nickname, model_id: b.model_id }, setups, hasAirFork };
     })
   );

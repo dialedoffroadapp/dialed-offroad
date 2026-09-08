@@ -12,7 +12,8 @@ export const EMPTY_VALUE = "—";
 export type SettingKey = CircuitKey | "fork_spring" | "shock_spring";
 
 /** Decimals a value is DISPLAYED with. Air forks are set to 0.05 bar and the
- *  engine emits two decimals; HSC steps by quarter turns. */
+ *  engine emits two decimals; HSC is stepped by quarter turns in our UI (the
+ *  adjuster itself turns continuously; no detent is claimed). */
 export function displayDecimals(key: SettingKey): number {
   switch (key) {
     case "fork_air":

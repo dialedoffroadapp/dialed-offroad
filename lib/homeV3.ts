@@ -29,6 +29,8 @@ export type HomeBike = {
   nickname: string | null;
   model_id: string | null;
   is_primary: boolean;
+  /** Rider's air-or-coil answer for a region-ambiguous model year (null = not asked). */
+  air_fork_override?: boolean | null;
 };
 
 export type SeasonStats = { rideDays: number; ridesLogged: number; hours: number | null };
@@ -114,7 +116,7 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
   try {
     const { data } = await supabase
       .from("bikes")
-      .select("id, make, model, year, nickname, model_id, is_primary")
+      .select("id, make, model, year, nickname, model_id, is_primary, air_fork_override")
       .eq("user_id", userId)
       .order("is_primary", { ascending: false })
       .order("created_at", { ascending: true });
@@ -126,6 +128,7 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
       nickname: b.nickname ?? null,
       model_id: b.model_id ?? null,
       is_primary: !!b.is_primary,
+      air_fork_override: typeof b.air_fork_override === "boolean" ? b.air_fork_override : null,
     }));
   } catch {
     bikes = [];

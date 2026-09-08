@@ -308,7 +308,11 @@ export async function generateTune(
   // authoritative on the edge; the rider's explicit toggle decides for
   // unmatched bikes. There is no name-based guess any more (decision 1,
   // 2026-09-05): an unmatched bike with the toggle off is coil.
-  hasAirFork?: boolean
+  hasAirFork?: boolean,
+  // WP's published base pressure for the model (bike_models.stock_air_bar,
+  // research 2026-09-07): the engine's air base for this bike. The per-weight
+  // slope stays the engine's own rule, never WP's.
+  stockAirBar?: number | null
 ): Promise<ZeroTuneResult> {
   // Pre-auth attribution (Workstream C): signed-out callers send the device's
   // anon id so the server-side tune_calls row can be claimed after signup.
@@ -361,7 +365,7 @@ export async function generateTune(
       wants_air_fork: input.wants_air_fork ?? undefined,
 
       // Ask backend to enforce safe bounds so suggestions are always rideable.
-      guardrails: defaultGuardrails(sagBounds, hasAirFork),
+      guardrails: defaultGuardrails(sagBounds, hasAirFork, stockAirBar),
 
       // Coarse fix, ~110 m rounding — persisted in tune_calls.input, not used
       // by generation. Omitted (not null) when unavailable.
@@ -604,7 +608,7 @@ async function fetchLastOutcome(
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
+function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean, stockAirBar?: number | null) {
   return {
     clicks_min: 0,
     clicks_max: 30,
@@ -616,12 +620,16 @@ function defaultGuardrails(sag: SagBounds = DEFAULT_SAG, hasAirFork?: boolean) {
     sag_min_mm: sag.min,
     sag_max_mm: sag.max,
     sag_target_mm: sag.target,
-    // Contract v3 (decision 11): the client no longer sends
-    // aer_pressure_bar_default / _per_10lb (10.6 / 0.2). Without them the
-    // engine's discipline-specific air math is live: 10.6 / 0.22 per 10 lb
-    // for MX, 10.0 / 0.18 for enduro, 10.2 / 0.20 mixed, each with its own
-    // clamp window. The display-only weight estimate for rows with NO air
-    // value (the v2.4.1 hotfix's displayAirBar on main) still uses 10.6 / 0.2.
+    // Contract v3 (decision 11): the client no longer sends the flat
+    // aer_pressure_bar_default / _per_10lb (10.6 / 0.2). The engine's
+    // discipline-specific air math is live: 10.6 / 0.22 per 10 lb for MX,
+    // 10.0 / 0.18 for enduro, 10.2 / 0.20 mixed, each with its own clamp
+    // window. Research 2026-09-07 (item 3): when the catalog carries WP's
+    // published base pressure for the model (bike_models.stock_air_bar) it is
+    // sent as the base and replaces the discipline base; the slope stays the
+    // engine's. The display-only weight estimate for rows with NO air value
+    // (the v2.4.1 hotfix's displayAirBar on main) still uses 10.6 / 0.2.
+    ...(typeof stockAirBar === "number" && Number.isFinite(stockAirBar) ? { aer_pressure_bar_default: stockAirBar } : {}),
     // Fork air window (contract v3): the edge clamps to it; so does normalizeResult.
     air_min_bar: AIR_MIN_BAR,
     air_max_bar: AIR_MAX_BAR,

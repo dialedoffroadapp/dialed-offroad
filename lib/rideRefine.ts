@@ -5,6 +5,7 @@
 // session. Errors are thrown for the screen to show (rule a).
 import { runningSetup } from "./bikeSetups";
 import { loadBikePage, loadBikes, loadUserAndPro } from "./garageV3";
+import { effectiveAirFork } from "./modelSpecs";
 import { startQuickRefineSession, type RideSession } from "./rideDay";
 
 export type QuickRefineParams = { bikeId: string; setupId?: string | null; versionId?: string | null };
@@ -21,7 +22,7 @@ export async function startQuickRefine(p: QuickRefineParams): Promise<RideSessio
   const setup = byId ?? byVersion ?? runningSetup(page.setups) ?? page.setups[0] ?? null;
   const version = (p.versionId ? setup?.versions.find((v) => v.id === p.versionId) : null) ?? setup?.running ?? setup?.versions[0] ?? null;
   if (!setup || !version) throw new Error("No setup to refine yet. Build a tune first.");
-  const hasAirFork = typeof page.specs?.has_air_fork === "boolean" ? page.specs.has_air_fork : version.fork_air_bar !== null && version.fork_air_bar !== undefined;
+  const hasAirFork = effectiveAirFork(page.specs, bike.air_fork_override) ?? (version.fork_air_bar !== null && version.fork_air_bar !== undefined);
   return startQuickRefineSession({
     bike: { id: bike.id, make: bike.make, model: bike.model, year: bike.year, nickname: bike.nickname, model_id: bike.model_id },
     setupId: setup.id,

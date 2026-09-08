@@ -88,6 +88,8 @@ export type WhyContext = {
    *  weight" copy is allowed ONLY when this is "deterministic" (decision 4,
    *  2026-09-07): the shipped LLM path barely reacts to weight. */
   engineSource?: string | null;
+  /** WP's published base pressure for the model (bike_models.stock_air_bar), when the row has one. */
+  stockAirBar?: number | null;
   riderWeightLbs?: number | null;
   terrain?: string | null;
   skill?: string | null; // engine skill or quiz skill id
@@ -115,7 +117,9 @@ export function whyForYou(key: AdjusterKey, value: number | null, ctx: WhyContex
   const t = ctx.terrain ? ` on ${ctx.terrain.toLowerCase()}` : "";
   const s = ctx.skill && SKILL_PHRASE[ctx.skill] ? ` ${SKILL_PHRASE[ctx.skill]}` : "";
   const lead: Record<AdjusterKey, string> = {
-    fork_air: `${w}${t}${s}, the fork needs enough pressure to hold up on the faces without spiking on small chop.`,
+    fork_air: typeof ctx.stockAirBar === "number"
+      ? `WP's base for this model is ${ctx.stockAirBar} bar. ${w}${t}${s}, our starting point moves from there to hold up on the faces without spiking on small chop. The per-weight step is our rule, not WP's.`
+      : `${w}${t}${s}, the fork needs enough pressure to hold up on the faces without spiking on small chop.`,
     fork_spring: `${w}, this rate keeps the fork in the plush part of its stroke without diving under braking.`,
     fork_comp: `${w}${t}${s}, the fork needs hold-up on the faces and under braking without turning square edges into hits.`,
     fork_reb: `${w}${t}${s}, the fork needs to recover quickly between braking bumps without kicking.`,

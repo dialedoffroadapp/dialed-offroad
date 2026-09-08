@@ -52,8 +52,8 @@ import { SettingRow } from "../../components/SettingRow";
 import { useToast } from "../../components/Toast";
 import { generateTune, ZeroTuneInput, ZeroTuneResult } from "../../lib/ai";
 import { prewarmTuneLocation } from "../../lib/tuneLocation";
-import { computeSpringCheck, fetchModelSpecs } from "../../lib/modelSpecs";
-import { resolveSagBounds } from "../../lib/sagBounds";
+import { computeSpringCheck, effectiveAirFork, fetchModelSpecs } from "../../lib/modelSpecs";
+import { platformSagBounds, resolveSagBounds } from "../../lib/sagBounds";
 import {
   readPendingTune,
   useOnboarding,
@@ -81,6 +81,8 @@ type Bike = {
   nickname: string | null;
   is_primary: boolean | null;
   model_id?: string | null;
+  /** Rider's air-or-coil answer for a region-ambiguous model year (null = not asked). */
+  air_fork_override?: boolean | null;
 };
 
 type ProfileMeta = {
@@ -655,7 +657,7 @@ export default function TuneScreen() {
 
       const { data, error } = await supabase
         .from("bikes")
-        .select("id, make, model, year, nickname, is_primary, model_id")
+        .select("id, make, model, year, nickname, is_primary, model_id, air_fork_override")
         .eq("user_id", user.id)
         .order("is_primary", { ascending: false })
         .order("updated_at", { ascending: false });
@@ -872,7 +874,9 @@ export default function TuneScreen() {
         model: input.model ?? null,
         year: input.year ?? null,
       });
-      const sagBounds = resolveSagBounds(modelSpecs);
+      // Unmatched bikes take the platform manual's sag when the make and
+      // platform are known (research 2026-09-07), else the consolidated default.
+      const sagBounds = resolveSagBounds(modelSpecs, platformSagBounds(input.make, input.model));
       const springCheck = computeSpringCheck(modelSpecs, input.rider.weight_lbs);
 
       // Resolved model for tune_calls attribution: the verified spec row wins,
@@ -887,11 +891,10 @@ export default function TuneScreen() {
       // Verified spec is authoritative for fork type — a stale per-bike toggle
       // or the model-name heuristic must never air-fork a coil bike (or vice
       // versa). Toggle/heuristic still decide for unmatched bikes.
-      const specAirFork =
-        typeof modelSpecs?.has_air_fork === "boolean"
-          ? modelSpecs.has_air_fork
-          : undefined;
-      const effectiveAirFork = specAirFork ?? wantsAirFork;
+      // Catalog flag, else the rider's stored air-or-coil answer (ambiguous
+      // 2016 rows), else the toggle.
+      const specAirFork = effectiveAirFork(modelSpecs, bikes.find((b) => b.id === selectedBikeId)?.air_fork_override ?? null);
+      const effectiveAir = specAirFork ?? wantsAirFork;
       if (specAirFork !== undefined) {
         input.wants_air_fork = specAirFork;
         // Heal the on-screen toggle so the next visit shows the true fork type.
@@ -900,7 +903,7 @@ export default function TuneScreen() {
 
       const GENERATE_TIMEOUT_MS = 30_000;
       const s: ZeroTuneResult = await Promise.race([
-        generateTune(input, sagBounds, specAirFork),
+        generateTune(input, sagBounds, specAirFork, modelSpecs?.stock_air_bar ?? null),
         new Promise<never>((_resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error("This is taking longer than expected. Try again")),
@@ -936,9 +939,9 @@ export default function TuneScreen() {
       if (selectedBikeId && user?.id) {
         AsyncStorage.setItem(
           bikeSpecsKey(selectedBikeId),
-          // effectiveAirFork, not the raw toggle: heals a stale persisted
+          // effectiveAir, not the raw toggle: heals a stale persisted
           // value once the bike resolves to a verified spec.
-          JSON.stringify({ wantsAirFork: effectiveAirFork, zeroed })
+          JSON.stringify({ wantsAirFork: effectiveAir, zeroed })
         ).catch(() => {});
       }
 
@@ -950,7 +953,7 @@ export default function TuneScreen() {
         rideStyle,
         goals,
         zeroed,
-        wantsAirFork: effectiveAirFork,
+        wantsAirFork: effectiveAir,
         make: input.make,
         model: input.model,
         year: input.year,
@@ -974,7 +977,7 @@ export default function TuneScreen() {
             track: input.track,
             temp_f: input.temp_f,
             elev_ft: input.elev_ft,
-            wants_air_fork: effectiveAirFork,
+            wants_air_fork: effectiveAir,
             rider_weight_lbs: weight ? Number(weight) : undefined,
             goals,
             issues: issues.trim() || undefined,

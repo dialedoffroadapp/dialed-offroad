@@ -363,6 +363,9 @@ export type QuizAnswers = {
   flowSteps?: QuizRouteStep[];
   /** True when make/model came from the catalog (vs free text). */
   catalogMatch?: boolean;
+  /** Air (true) or coil (false), asked only on region-ambiguous model years
+   *  (2016 SX/SX-F, FC/TC); cleared with the bike. Stored on the bike too. */
+  airForkOverride?: boolean;
   skill?: QuizSkillId;
   terrainMain?: string;
   terrainSecondary?: string[];
@@ -420,6 +423,7 @@ export function parseQuizAnswers(raw: string | null): QuizAnswers {
       flowSetupId: optStr(p.flowSetupId),
       flowSteps: Array.isArray(p.flowSteps) ? (p.flowSteps.filter(isQuestionStep) as QuizRouteStep[]) : undefined,
       catalogMatch: typeof p.catalogMatch === "boolean" ? p.catalogMatch : undefined,
+      airForkOverride: typeof p.airForkOverride === "boolean" ? p.airForkOverride : undefined,
       skill: isSkill(p.skill) ? p.skill : undefined,
       terrainMain: optStr(p.terrainMain),
       terrainSecondary: Array.isArray(p.terrainSecondary)
@@ -520,6 +524,7 @@ export async function startGarageQuizFlow(
     year: p.year,
     bikeLocalId: p.bikeId,
     catalogMatch: undefined,
+    airForkOverride: undefined,
     freeText: undefined,
     terrainMain,
     terrainSecondary,

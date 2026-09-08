@@ -26,6 +26,7 @@ import { loadBikePage, loadBikes, loadUserAndPro, type BikePageData } from "../l
 import { shortDate } from "../lib/homeCopy";
 import { primarySymptom } from "../lib/setupStory";
 import { SYMPTOM_PHRASES } from "../lib/ai";
+import { effectiveAirFork } from "../lib/modelSpecs";
 import type { SetupVersionRow, VersionWithFeedback } from "../lib/setupVersions";
 import { logEvent } from "../lib/usage";
 
@@ -102,7 +103,7 @@ export default function SetupSheetScreen() {
   }
 
   const { bike, specs, ranges, extras } = data;
-  const airFork = typeof specs?.has_air_fork === "boolean" ? specs.has_air_fork : v?.fork_air_bar !== null && v?.fork_air_bar !== undefined;
+  const airFork = effectiveAirFork(specs, bike.air_fork_override) ?? (v?.fork_air_bar !== null && v?.fork_air_bar !== undefined);
   const forkSpring: RowDef = airFork
     ? { key: "fork_air", icon: "speedometer-outline", field: "fork_air_bar", digits: 2, step: 0.1, min: 5, max: 15 }
     : { key: "fork_spring", icon: "reload-outline", field: null, digits: 1, step: 0.1, min: 3, max: 7 };
@@ -294,6 +295,7 @@ export default function SetupSheetScreen() {
                               terrain: v?.terrain ?? null,
                               skill: (v?.context as any)?.rider?.skill ?? null,
                               engineSource: (v?.recommended_settings as any)?.context?.engine_source ?? null,
+                              stockAirBar: specs?.stock_air_bar ?? null,
                               history,
                             })}
                           </Text>

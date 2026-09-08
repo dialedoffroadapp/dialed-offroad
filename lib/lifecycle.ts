@@ -1,9 +1,11 @@
 // lib/lifecycle.ts
 // Lifecycle email foundation: the app emits behavior events to the
-// `lifecycle-events` edge function, which forwards them to Loops (chosen
-// over Resend; see docs/lifecycle-emails.md "Why Loops"). Fire-and-forget,
-// never blocks, never throws. Nothing sends until LOOPS_API_KEY is set on
-// the function and the drafts are approved.
+// `lifecycle-events` edge function, which forwards them to the email
+// provider (drafted for Loops; Resend recommended 2026-09-07 because it
+// documents Apple's private relay, pending River's yes; see
+// docs/lifecycle-emails.md). Fire-and-forget, never blocks, never throws.
+// Nothing sends until the provider key is set on the function and the
+// drafts are approved.
 import { supabase } from "./supabase";
 
 export type LifecycleEvent =

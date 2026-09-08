@@ -20,6 +20,7 @@ import { headingFont, interFont, useV3Fonts, V3 } from "../components/v3/theme";
 import { ADJUSTERS, type AdjusterKey } from "../lib/adjusterCopy";
 import { forkFamilyFor, FORK_FAMILY_LABEL, locationCopy, shockFamilyFor, WALKTHROUGH_ORDER } from "../lib/adjusterLocations";
 import { adjusterPhoto } from "../lib/adjusterPhotos";
+import { effectiveAirFork } from "../lib/modelSpecs";
 import { runningSetup } from "../lib/bikeSetups";
 import { markSetOnBike, markWalkthroughSkipped } from "../lib/firstSteps";
 import { loadBikePage, loadBikes, loadUserAndPro } from "../lib/garageV3";
@@ -90,7 +91,7 @@ export default function SetOnBikeScreen() {
     };
   }, [bikeId, setupId]);
 
-  const airFork = data ? (typeof data.specs?.has_air_fork === "boolean" ? data.specs.has_air_fork : version?.fork_air_bar !== null && version?.fork_air_bar !== undefined) : false;
+  const airFork = data ? (effectiveAirFork(data.specs, data.bike.air_fork_override) ?? (version?.fork_air_bar !== null && version?.fork_air_bar !== undefined)) : false;
   const cards = useMemo(() => (version ? cardsFor(version, airFork) : []), [version, airFork]);
   const fork = forkFamilyFor(data?.specs?.fork_type ?? null, airFork);
   const shock = shockFamilyFor(data?.specs?.shock_type ?? null);

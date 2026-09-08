@@ -29,13 +29,39 @@ export type ModelSpecs = {
    *  migration) read as false. */
   sag_window_verified?: boolean | null;
   weight_range_verified?: boolean | null;
+  /** Research columns (migration 20260907140000). fork_type_ambiguous = the
+   *  model year shipped air OR coil by region (2016 SX/SX-F, FC/TC): the
+   *  catalog flag is null and the rider's bikes.air_fork_override decides. */
+  fork_type_ambiguous?: boolean | null;
+  fork_type_verified?: boolean | null;
+  /** WP base positive-chamber pressure for the model, bar (WP manual). */
+  stock_air_bar?: number | null;
+  stock_static_sag_mm?: number | null;
+  stock_fork_comp?: number | null;
+  stock_fork_reb?: number | null;
+  stock_shock_comp?: number | null;
+  stock_shock_reb?: number | null;
+  stock_shock_hsc_turns?: number | null;
 };
+
+/** The fork type for THIS bike: the verified catalog flag when it is a
+ *  boolean, else the rider's stored answer (bikes.air_fork_override or the
+ *  guest bike's airFork, asked by Add a bike on ambiguous rows), else
+ *  undefined so the caller's own fallback (a toggle, the running version's
+ *  air value) decides. Never a name guess. */
+export function effectiveAirFork(specs: ModelSpecs | null | undefined, override: boolean | null | undefined): boolean | undefined {
+  if (typeof specs?.has_air_fork === "boolean") return specs.has_air_fork;
+  if (typeof override === "boolean") return override;
+  return undefined;
+}
 
 const SPEC_COLS =
   "id, make, model, stock_sag_mm, sag_min, sag_max, stock_fork_spring_nmm, " +
   "stock_shock_spring_nmm, rider_weight_min_lbs, rider_weight_max_lbs, " +
   "fork_type, shock_type, has_air_fork, spec_verified";
-const PROVENANCE_COLS = ", sag_window_verified, weight_range_verified";
+const PROVENANCE_COLS =
+  ", sag_window_verified, weight_range_verified, fork_type_ambiguous, fork_type_verified, stock_air_bar, " +
+  "stock_static_sag_mm, stock_fork_comp, stock_fork_reb, stock_shock_comp, stock_shock_reb, stock_shock_hsc_turns";
 
 // Per-bike, per-session cache (bikes barely change mid-session; keyed by uuid or
 // the make|model|year identity for guest-local bikes).
