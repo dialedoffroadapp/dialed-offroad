@@ -1023,8 +1023,11 @@ export function sanitizeTires(raw: unknown): TireInputWire | undefined {
 /** The engine's tire fields for a request, or null when nothing in the
  *  request speaks to tires (no surface, no systems, no saved pressure): a
  *  symptom-only refine says nothing about tires. */
-export function tireFieldsFor(p: { discipline: TireDisciplineId; surface: TireSurface | null; psiDelta: number; tires: TireInputWire | undefined }): TireFields | null {
-  if (!p.surface && !p.tires) return null;
+export function tireFieldsFor(p: { discipline: TireDisciplineId; surface: TireSurface | null; psiDelta: number; tires: TireInputWire | undefined; conditionsAsk?: boolean }): TireFields | null {
+  // A conditions ask always answers tires, surface word or not: the plan
+  // falls to the DISCIPLINE's hardpack row (finding 2, 2026-09-08: a TX 300
+  // on singletrack is 13 / 14 from the off-road table, never the MX 12 / 12.5).
+  if (!p.surface && !p.tires && !p.conditionsAsk) return null;
   const plan = tirePlanFor({
     discipline: p.discipline,
     surface: p.surface,
@@ -2054,6 +2057,7 @@ export function buildTuneTwo(input: Tune2Input): Partial<Tune2Result> {
           surface: tireSurface,
           psiDelta: cond?.tirePsiDelta ?? 0,
           tires: input.tires,
+          conditionsAsk: Boolean(input.conditions),
         })
       : null;
 

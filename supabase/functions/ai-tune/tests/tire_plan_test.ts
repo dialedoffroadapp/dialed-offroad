@@ -107,6 +107,19 @@ Deno.test("handler: baselines carry tire fields from the terrain word and the ti
   assertEquals(b2.tire_reason, undefined);
 });
 
+Deno.test("device pass finding 2: an off-road bike on singletrack (no surface word) gets the off-road default 13 / 14, never the MX 12 / 12.5", async () => {
+  // 2023 Husqvarna TX 300, rider.discipline offroad, singletrack: no surface
+  // maps, so the plan falls to hardpack for the OFF-ROAD table.
+  const h = makeHandler(deps());
+  const b = await (await h(req({ mode: "zero_baseline_v1", input: { make: "Husqvarna", model: "TX 300", year: 2023, terrain: "singletrack", rider: { weight_lbs: 160, skill: "intermediate", class: "c", style: "long_enduro", goals: [], discipline: "offroad" }, has_zeroed_clickers: true, guardrails: GUARDRAILS, wants_air_fork: true, tires: { system_front: "tube", system_rear: "tube" } } }))).json();
+  assertEquals([b.tire_front_psi, b.tire_rear_psi, b.tire_source], [13, 14, "dunlop_default"]);
+  const r = await (await h(req({ mode: "tune2_v1", input: { make: "Husqvarna", model: "TX 300", year: 2023, terrain: "singletrack", rider: { skill: "intermediate", style: "long_enduro", goals: [], discipline: "offroad" }, has_zeroed_clickers: true, guardrails: GUARDRAILS, previous: PREV, feedback: { overall_rating: 5, symptoms: [], source: "conditions", free_text: "tight trees" }, conditions: { surfaces: [], state: "fresh", temp_band: "mild", watered: false } } }))).json();
+  assertEquals([r.tire_front_psi, r.tire_rear_psi], [13, 14]);
+  // The same call without a discipline is the MX table: the bug the device pass saw.
+  const mx = await (await h(req({ mode: "tune2_v1", input: { make: "Husqvarna", model: "TX 300", year: 2023, terrain: "singletrack", rider: { skill: "intermediate", style: "long_enduro", goals: [] }, has_zeroed_clickers: true, guardrails: GUARDRAILS, previous: PREV, feedback: { overall_rating: 5, symptoms: [], source: "conditions", free_text: "tight trees" }, conditions: { surfaces: [], state: "fresh", temp_band: "mild", watered: false } } }))).json();
+  assertEquals([mx.tire_front_psi, mx.tire_rear_psi], [12, 12.5]);
+});
+
 Deno.test("handler: a conditions ask answers tires from the surface, watered and the saved pressure; a symptom-only refine says nothing about tires", async () => {
   const h = makeHandler(deps());
   const b1 = await (await h(req({ mode: "tune2_v1", input: { rider: { skill: "intermediate", style: "short_motos", goals: [], discipline: "offroad" }, has_zeroed_clickers: true, guardrails: GUARDRAILS, previous: PREV, feedback: { overall_rating: 5, symptoms: [], source: "conditions", free_text: "slick" }, conditions: { surfaces: ["hardpack"], state: "fresh", temp_band: "mild", watered: true }, tires: { system_front: "tube", system_rear: "tubliss", saved_front_psi: 13 } } }))).json();
