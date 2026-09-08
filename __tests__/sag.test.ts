@@ -6,17 +6,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 type Call = { table: string; op: string; payload?: unknown };
 const calls: Call[] = [];
 let insertError: { message: string } | null = null;
-let updateError: { message: string } | null = null;
 let rideDayCount: number | null = 3;
 
 function chain(table: string) {
   const self: any = {
     insert(payload: unknown) {
       calls.push({ table, op: "insert", payload });
-      return self;
-    },
-    update(payload: unknown) {
-      calls.push({ table, op: "update", payload });
       return self;
     },
     select(_c?: string, opts?: { count?: string; head?: boolean }) {
@@ -31,10 +26,6 @@ function chain(table: string) {
     },
     limit: async () => ({ data: [], error: null }),
     single: async () => (insertError ? { data: null, error: insertError } : { data: { id: "m1", measured_at: "2026-09-07T10:00:00.000Z", riding_mm: 104, static_mm: 33 }, error: null }),
-    then(resolve: (v: unknown) => void) {
-      // awaiting the update chain
-      resolve({ error: updateError });
-    },
   };
   return self;
 }
@@ -58,7 +49,6 @@ const BOUNDS = { target: 105, min: 102, max: 112 };
 beforeEach(async () => {
   calls.length = 0;
   insertError = null;
-  updateError = null;
   rideDayCount = 3;
   logEvent.mockClear();
   await AsyncStorage.clear();
@@ -89,25 +79,22 @@ test("verdicts and copy: window and static target; factory vs typical", () => {
   expect(SPRING_RULE_LINE).not.toMatch(/—/);
 });
 
-test("save: a measurement row, the version stamp, the event; from the recheck also completes it", async () => {
+test("save: one measurement row linked to the version, never a version update, the event; from the recheck also completes it", async () => {
   const saved = await saveSagMeasurement({ bikeId: BIKE, versionId: VERSION, a: 610, b: 577, c: 506, bounds: BOUNDS, fromRecheck: true });
   expect(saved.riding_mm).toBe(104);
-  expect(calls.map((c) => `${c.table}:${c.op}`)).toEqual(["sag_measurements:insert", "setup_versions:update"]);
+  expect(calls.map((c) => `${c.table}:${c.op}`)).toEqual(["sag_measurements:insert"]); // setup_versions stays immutable
   expect(calls[0].payload).toMatchObject({ user_id: "u1", bike_id: BIKE, version_id: VERSION, a_mm: 610, b_mm: 577, c_mm: 506, riding_mm: 104, static_mm: 33 });
-  expect(calls[1].payload).toMatchObject({ sag_measured: true, sag_riding_measured_mm: 104, sag_static_measured_mm: 33, sag_measured_at: "2026-09-07T10:00:00.000Z" });
   expect(logEvent).toHaveBeenCalledWith("sag_measured_saved", expect.objectContaining({ bike_id: BIKE, version_id: VERSION, riding_mm: 104, in_range: true }));
   expect(logEvent).toHaveBeenCalledWith("sag_recheck_completed", { bike_id: BIKE });
 });
 
-test("save: no version = no stamp; bad numbers and failed writes surface as errors", async () => {
+test("save: no version = a row with no version link; bad numbers and a failed write surface as errors", async () => {
   await saveSagMeasurement({ bikeId: BIKE, versionId: null, a: 610, b: 577, c: 506, bounds: BOUNDS });
   expect(calls.map((c) => c.op)).toEqual(["insert"]);
+  expect(calls[0].payload).toMatchObject({ version_id: null });
   await expect(saveSagMeasurement({ bikeId: BIKE, versionId: null, a: 500, b: 577, c: 506, bounds: BOUNDS })).rejects.toThrow(/do not add up/);
   insertError = { message: "relation sag_measurements does not exist" };
   await expect(saveSagMeasurement({ bikeId: BIKE, versionId: null, a: 610, b: 577, c: 506, bounds: BOUNDS })).rejects.toThrow(/Couldn't save the measurement/);
-  insertError = null;
-  updateError = { message: "permission denied" };
-  await expect(saveSagMeasurement({ bikeId: BIKE, versionId: VERSION, a: 610, b: 577, c: 506, bounds: BOUNDS })).rejects.toThrow(/did not take it/);
 });
 
 test("recheck: due when never measured or when the ride days reach the threshold; dismiss hides it for the day", async () => {

@@ -105,7 +105,21 @@ export type BikePageData = {
   meterPct: number;
   meterCategories: MeterCategory[];
   story: StoryEntry[];
+  /** The bike's latest sag measurement (the sag page's record); null = never measured. */
+  lastSag: { measured_at: string; riding_mm: number; static_mm: number } | null;
 };
+
+/** The bike's latest sag measurement (sag_measurements, migration
+ *  20260907190000); null when none or when the table is not there yet. */
+async function safeLatestSag(bikeId: string): Promise<{ measured_at: string; riding_mm: number; static_mm: number } | null> {
+  try {
+    const { data, error } = await supabase.from("sag_measurements").select("measured_at, riding_mm, static_mm").eq("bike_id", bikeId).order("measured_at", { ascending: false }).limit(1).maybeSingle();
+    if (error || !data) return null;
+    return data as { measured_at: string; riding_mm: number; static_mm: number };
+  } catch {
+    return null;
+  }
+}
 
 async function safeSessions(bikeId: string): Promise<{ id: string; sag_measured: boolean | null }[]> {
   try {
@@ -133,7 +147,7 @@ async function safeSpecs(bike: HomeBike): Promise<ModelSpecs | null> {
 }
 
 export async function loadBikePage(bike: HomeBike): Promise<Omit<BikePageData, "userId" | "isPro">> {
-  const [versions, extras, cachedPhoto, named, versionSetup, specs, sessions] = await Promise.all([
+  const [versions, extras, cachedPhoto, named, versionSetup, specs, sessions, lastSag] = await Promise.all([
     safeHistory(bike.id),
     readBikeExtras(bike.id),
     readCachedBikePhotoUrl(bike.id),
@@ -141,6 +155,7 @@ export async function loadBikePage(bike: HomeBike): Promise<Omit<BikePageData, "
     readVersionSetupMap(bike.id),
     safeSpecs(bike),
     safeSessions(bike.id),
+    safeLatestSag(bike.id),
   ]);
   const ranges = await readClickRanges(specs?.id ?? bike.model_id);
   let feedback: RideFeedbackRow[] = [];
@@ -160,7 +175,8 @@ export async function loadBikePage(bike: HomeBike): Promise<Omit<BikePageData, "
   for (const f of [...feedback].reverse()) feedbackByRidden.set(f.setup_version_id, f);
   const inputs: MeterInputs = {
     hasBaseline: versions.length > 0,
-    sagMeasured: versions.some((v) => v.sag_measured) || sessions.some((s) => s.sag_measured === true),
+    // The sag page's rows are the record; the two booleans are the legacy signal.
+    sagMeasured: lastSag !== null || versions.some((v) => v.sag_measured) || sessions.some((s) => s.sag_measured === true),
     ridesLogged: feedback.length,
     refinements: versions.filter((v) => v.source === "refinement").length,
     outcomesRecorded: feedback.filter((f) => !!f.outcome).length,
@@ -179,6 +195,7 @@ export async function loadBikePage(bike: HomeBike): Promise<Omit<BikePageData, "
     meterPct: meter.pct,
     meterCategories: meter.categories,
     story: buildStory(versions, feedbackByRidden),
+    lastSag,
   };
 }
 

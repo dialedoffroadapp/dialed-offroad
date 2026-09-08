@@ -223,7 +223,7 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
             <Small style={{ color: V3.white, fontSize: 15 }}>Sag</Small>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Small>{running?.running?.sag_measured ? "measured" : "measure it"}</Small>
+            <Small>{data.lastSag ? `${data.lastSag.riding_mm} mm riding` : "measure it"}</Small>
             <Ionicons name="chevron-forward" size={16} color={V3.steel} />
           </View>
         </Card>

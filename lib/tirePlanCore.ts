@@ -33,8 +33,9 @@ export type TireTable = {
   watered_psi_delta: number;
   defaults: Record<TireDiscipline, Record<TireSurface, { front: number; rear: number; reason: string }>>;
   systems: {
-    tubliss: { front: { psi: number; min: number; max: number }; rear: { psi: number; min: number; max: number }; reason: string };
-    mousse: { reason: string };
+    /** tag "tuner" + source: the starting points inside the published range are Dialed's pick, not a maker's number. */
+    tubliss: { front: { psi: number; min: number; max: number }; rear: { psi: number; min: number; max: number }; reason: string; tag?: string; source?: string };
+    mousse: { reason: string; tag?: string; source?: string };
   };
 };
 

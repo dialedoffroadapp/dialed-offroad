@@ -144,7 +144,7 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
 
   if (!bike) return base;
 
-  const [versions, extras, cachedPhoto, sessionsRes] = await Promise.all([
+  const [versions, extras, cachedPhoto, sessionsRes, sagRowExists] = await Promise.all([
     (async (): Promise<VersionWithFeedback[]> => {
       try {
         return await getHistoryWithFeedback(bike.id);
@@ -160,6 +160,15 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
         return (data ?? []) as { id: string; rode_on: string; sag_measured: boolean | null }[];
       } catch {
         return [];
+      }
+    })(),
+    // The sag page's record (sag_measurements); false when none or pre-migration.
+    (async (): Promise<boolean> => {
+      try {
+        const { data, error } = await supabase.from("sag_measurements").select("id").eq("bike_id", bike.id).limit(1);
+        return !error && !!data?.length;
+      } catch {
+        return false;
       }
     })(),
   ]);
@@ -197,7 +206,7 @@ export async function loadHomeV3(now = new Date()): Promise<HomeV3Data> {
   for (const f of [...feedback].reverse()) feedbackByRidden.set(f.setup_version_id, f); // newest wins
 
   const sagMeasured =
-    versions.some((v) => v.sag_measured) || sessionsRes.some((s) => s.sag_measured === true);
+    sagRowExists || versions.some((v) => v.sag_measured) || sessionsRes.some((s) => s.sag_measured === true);
   // Ride days count as rides (decision 3): the archived ride days on this
   // phone plus the server feedback rows (one per moto, upserted by id), merged
   // without double counting.

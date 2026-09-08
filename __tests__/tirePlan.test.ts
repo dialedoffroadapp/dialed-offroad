@@ -13,6 +13,9 @@ test("the client's copy equals the server's table (run scripts/engine-tools/sync
   const client = fs.readFileSync(path.join(__dirname, "..", "lib", "generated", "tireDefaults.json"), "utf8");
   expect(client).toBe(server);
   expect(T.source).toMatch(/^Dunlop/);
+  // The Tubliss and mousse starting points are ours, tagged so nobody reads them as Dunlop numbers.
+  expect(T.systems.tubliss.tag).toBe("tuner");
+  expect(T.systems.tubliss.source).toMatch(/Dialed pick within the published range/);
 });
 
 const cases: { name: string; input: Parameters<typeof tirePlan>[1]; front: number | null; rear: number | null; source: string; reason?: RegExp }[] = [
