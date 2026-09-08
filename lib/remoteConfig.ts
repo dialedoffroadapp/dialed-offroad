@@ -12,6 +12,8 @@ export const CONFIG_DEFAULTS = {
   lifetime_min_ride_days: 3,
   /** Free refinements per bike before the refine gate fires (0 = always Pro). */
   free_refinements_per_bike: 1,
+  /** Ride-mode sag recheck card: due when the last measurement is this many ride days old. */
+  sag_recheck_ride_days: 5,
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;

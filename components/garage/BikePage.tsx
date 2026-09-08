@@ -213,6 +213,21 @@ export function BikePage({ bikeId, inTab }: { bikeId: string; inTab?: boolean })
           </Card>
         ) : null}
 
+        <Card
+          style={{ paddingVertical: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}
+          onPress={() => router.push({ pathname: "/garage/[bikeId]/sag", params: { bikeId: bike.id } } as never)}
+          accessibilityLabel="Sag"
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="resize-outline" size={17} color={V3.steel} />
+            <Small style={{ color: V3.white, fontSize: 15 }}>Sag</Small>
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Small>{running?.running?.sag_measured ? "measured" : "measure it"}</Small>
+            <Ionicons name="chevron-forward" size={16} color={V3.steel} />
+          </View>
+        </Card>
+
         <Label style={{ marginBottom: 8 }}>Coming to your garage</Label>
         <Card style={{ paddingVertical: 4 }}>
           <ComingRow label="Gearing" right="soon" />
