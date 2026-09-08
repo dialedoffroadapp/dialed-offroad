@@ -96,6 +96,12 @@ export type ZeroTuneResult = {
   // Client-computed (lib/modelSpecs) but carried on the result so it persists
   // with the tune and survives normalizeResult (see below).
   spring_check?: SpringCheck;
+  /** Who decided the numbers (contract v3 tag, passed through when present). */
+  engine_source?: string;
+  /** Free refinements left on this bike AFTER this call is counted (refine
+   *  path only, 2026-09-07). Absent on baselines, conditions asks and when
+   *  the server could not read the allowance. */
+  refine_allowance_remaining?: number;
 };
 
 /* ------------------------------------------------------------------ */
@@ -353,6 +359,9 @@ export async function generateTuneTwo(params: {
       previous,
       feedback: normalizedFeedback,
       last_outcome: lastOutcome,
+      // The garage bike (uuid only): the server's free-refinement allowance is
+      // counted per bike (2026-09-07). Guest and legacy ids stay off the wire.
+      ...(typeof bikeId === "string" && isUuid(bikeId) ? { bike_id: bikeId } : {}),
     },
   };
 
@@ -558,5 +567,7 @@ function normalizeResult(
     // Preserve a client-attached spring_check through the rebuild (unknown fields
     // are otherwise dropped here).
     spring_check: result?.spring_check,
+    ...(typeof result?.engine_source === "string" ? { engine_source: result.engine_source } : {}),
+    ...(typeof result?.refine_allowance_remaining === "number" ? { refine_allowance_remaining: result.refine_allowance_remaining } : {}),
   };
 }

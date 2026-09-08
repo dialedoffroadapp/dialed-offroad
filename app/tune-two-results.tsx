@@ -1,6 +1,7 @@
 // app/tune-two-results.tsx
 import { HOME_GARAGE_V3_ENABLED } from "../lib/featureFlags";
 import { paywallHref } from "../lib/paywall";
+import { FREE_REFINE_USED_LINE } from "../lib/refineAllowance";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -733,6 +734,15 @@ export default function TuneTwoResultScreen() {
 
         {/* Engine notes. Echo path keeps the simple numbered rendering; real
             refinements get the classified "Why these changes" hierarchy. */}
+        {refined?.refine_allowance_remaining === 0 && !isPro ? (
+          <View style={S.card} accessibilityLabel="Free refinement used">
+            <Text style={S.stepText}>{FREE_REFINE_USED_LINE}</Text>
+            <Text style={[S.stepText, { marginTop: 8, textDecorationLine: "underline" }]} onPress={() => router.push(paywallHref("refine", "back") as any)}>
+              Go Pro
+            </Text>
+          </View>
+        ) : null}
+
         {refined?.notes?.length ? (
           classified.isEcho ? (
             <View style={S.card}>

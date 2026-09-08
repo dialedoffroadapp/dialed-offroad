@@ -7,6 +7,7 @@
 // own notes with lib/tuneNotes matchers. Nothing here maps symptoms to
 // adjusters. The two-changes-per-moto cap is a PRESENTATION cap (flagged):
 // the engine's frozen contract is untouched.
+import { noteRefineAllowance } from "./refineAllowance";
 import { generateTuneTwo, type Tune2Context, type Tune2SymptomId, type ZeroTuneResult } from "./ai";
 import { CIRCUIT_STEPS, type CircuitKey } from "./currentSetup";
 import { surfacesOf, tempBandToF } from "./rideConditions";
@@ -105,6 +106,9 @@ export type AdjustResult = {
   /** The engine's own summary line (its first note), shown under the change. */
   reasoning: string | null;
   source: "engine";
+  /** Free refinements left on this bike after this call (server-counted);
+   *  null when the server did not say (entitlement unknown, conditions ask). */
+  allowanceRemaining: number | null;
 };
 
 /** One engine call for a logged moto: symptom + qualifier + the rider's own
@@ -144,7 +148,9 @@ export async function fetchAdjustResult(
     bikeId: s.bike.id,
   } as any);
   const reasoning = Array.isArray(result?.notes) ? (result.notes.find((n: unknown) => typeof n === "string" && n.trim()) as string | undefined) ?? null : null;
-  return { changes: diffChanges(effective, result), reasoning, source: "engine" };
+  const allowanceRemaining = typeof result?.refine_allowance_remaining === "number" ? result.refine_allowance_remaining : null;
+  if (allowanceRemaining !== null) void noteRefineAllowance(s.bike.id, allowanceRemaining);
+  return { changes: diffChanges(effective, result), reasoning, source: "engine", allowanceRemaining };
 }
 
 export async function fetchAdjustChanges(

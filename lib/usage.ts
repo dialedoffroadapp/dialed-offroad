@@ -125,7 +125,9 @@ export type UsageEvent =
   | "gate_converted"
   | "pricing_page_viewed"
   | "lifetime_offered"
-  | "qualified_trial";
+  | "qualified_trial"
+  // One free refinement (2026-09-07, migration 20260907170000)
+  | "free_refine_used";
 
 // ⚠️ usage_events.event_type has a DB CHECK constraint whitelisting event
 // names. Adding a member here requires extending that constraint (see

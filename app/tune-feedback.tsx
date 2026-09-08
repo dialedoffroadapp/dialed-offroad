@@ -25,6 +25,7 @@ import { supabase } from "../lib/supabase";
 import { deriveIsPro } from "../lib/proUtils";
 import { hasPurchasedThisSession } from "../lib/purchases";
 import { showProGate } from "../lib/proGate";
+import { readRefineAllowance, shouldGateRefine } from "../lib/refineAllowance";
 import { isEntitled, resolveEntitlement } from "../lib/entitlement";
 import {
     generateTuneTwo,
@@ -376,8 +377,11 @@ export default function TuneFeedbackScreen() {
 }
 
 function LegacyTuneFeedbackScreen() {
-  const { meta, previous, context, versionId, checkinSource } =
+  const { meta, previous, context, versionId, checkinSource, bikeId: routeBikeIdRaw } =
     useLocalSearchParams<RouteParams>();
+  // onSubmit declares its own `bikeId` later; the route's is needed before it
+  // (the free-refinement allowance is per bike).
+  const routeBikeId = asUuidOrNull(String(routeBikeIdRaw ?? ""));
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
@@ -628,11 +632,16 @@ function LegacyTuneFeedbackScreen() {
           .eq("user_id", auth.user.id)
           .maybeSingle();
         if (!deriveIsPro(prof) && !isEntitled(await resolveEntitlement())) {
-          void Haptics.selectionAsync();
-          // The Pro gate names the action and offers "Update my baseline
-          // instead"; it opens the paywall with paywall_trigger_action=adjust.
-          showProGate({ trigger: "refine" });
-          return;
+          // One free refinement per bike (2026-09-07): gate only when the
+          // server-counted allowance is zero (unknown = let the server decide).
+          const allowance = routeBikeId ? await readRefineAllowance(routeBikeId) : null;
+          if (shouldGateRefine({ entitled: false, allowance })) {
+            void Haptics.selectionAsync();
+            // The Pro gate names the action and offers "Update my baseline
+            // instead"; it opens the paywall with paywall_trigger_action=adjust.
+            showProGate({ trigger: "refine", bikeId: routeBikeId });
+            return;
+          }
         }
       }
     } catch (e) {

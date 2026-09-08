@@ -27,6 +27,8 @@ import { shortDate } from "../lib/homeCopy";
 import { primarySymptom } from "../lib/setupStory";
 import { SYMPTOM_PHRASES } from "../lib/ai";
 import { effectiveAirFork } from "../lib/modelSpecs";
+import { paywallHref } from "../lib/paywall";
+import { FREE_REFINE_USED_LINE, gateRefine } from "../lib/refineAllowance";
 import type { SetupVersionRow, VersionWithFeedback } from "../lib/setupVersions";
 import { logEvent } from "../lib/usage";
 
@@ -60,7 +62,7 @@ export default function SetupSheetScreen() {
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
-  const { bikeId, setupId } = useLocalSearchParams<{ bikeId?: string; setupId?: string }>();
+  const { bikeId, setupId, freeRefineUsed } = useLocalSearchParams<{ bikeId?: string; setupId?: string; freeRefineUsed?: string }>();
   const { shareView, share, available: canShare } = useShareSetup();
   const [data, setData] = useState<BikePageData | null>(null);
   const [expanded, setExpanded] = useState<AdjusterKey | null>(null);
@@ -173,9 +175,13 @@ export default function SetupSheetScreen() {
   // 3.0: refinement is the ride-day Log → Adjust on a quick session (the
   // legacy debrief is retired under the flag); the result is the next version
   // on this setup.
+  // One free refinement per bike (2026-09-07): the gate fires only when the
+  // server-counted allowance is zero and the rider is not entitled.
   const onRefine = () => {
     if (!v) return;
-    router.push({ pathname: "/ride/log", params: { quick: "1", bikeId: bike.id, setupId: setup.id ?? "default", versionId: v.id } } as never);
+    void gateRefine(bike.id).then((ok) => {
+      if (ok) router.push({ pathname: "/ride/log", params: { quick: "1", bikeId: bike.id, setupId: setup.id ?? "default", versionId: v.id } } as never);
+    });
   };
 
   const onShare = () => {
@@ -331,6 +337,13 @@ export default function SetupSheetScreen() {
             <Text style={[styles.unit, interFont(400)]}> psi</Text>
           </Text>
         </Card>
+
+        {freeRefineUsed === "1" && !data.isPro ? (
+          <Card style={{ marginBottom: 12 }} accessibilityLabel="Free refinement used">
+            <Small>{FREE_REFINE_USED_LINE}</Small>
+            <Button label="Go Pro" compact style={{ marginTop: 10 }} onPress={() => router.push(paywallHref("refine", "back") as never)} />
+          </Card>
+        ) : null}
 
         {isRunning ? (
           <>
