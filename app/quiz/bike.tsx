@@ -224,6 +224,7 @@ export default function QuizBikeScreen() {
       });
       await setAnswers({ airForkOverride: airFork });
       await logQuizEvent("quiz_step_answered", { step: "bike", answer: { fork: id, make: ask?.make, model: ask?.model, year: ask?.year } });
+      void logEvent("air_fork_override_set", { bike_id: ask?.bikeId ?? answers.bikeLocalId ?? null, air_fork: airFork, source: "quiz" });
     },
     onAdvance: () => setPhase("tires"),
     onError: () => toast.show("Couldn't save your fork. Tap it again.", { kind: "error" }),

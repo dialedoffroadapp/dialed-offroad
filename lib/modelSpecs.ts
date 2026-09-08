@@ -57,6 +57,13 @@ export type ModelSpecs = {
  *  guest bike's airFork, asked by Add a bike on ambiguous rows), else
  *  undefined so the caller's own fallback (a toggle, the running version's
  *  air value) decides. Never a name guess. */
+/** The bike page's one-time banner (2026-09-08): a region-ambiguous 2016 row
+ *  (air in the EU, coil in the US and Australia) with no stored answer yet.
+ *  The 126 bikes that sat on those rows before the quiz asked. */
+export function shouldShowAirForkBanner(specs: ModelSpecs | null | undefined, override: boolean | null | undefined): boolean {
+  return specs?.fork_type_ambiguous === true && typeof override !== "boolean";
+}
+
 export function effectiveAirFork(specs: ModelSpecs | null | undefined, override: boolean | null | undefined): boolean | undefined {
   if (typeof specs?.has_air_fork === "boolean") return specs.has_air_fork;
   if (typeof override === "boolean") return override;
