@@ -2875,6 +2875,31 @@ function getServiceClient() {
 
 let _tuningCache: { value: Partial<EngineTuning>; at: number } | null = null;
 
+/** Tag on every fail-open log line so the edge logs can be grepped for
+ *  them (River, 2026-09-08). */
+export const FAIL_OPEN_TAG = "[ai-tune fail-open]";
+
+/** One retry with a short backoff before failing open (audit follow-up
+ *  closed 2026-09-08): the service-role gates (server_claim_baseline,
+ *  server_refine_allowance) used to fail open on the first error, a revenue
+ *  leak on any infra blip. `fn` throws on an error answer; a second throw is
+ *  logged loud with the tag and returns null so the caller proceeds. */
+export async function withOneRetry<T>(label: string, fn: () => Promise<T>, delayMs = 300, log: (msg: string) => void = (m) => console.error(m)): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (first) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    try {
+      return await fn();
+    } catch (second) {
+      const a = first instanceof Error ? first.message : String(first);
+      const b = second instanceof Error ? second.message : String(second);
+      log(`${FAIL_OPEN_TAG} ${label} failed twice, proceeding without it: ${a.slice(0, 120)} | ${b.slice(0, 120)}`);
+      return null;
+    }
+  }
+}
+
 export const defaultDeps: HandlerDeps = {
   getUserId: async (req) => {
     try {
@@ -2982,41 +3007,38 @@ export const defaultDeps: HandlerDeps = {
     return out;
   },
 
-  claimBaseline: async (userId, bikeId) => {
-    const { data, error } = await getServiceClient().rpc("server_claim_baseline", {
-      p_user_id: userId,
-      p_bike_id: bikeId,
-    });
-    if (error) {
-      // Fail-open with a loud log (this runs as service role, so a caller
-      // cannot induce the failure; blocking paying riders on an infra blip is
-      // worse than one uncounted tune).
-      console.error("server_claim_baseline failed (fail-open):", String(error.message ?? error).slice(0, 160));
-      return null;
-    }
-    return (data ?? null) as ClaimOutcome | null;
-  },
+  claimBaseline: async (userId, bikeId) =>
+    // One retry, then fail-open with the tagged log (this runs as service
+    // role, so a caller cannot induce the failure; blocking paying riders on
+    // an infra blip is worse than one uncounted tune).
+    withOneRetry("server_claim_baseline", async () => {
+      const { data, error } = await getServiceClient().rpc("server_claim_baseline", {
+        p_user_id: userId,
+        p_bike_id: bikeId,
+      });
+      if (error) throw new Error(String(error.message ?? error));
+      return (data ?? null) as ClaimOutcome | null;
+    }),
 
-  refineAllowance: async (userId, bikeId) => {
-    const { data, error } = await getServiceClient().rpc("server_refine_allowance", {
-      p_user_id: userId,
-      p_bike_id: bikeId,
-    });
-    if (error) {
-      // Fail-open with a loud log, the claimBaseline precedent: a service-role
-      // blip must not lock a rider out of a refinement.
-      console.error("server_refine_allowance failed (fail-open):", String(error.message ?? error).slice(0, 160));
-      return null;
-    }
-    const d = data as any;
-    if (!d || typeof d !== "object") return null;
-    return {
-      entitled: d.entitled === true,
-      used: Number(d.used ?? 0),
-      free: Number(d.free ?? 0),
-      remaining: Number(d.remaining ?? 0),
-    };
-  },
+  refineAllowance: async (userId, bikeId) =>
+    // One retry, then fail-open with the tagged log: a service-role blip must
+    // not lock a rider out of a refinement, but one blip no longer hands out a
+    // free one either.
+    withOneRetry("server_refine_allowance", async () => {
+      const { data, error } = await getServiceClient().rpc("server_refine_allowance", {
+        p_user_id: userId,
+        p_bike_id: bikeId,
+      });
+      if (error) throw new Error(String(error.message ?? error));
+      const d = data as any;
+      if (!d || typeof d !== "object") return null;
+      return {
+        entitled: d.entitled === true,
+        used: Number(d.used ?? 0),
+        free: Number(d.free ?? 0),
+        remaining: Number(d.remaining ?? 0),
+      };
+    }),
 
   refundClaim: async (userId) => {
     try {
