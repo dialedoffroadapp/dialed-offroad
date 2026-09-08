@@ -20,6 +20,7 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     refundClaim: () => Promise.resolve(),
     baselineEngine: () => Promise.resolve("llm" as const),
     explain: () => Promise.resolve(null),
+    refineAllowance: () => Promise.resolve({ entitled: true, used: 0, free: 1, remaining: 1 }),
     ...overrides,
   };
 }

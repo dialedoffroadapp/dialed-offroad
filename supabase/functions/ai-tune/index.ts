@@ -175,6 +175,10 @@ type Tune2Result = {
   engine_source?: EngineSource;
   notes_source?: NotesSource;
   tire_psi_delta?: number;
+  /** Free refinements left on this bike AFTER this call is counted (the
+   *  free-refinement allowance, 2026-09-07). Additive, optional: absent on
+   *  conditions asks and when the allowance could not be read. */
+  refine_allowance_remaining?: number;
 };
 
 type Discipline = "mx" | "enduro" | "mixed";
@@ -2459,7 +2463,14 @@ export type HandlerDeps = {
   claimBaseline: (userId: string, bikeId: string | null) => Promise<ClaimOutcome | null>;
   /** Exact inverse of a consumed server claim, after a generation throw. */
   refundClaim: (userId: string) => Promise<void>;
+  /** The free-refinement allowance (2026-09-07): server_refine_allowance.
+   *  entitled = trial_active or pro; used = this user's setup_versions rows
+   *  with source "refinement" on the bike; free = app_config
+   *  free_refinements_per_bike. null = infra failure (fail-open, logged). */
+  refineAllowance: (userId: string, bikeId: string | null) => Promise<RefineAllowance | null>;
 };
+
+export type RefineAllowance = { entitled: boolean; used: number; free: number; remaining: number };
 
 export type BaselineEngine = "llm" | "deterministic";
 
@@ -2609,6 +2620,27 @@ export const defaultDeps: HandlerDeps = {
       return null;
     }
     return (data ?? null) as ClaimOutcome | null;
+  },
+
+  refineAllowance: async (userId, bikeId) => {
+    const { data, error } = await getServiceClient().rpc("server_refine_allowance", {
+      p_user_id: userId,
+      p_bike_id: bikeId,
+    });
+    if (error) {
+      // Fail-open with a loud log, the claimBaseline precedent: a service-role
+      // blip must not lock a rider out of a refinement.
+      console.error("server_refine_allowance failed (fail-open):", String(error.message ?? error).slice(0, 160));
+      return null;
+    }
+    const d = data as any;
+    if (!d || typeof d !== "object") return null;
+    return {
+      entitled: d.entitled === true,
+      used: Number(d.used ?? 0),
+      free: Number(d.free ?? 0),
+      remaining: Number(d.remaining ?? 0),
+    };
   },
 
   refundClaim: async (userId) => {
@@ -2811,6 +2843,23 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
         serverClaimedCredit = decision.serverClaimed;
       }
 
+      // ---------------- refine gate: one free refinement per bike (2026-09-07) ----------------
+      // Before the insert, like the baseline gate: a refused call is never
+      // recorded. The server counts; no client flag is trusted. A conditions
+      // ask (Today's setup, the retune tiles) is not a refinement and is never
+      // gated here. The rider's entitlement passes; otherwise the count of
+      // refinement versions on this bike must be under the free allowance.
+      let refineAllowanceRemaining: number | null = null;
+      if (mode === "tune2_v1" && userId && (body.input as any)?.feedback?.source !== "conditions") {
+        const allowance = await deps.refineAllowance(userId, bikeIdFrom(body));
+        if (allowance) {
+          if (!allowance.entitled && allowance.remaining <= 0) {
+            return jsonResponse({ error: "no_trial", reason: "no_trial" }, 402);
+          }
+          refineAllowanceRemaining = Math.max(allowance.remaining - 1, 0);
+        }
+      }
+
       // ---------------- model_id: catalog existence (decision 2) ----------------
       // bike_model_id is a foreign key. An unknown id used to fail the insert,
       // which was swallowed, which left the call uncounted: a rate-limit bypass.
@@ -2909,6 +2958,7 @@ export function makeHandler(deps: HandlerDeps = defaultDeps) {
 
         const partial = buildTuneTwo(tune2Input);
         const result = safeShapeSparse(partial, tune2Input.guardrails);
+        if (refineAllowanceRemaining !== null) result.refine_allowance_remaining = refineAllowanceRemaining;
 
         if (callId !== null) await deps.recordOutput?.(callId, result, outputMeta("deterministic"));
         return jsonResponse(result, 200);

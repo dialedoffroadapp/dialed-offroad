@@ -100,6 +100,7 @@ function deps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     refundClaim: () => Promise.resolve(),
     baselineEngine: () => Promise.resolve("llm" as const),
     explain: () => Promise.resolve(null),
+    refineAllowance: () => Promise.resolve({ entitled: true, used: 0, free: 1, remaining: 1 }),
     ...overrides,
   };
 }
@@ -1034,4 +1035,62 @@ Deno.test("25. spend cap: a 429 with a spend-limit code becomes SpendLimitError;
   const h2 = makeHandler(deps({ getUserId: () => Promise.resolve(null), baselineEngine: () => Promise.resolve("deterministic" as const), explain: () => Promise.reject(new Error("timeout")) }));
   const b2 = await (await h2(fakeReq({ mode: "zero_baseline_v1", input }, ""))).json();
   assertEquals(b2.notes_source, "formula");
+});
+
+/* ---------------- Test 26: one free refinement per bike (2026-09-07) ---------------- */
+
+Deno.test("26. refine allowance: a free rider's first refinement passes, the second is the entitlement error, Pro is unaffected, 0 restores always-Pro, conditions asks and an unreadable allowance never gate", async () => {
+  const input = {
+    rider: { skill: "intermediate", style: "short_motos", goals: [] },
+    has_zeroed_clickers: true,
+    guardrails: GUARDRAILS,
+    bike_id: "3f9a2c1e-6b7d-4e8f-9a0b-1c2d3e4f5a6b",
+    previous: PREV_AIR,
+    feedback: { overall_rating: 6, symptoms: [{ id: "harsh_braking_bumps", severity: 7 }] },
+  };
+  let recorded = 0;
+  const asked: (string | null)[] = [];
+  const record = () => {
+    recorded++;
+    return Promise.resolve(recorded);
+  };
+
+  // First refinement on the bike: allowed, and the answer says none is left after it.
+  const h1 = makeHandler(deps({ refineAllowance: (_u, bikeId) => { asked.push(bikeId); return Promise.resolve({ entitled: false, used: 0, free: 1, remaining: 1 }); }, recordCall: record }));
+  const r1 = await h1(fakeReq({ mode: "tune2_v1", input }));
+  assertEquals(r1.status, 200);
+  const b1 = await r1.json();
+  assertEquals(b1.refine_allowance_remaining, 0);
+  assertEquals(circuits(b1).fork_comp, PREV_AIR.fork.comp_clicks + 2); // the refinement itself is unchanged
+  assertEquals(asked, [input.bike_id]);
+  assertEquals(recorded, 1);
+
+  // Second: refused with the existing entitlement error, before any insert.
+  const h2 = makeHandler(deps({ refineAllowance: () => Promise.resolve({ entitled: false, used: 1, free: 1, remaining: 0 }), recordCall: record }));
+  const r2 = await h2(fakeReq({ mode: "tune2_v1", input }));
+  assertEquals(r2.status, 402);
+  assertEquals((await r2.json()).reason, "no_trial");
+  assertEquals(recorded, 1);
+
+  // Pro (or trial_active): never gated, whatever the count.
+  const h3 = makeHandler(deps({ refineAllowance: () => Promise.resolve({ entitled: true, used: 7, free: 1, remaining: 0 }) }));
+  assertEquals((await h3(fakeReq({ mode: "tune2_v1", input }))).status, 200);
+
+  // app_config.free_refinements_per_bike = 0: the old behavior (every refinement is Pro).
+  const h4 = makeHandler(deps({ refineAllowance: () => Promise.resolve({ entitled: false, used: 0, free: 0, remaining: 0 }) }));
+  assertEquals((await h4(fakeReq({ mode: "tune2_v1", input }))).status, 402);
+
+  // A conditions ask is not a refinement: never gated, no allowance in the answer.
+  let askedConditions = 0;
+  const h5 = makeHandler(deps({ refineAllowance: () => { askedConditions++; return Promise.resolve({ entitled: false, used: 3, free: 1, remaining: 0 }); } }));
+  const r5 = await h5(fakeReq({ mode: "tune2_v1", input: { ...input, feedback: { overall_rating: 5, symptoms: [], source: "conditions", free_text: "slick and choppy" } } }));
+  assertEquals(r5.status, 200);
+  assertEquals((await r5.json()).refine_allowance_remaining, undefined);
+  assertEquals(askedConditions, 0);
+
+  // Unreadable allowance: fail-open, no field.
+  const h6 = makeHandler(deps({ refineAllowance: () => Promise.resolve(null) }));
+  const r6 = await h6(fakeReq({ mode: "tune2_v1", input }));
+  assertEquals(r6.status, 200);
+  assertEquals((await r6.json()).refine_allowance_remaining, undefined);
 });

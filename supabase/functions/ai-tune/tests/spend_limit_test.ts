@@ -31,6 +31,7 @@ const deps = (over: Record<string, unknown> = {}) => ({
   refundClaim: () => Promise.resolve(),
   baselineEngine: () => Promise.resolve("llm"),
   explain: () => Promise.resolve(null),
+  refineAllowance: () => Promise.resolve({ entitled: true, used: 0, free: 1, remaining: 1 }),
   ...over,
 });
 const req = (body: unknown) =>
